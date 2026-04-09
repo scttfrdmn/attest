@@ -1,0 +1,324 @@
+# NIST SP 800-171 Rev 2 — Protecting Controlled Unclassified Information
+# in Nonfederal Systems and Organizations
+#
+# This framework definition maps to CMMC 2.0 Level 2.
+# Community-maintained. AWS shared responsibility data enriched at runtime
+# from Artifact reports.
+#
+# Source: https://csrc.nist.gov/publications/detail/sp/800-171/rev-2/final
+# Assessment: NIST SP 800-171A
+
+id: nist-800-171-r2
+name: "NIST SP 800-171 Rev 2"
+version: "2.0"
+source: "https://csrc.nist.gov/publications/detail/sp/800-171/rev-2/final"
+
+artifact_reports:
+  - series: "SOC 2 Type II"
+    category: "SOC"
+  - series: "ISO 27001"
+    category: "ISO"
+
+controls:
+  # ── 3.1 Access Control ──────────────────────────────────────────────
+
+  - id: "3.1.1"
+    family: "Access Control"
+    title: "Limit system access to authorized users, processes acting on behalf of authorized users, and devices"
+    responsibility:
+      aws: "IAM service, API authentication, network infrastructure access controls"
+      customer: "IAM policies, user provisioning/deprovisioning, MFA enforcement, device trust"
+    structural:
+      - id: "scp-require-mfa"
+        description: "Deny all actions without MFA for human principals"
+        actions:
+          - "*"
+        conditions:
+          - "aws:MultiFactorAuthPresent != true"
+          - "aws:PrincipalType == IAMUser"
+        effect: "Deny"
+    operational:
+      - id: "cedar-authorized-principals"
+        description: "Only principals with active authorization records can access SRE environments"
+        entities: ["principal", "environment"]
+        attributes:
+          principal: ["authorization_current", "mfa_enabled", "training_complete"]
+          environment: ["data_classification", "access_tier"]
+    monitoring:
+      - id: "config-iam-mfa"
+        resource_type: "AWS::IAM::User"
+        check: "MFA device attached and active"
+        remediation: "Enable MFA via IAM console or CLI"
+    assessment:
+      objectives:
+        - id: "3.1.1[a]"
+          description: "Authorized users are identified"
+          auto_assessable: true
+          evidence_source: "cedar"
+        - id: "3.1.1[b]"
+          description: "Processes acting on behalf of authorized users are identified"
+          auto_assessable: true
+          evidence_source: "cedar"
+        - id: "3.1.1[c]"
+          description: "Devices authorized to connect are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.1[d]"
+          description: "System access is limited to authorized users"
+          auto_assessable: true
+          evidence_source: "scp"
+        - id: "3.1.1[e]"
+          description: "System access is limited to authorized processes"
+          auto_assessable: true
+          evidence_source: "cedar"
+        - id: "3.1.1[f]"
+          description: "System access is limited to authorized devices"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.2"
+    family: "Access Control"
+    title: "Limit system access to the types of transactions and functions that authorized users are permitted to execute"
+    responsibility:
+      aws: "IAM policy evaluation engine, resource-level permissions"
+      customer: "Least-privilege IAM policies, role definitions, permission boundaries"
+    structural:
+      - id: "scp-deny-admin-star"
+        description: "Deny iam:*, organizations:*, account:* outside designated admin roles"
+        actions:
+          - "iam:*"
+          - "organizations:*"
+          - "account:*"
+        conditions:
+          - "aws:PrincipalARN != arn:aws:iam::*:role/SREAdmin"
+        effect: "Deny"
+    operational:
+      - id: "cedar-least-privilege"
+        description: "Principal actions are limited to their authorized function scope"
+        entities: ["principal", "action", "resource"]
+        attributes:
+          principal: ["role", "function_scope", "lab_membership"]
+          resource: ["classification", "owner_lab"]
+    monitoring:
+      - id: "config-iam-policy-scope"
+        resource_type: "AWS::IAM::Policy"
+        check: "No IAM policies with Action:* and Resource:*"
+    assessment:
+      objectives:
+        - id: "3.1.2[a]"
+          description: "The types of transactions and functions that authorized users are permitted to execute are defined"
+          auto_assessable: true
+          evidence_source: "cedar"
+        - id: "3.1.2[b]"
+          description: "System access is limited to the defined types of transactions and functions"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "3.1.3"
+    family: "Access Control"
+    title: "Control the flow of CUI in accordance with approved authorizations"
+    responsibility:
+      aws: "VPC flow control, S3 bucket policies, KMS encryption, network ACLs"
+      customer: "Data flow policies, tagging, cross-account controls, encryption key management"
+    structural:
+      - id: "scp-cui-region-restrict"
+        description: "Deny all actions in non-approved regions for CUI workloads"
+        actions:
+          - "*"
+        conditions:
+          - "aws:RequestedRegion not in [us-east-1, us-west-2, us-gov-west-1]"
+        effect: "Deny"
+      - id: "scp-cui-s3-encryption"
+        description: "Deny S3 PutObject without server-side encryption using KMS"
+        actions:
+          - "s3:PutObject"
+        conditions:
+          - "s3:x-amz-server-side-encryption != aws:kms"
+        effect: "Deny"
+    operational:
+      - id: "cedar-cui-data-movement"
+        description: >
+          CUI-tagged objects can only move to CUI-authorized destinations.
+          Evaluates data classification, destination encryption state,
+          destination enclave membership, and principal CUI handling certification.
+        entities: ["data_object", "destination_bucket", "principal"]
+        attributes:
+          data_object: ["classification", "source_account", "source_region"]
+          destination_bucket: ["encryption_type", "enclave_membership", "kms_key_arn"]
+          principal: ["cui_training_current", "role_membership", "lab_authorization"]
+        cedar_policy: |
+          // CUI data movement — NIST 800-171 3.1.3
+          // Only permit CUI object transfer when ALL conditions are met:
+          //   1. Destination bucket is a member of the CUI enclave
+          //   2. Destination uses KMS encryption with an enclave key
+          //   3. Principal has current CUI handling training
+          //   4. Principal's lab is authorized for CUI
+          
+          forbid (
+            principal,
+            action == Action::"S3:PutObject",
+            resource
+          )
+          unless {
+            resource.enclave_membership == true &&
+            resource.encryption_type == "aws:kms" &&
+            principal.cui_training_current == true &&
+            principal.lab_authorization == true
+          };
+        temporal:
+          condition_type: "expiry"
+          description: "CUI handling authorization expires with training certification (annual renewal)"
+    monitoring:
+      - id: "config-s3-encryption-at-rest"
+        resource_type: "AWS::S3::Bucket"
+        check: "Default encryption enabled with KMS key from enclave key set"
+      - id: "config-vpc-flow-logs"
+        resource_type: "AWS::EC2::VPC"
+        check: "Flow logs enabled and delivered to audit account"
+    assessment:
+      objectives:
+        - id: "3.1.3[a]"
+          description: "Information flow control policies are defined"
+          auto_assessable: true
+          evidence_source: "cedar"
+        - id: "3.1.3[b]"
+          description: "Methods and enforcement mechanisms for controlling the flow of CUI are defined"
+          auto_assessable: true
+          evidence_source: "cedar"
+        - id: "3.1.3[c]"
+          description: "Approved authorizations for controlling the flow of CUI are defined"
+          auto_assessable: true
+          evidence_source: "cedar"
+        - id: "3.1.3[d]"
+          description: "The flow of CUI is controlled in accordance with approved authorizations"
+          auto_assessable: true
+          evidence_source: "cedar"
+
+  - id: "3.1.5"
+    family: "Access Control"
+    title: "Employ the principle of least privilege, including for specific security functions and privileged accounts"
+    responsibility:
+      aws: "Root account controls, service-linked roles, AWS managed policies"
+      customer: "Custom IAM policies, role design, permission boundaries, privilege escalation prevention"
+    structural:
+      - id: "scp-deny-root-usage"
+        description: "Deny all actions by root user except emergency break-glass"
+        actions:
+          - "*"
+        conditions:
+          - "aws:PrincipalARN == arn:aws:iam::*:root"
+        effect: "Deny"
+      - id: "scp-deny-permission-escalation"
+        description: "Deny iam:CreatePolicy, iam:AttachRolePolicy outside admin OU"
+        actions:
+          - "iam:CreatePolicy"
+          - "iam:AttachRolePolicy"
+          - "iam:PutRolePolicy"
+          - "iam:CreateRole"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /admin/"
+        effect: "Deny"
+    operational:
+      - id: "cedar-privilege-scope"
+        description: "Principal permissions are bounded to their lab and function"
+        entities: ["principal", "action", "resource"]
+        attributes:
+          principal: ["role", "lab_id", "admin_level"]
+          resource: ["owner_lab", "sensitivity"]
+    monitoring:
+      - id: "config-no-wildcard-policies"
+        resource_type: "AWS::IAM::Policy"
+        check: "No policies with Effect:Allow, Action:*, Resource:*"
+    assessment:
+      objectives:
+        - id: "3.1.5[a]"
+          description: "Privileged accounts are identified"
+          auto_assessable: true
+          evidence_source: "cedar"
+        - id: "3.1.5[b]"
+          description: "Access to privileged accounts is authorized in accordance with the principle of least privilege"
+          auto_assessable: true
+          evidence_source: "scp"
+        - id: "3.1.5[c]"
+          description: "Security functions are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── 3.13 System and Communications Protection ──────────────────────
+
+  - id: "3.13.1"
+    family: "System and Communications Protection"
+    title: "Monitor, control, and protect communications at external system boundaries and key internal boundaries"
+    responsibility:
+      aws: "AWS network infrastructure, VPC isolation, PrivateLink, Direct Connect"
+      customer: "Security groups, NACLs, VPC design, peering/transit gateway policies"
+    structural:
+      - id: "scp-deny-public-access"
+        description: "Deny creation of public-facing resources in SRE environments"
+        actions:
+          - "ec2:RunInstances"
+          - "s3:PutBucketPolicy"
+          - "rds:CreateDBInstance"
+          - "elasticloadbalancing:CreateLoadBalancer"
+        conditions:
+          - "ec2:AssociatePublicIpAddress == true"
+        effect: "Deny"
+    operational:
+      - id: "cedar-boundary-control"
+        description: "Network communications crossing SRE boundaries require explicit authorization"
+        entities: ["communication", "source_boundary", "destination_boundary"]
+        attributes:
+          communication: ["protocol", "direction", "data_classification"]
+          source_boundary: ["boundary_type", "enclave_membership"]
+          destination_boundary: ["boundary_type", "authorization_level"]
+    monitoring:
+      - id: "config-sg-no-unrestricted"
+        resource_type: "AWS::EC2::SecurityGroup"
+        check: "No inbound rules allowing 0.0.0.0/0"
+      - id: "config-vpc-flow-logs-enabled"
+        resource_type: "AWS::EC2::VPC"
+        check: "Flow logs enabled and delivered to centralized audit"
+
+  - id: "3.13.11"
+    family: "System and Communications Protection"
+    title: "Employ FIPS-validated cryptography when used to protect the confidentiality of CUI"
+    responsibility:
+      aws: "FIPS 140-2 validated endpoints, KMS HSMs, S3 SSE"
+      customer: "Use of FIPS endpoints, KMS key policies, TLS configuration"
+    structural:
+      - id: "scp-require-fips-endpoints"
+        description: "Deny API calls not using FIPS endpoints where available"
+        actions:
+          - "*"
+        conditions:
+          - "aws:SecureTransport == false"
+        effect: "Deny"
+      - id: "scp-require-kms-encryption"
+        description: "Deny storage operations without KMS encryption"
+        actions:
+          - "s3:PutObject"
+          - "rds:CreateDBInstance"
+          - "ebs:CreateVolume"
+        conditions:
+          - "encryption != aws:kms"
+        effect: "Deny"
+    operational:
+      - id: "cedar-fips-crypto"
+        description: "CUI operations must use FIPS-validated cryptographic modules"
+        entities: ["operation", "crypto_context"]
+        attributes:
+          operation: ["data_classification", "api_endpoint"]
+          crypto_context: ["fips_validated", "key_algorithm", "key_length"]
+    monitoring:
+      - id: "config-s3-default-encryption"
+        resource_type: "AWS::S3::Bucket"
+        check: "Default encryption with KMS (not SSE-S3)"
+      - id: "config-ebs-encryption"
+        resource_type: "AWS::EC2::Volume"
+        check: "EBS volumes encrypted with KMS"
+    assessment:
+      objectives:
+        - id: "3.13.11[a]"
+          description: "FIPS-validated cryptography is employed to protect CUI confidentiality"
+          auto_assessable: true
+          evidence_source: "scp"
