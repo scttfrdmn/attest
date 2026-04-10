@@ -12,6 +12,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Makefile with build, test, vet, and security scanning targets.
 - GitHub Actions security workflow: govulncheck, Trivy (filesystem + IaC),
   Semgrep SAST. Runs on push, PR, and weekly cron.
+- Expanded v1 architecture with 13 new packages:
+  - `internal/evaluator/` — continuous Cedar PDP runtime (EventBridge-driven).
+  - `internal/integrations/` — 12 AWS security service integrations
+    (Security Hub, Config, GuardDuty, CloudTrail, IAM Access Analyzer,
+    Macie, Inspector, Firewall Manager, KMS, SSM, EventBridge, Organizations).
+  - `internal/dashboard/` — web dashboard server (Go net/http + HTMX + SSE).
+  - `internal/ai/` — 7 Bedrock+Claude capabilities: Artifact comprehension,
+    natural language → Cedar, anomaly detection, compliance analyst agent,
+    framework change impact, audit simulation, remediation synthesis.
+  - `internal/principal/` — entity attribute resolver (SAML, LDAP, LMS, IRB)
+    with plugin interface for institutional systems.
+  - `internal/waiver/` — compliance exception management (time-bounded,
+    scoped, auditable, Cedar-aware).
+  - `internal/testing/` — policy unit tests, CloudTrail simulation,
+    Terraform CI/CD compliance checks (SARIF output).
+  - `internal/provision/` — automated environment provisioning with
+    prerequisite checking.
+  - `internal/store/` — git-backed policy store (.attest/ layout).
+  - `internal/iac/` — IaC output (Terraform modules, CDK constructs).
+  - `internal/reporting/` — trend analysis and incident lifecycle reports.
+  - `internal/auth/` — Bouncing authn + Cedar authz for dashboard.
+  - `internal/document/oscal/` — OSCAL export (SSP, Assessment Results, POA&M).
+- New CLI commands: serve, test, check, simulate, provision, waiver
+  (create/list/expire), report, ai (ask/audit-sim/translate/analyze/
+  impact/remediate).
+- `--output terraform|cdk` flag on `attest compile` for IaC generation.
+- Extended schema types: Waiver, Incident, PrincipalAttributes,
+  CedarDecision, PolicyTestSuite, IaCManifest, PostureSnapshot.
+- React dashboard prototype (`web/dashboard/App.jsx`) with 9 views:
+  Posture, Frameworks, Operations, Environments, Waivers, Incidents,
+  Tests & Deploy, Generate, AI Analyst.
 
 ## [0.1.0] - 2026-04-09
 

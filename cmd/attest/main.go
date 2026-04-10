@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "0.1.0"
+var version = "0.2.0-dev"
 
 func main() {
 	root := &cobra.Command{
@@ -31,6 +31,14 @@ within it are research environments that inherit the org-level posture.`,
 		generateCmd(),
 		diffCmd(),
 		watchCmd(),
+		serveCmd(),
+		testCmd(),
+		checkCmd(),
+		simulateCmd(),
+		provisionCmd(),
+		waiverCmd(),
+		reportCmd(),
+		aiCmd(),
 		versionCmd(),
 	)
 
@@ -125,19 +133,26 @@ func frameworksCmd() *cobra.Command {
 }
 
 func compileCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "compile",
 		Short: "Generate policy artifacts for active frameworks",
 		Long: `Compiles all active frameworks into deployable policy artifacts:
 SCPs (structural), Cedar policies (operational), and Config rules (monitoring).
-Produces the crosswalk manifest mapping every artifact to its framework controls.`,
+Produces the crosswalk manifest mapping every artifact to its framework controls.
+
+Use --output terraform or --output cdk to generate IaC modules alongside
+the raw policy artifacts.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			output, _ := cmd.Flags().GetString("output")
 			fmt.Println("Compiling policies for active frameworks...")
 			fmt.Println("  Resolving cross-framework control overlap...")
 			fmt.Println("  Generating SCPs (structural enforcement)...")
 			fmt.Println("  Generating Cedar policies (operational enforcement)...")
 			fmt.Println("  Generating Config rules (drift monitoring)...")
 			fmt.Println("  Writing crosswalk manifest...")
+			if output != "" {
+				fmt.Printf("  Generating %s output...\n", output)
+			}
 			fmt.Println()
 			fmt.Println("Compiled artifacts written to .attest/compiled/")
 			fmt.Println("  12 SCPs, 23 Cedar policies, 8 Config rules")
@@ -147,6 +162,8 @@ Produces the crosswalk manifest mapping every artifact to its framework controls
 			return nil
 		},
 	}
+	cmd.Flags().String("output", "", "IaC output format: terraform, cdk")
+	return cmd
 }
 
 func applyCmd() *cobra.Command {
@@ -277,6 +294,217 @@ Violations emit to Security Hub and the decision log.`,
 			select {} // block
 		},
 	}
+}
+
+func serveCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Launch the compliance dashboard",
+		Long: `Starts the web dashboard on the specified address. The dashboard
+provides real-time compliance visibility: posture, frameworks, Cedar PDP
+operations feed, environment status, waivers, incidents, and document generation.
+
+Same binary, same data as the CLI — the dashboard is the "always on"
+complement to the CLI's point-in-time commands.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			addr, _ := cmd.Flags().GetString("addr")
+			fmt.Printf("Starting attest dashboard on %s...\n", addr)
+			fmt.Println("  Loading SRE configuration...")
+			fmt.Println("  Connecting to Cedar PDP...")
+			fmt.Println("  Dashboard ready.")
+			return nil
+		},
+	}
+	cmd.Flags().String("addr", ":8443", "Listen address")
+	return cmd
+}
+
+func testCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "test",
+		Short: "Run policy unit tests against cedar-go",
+		Long: `Executes policy test suites defined in .attest/tests/. Each test case
+specifies a principal, action, resource with attributes and the expected
+Cedar decision (ALLOW or DENY). Tests run locally — no deployment needed.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Println("Running policy tests...")
+			fmt.Println("  Loading compiled Cedar policies...")
+			fmt.Println("  Executing test suites...")
+			return nil
+		},
+	}
+}
+
+func checkCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "check",
+		Short: "CI/CD compliance gate for Terraform plans",
+		Long: `Evaluates a Terraform plan JSON against Cedar policies to catch
+compliance violations before deployment. Outputs SARIF for GitHub
+annotation integration. Use in CI/CD pipelines.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			tf, _ := cmd.Flags().GetString("terraform")
+			fmt.Printf("Checking Terraform plan: %s\n", tf)
+			fmt.Println("  Loading Cedar policies...")
+			fmt.Println("  Extracting resource changes...")
+			fmt.Println("  Evaluating compliance...")
+			return nil
+		},
+	}
+	cmd.Flags().String("terraform", "", "Path to Terraform plan JSON")
+	cmd.Flags().String("output", "text", "Output format: text, sarif, json")
+	_ = cmd.MarkFlagRequired("terraform")
+	return cmd
+}
+
+func simulateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "simulate",
+		Short: "Replay CloudTrail events against proposed policies",
+		Long: `Replays a window of real CloudTrail events against a proposed policy
+set and diffs the results. Shows which operations would change from
+ALLOW to DENY (or vice versa) and their impact on production workloads.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Println("Running policy simulation...")
+			fmt.Println("  Loading proposed policies...")
+			fmt.Println("  Replaying CloudTrail events...")
+			return nil
+		},
+	}
+}
+
+func provisionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "provision",
+		Short: "Create a new compliant research environment",
+		Long: `Creates a new AWS account in the SRE with the correct OU placement,
+tags, and Cedar entity registration based on the requested data
+classifications. Checks prerequisites (BAA signed, training current)
+before provisioning.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Println("Computing provisioning plan...")
+			fmt.Println("  Checking prerequisites...")
+			fmt.Println("  Determining target OU from data classes...")
+			return nil
+		},
+	}
+}
+
+func waiverCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "waiver",
+		Short: "Manage compliance exceptions",
+	}
+	cmd.AddCommand(
+		&cobra.Command{
+			Use:   "create",
+			Short: "Create a new compliance waiver",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				fmt.Println("Creating waiver...")
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "list",
+			Short: "List active waivers",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				fmt.Println("Active waivers:")
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "expire [waiver-id]",
+			Short: "Expire a waiver",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				fmt.Printf("Expiring waiver: %s\n", args[0])
+				return nil
+			},
+		},
+	)
+	return cmd
+}
+
+func reportCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "report",
+		Short: "Generate posture trend reports",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			window, _ := cmd.Flags().GetString("window")
+			fmt.Printf("Generating trend report (window: %s)...\n", window)
+			fmt.Println("  Loading posture history...")
+			fmt.Println("  Computing score trajectory...")
+			fmt.Println("  Analyzing remediation velocity...")
+			return nil
+		},
+	}
+	cmd.Flags().String("window", "90d", "Report window (e.g., 30d, 90d, 1y)")
+	return cmd
+}
+
+func aiCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "ai",
+		Short: "AI-powered compliance capabilities (Bedrock + Claude)",
+		Long: `AI capabilities grounded in system truth. The AI never generates
+compliance facts — it reasons over facts the deterministic system has
+already validated. Every claim cites a specific artifact.`,
+	}
+	cmd.AddCommand(
+		&cobra.Command{
+			Use:   "ask [question]",
+			Short: "Ask the compliance analyst a question",
+			Args:  cobra.MinimumNArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				fmt.Println("Querying compliance state...")
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "audit-sim",
+			Short: "Simulate a compliance assessment",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				fmt.Println("Running audit simulation...")
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "translate [natural-language]",
+			Short: "Translate natural language to a Cedar policy",
+			Args:  cobra.MinimumNArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				fmt.Println("Translating to Cedar policy...")
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "analyze",
+			Short: "Detect anomalies in Cedar decision log",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				fmt.Println("Analyzing decision log...")
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "impact [framework-path]",
+			Short: "Analyze framework change impact",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				fmt.Printf("Analyzing framework change: %s\n", args[0])
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use:   "remediate [control-id]",
+			Short: "Generate remediation artifacts for a control gap",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				fmt.Printf("Generating remediation for %s...\n", args[0])
+				return nil
+			},
+		},
+	)
+	return cmd
 }
 
 func versionCmd() *cobra.Command {

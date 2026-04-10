@@ -195,3 +195,113 @@ type FrameworkPosture struct {
 	Controls    map[string]string `yaml:"controls" json:"controls"` // control_id → status
 	Score       float64           `yaml:"score" json:"score"`       // 0.0 - 1.0 (for CMMC scoring)
 }
+
+// --- Waivers ---
+
+// Waiver is a time-bounded, approved exception to a compliance control.
+// When a control cannot be fully enforced (e.g., air-gapped instruments
+// requiring USB transfer), the waiver documents the exception, its
+// compensating controls, and its expiry.
+type Waiver struct {
+	ID                 string    `yaml:"id" json:"id"`                                     // e.g., "W-2025-003"
+	ControlID          string    `yaml:"control_id" json:"control_id"`                     // control being waived
+	Title              string    `yaml:"title" json:"title"`                               // human-readable description
+	Scope              string    `yaml:"scope" json:"scope"`                               // environment or OU scope
+	ApprovedBy         string    `yaml:"approved_by" json:"approved_by"`                   // approver (e.g., "CISO Dr. Park")
+	ApprovedAt         time.Time `yaml:"approved_at" json:"approved_at"`
+	ExpiresAt          time.Time `yaml:"expires_at" json:"expires_at"`
+	Status             string    `yaml:"status" json:"status"`                             // "active", "expiring", "expired"
+	Justification      string    `yaml:"justification" json:"justification"`
+	CompensatingControls []string `yaml:"compensating_controls" json:"compensating_controls"`
+}
+
+// --- Incidents ---
+
+// Incident tracks a security event through its lifecycle.
+// Incidents degrade affected control postures and generate POA&M entries.
+type Incident struct {
+	ID            string    `yaml:"id" json:"id"`                       // e.g., "INC-2025-012"
+	Title         string    `yaml:"title" json:"title"`
+	Severity      string    `yaml:"severity" json:"severity"`           // "critical", "high", "medium", "low"
+	DetectedAt    time.Time `yaml:"detected_at" json:"detected_at"`
+	ResolvedAt    time.Time `yaml:"resolved_at,omitempty" json:"resolved_at,omitempty"`
+	Status        string    `yaml:"status" json:"status"`               // "open", "investigating", "remediated", "closed"
+	AffectedControls []string `yaml:"affected_controls" json:"affected_controls"` // control IDs
+	Remediation   string    `yaml:"remediation" json:"remediation"`
+	Source        string    `yaml:"source" json:"source"`               // "guardduty", "securityhub", "cedar", "manual"
+}
+
+// --- Principal Attributes ---
+
+// PrincipalAttributes are the entity attributes Cedar policies evaluate.
+// Sourced from external systems via the principal attribute resolver.
+type PrincipalAttributes struct {
+	PrincipalARN       string            `json:"principal_arn"`
+	HumanIdentity      string            `json:"human_identity,omitempty"`       // resolved human behind the role
+	LabMembership      []string          `json:"lab_membership,omitempty"`       // from directory/HR
+	CUITrainingCurrent bool              `json:"cui_training_current"`           // from LMS
+	CUITrainingExpiry  time.Time         `json:"cui_training_expiry,omitempty"`  // from LMS
+	IRBProtocols       []string          `json:"irb_protocols,omitempty"`        // from IRB system (Cayuse/iRIS)
+	ComputeAllocation  float64           `json:"compute_allocation,omitempty"`   // from research computing
+	AdminLevel         string            `json:"admin_level,omitempty"`          // "none", "env", "sre"
+	Attributes         map[string]string `json:"attributes,omitempty"`           // extensible attributes
+}
+
+// --- Cedar Evaluation ---
+
+// CedarDecision records a single Cedar PDP authorization decision.
+type CedarDecision struct {
+	Timestamp   time.Time `json:"timestamp"`
+	Action      string    `json:"action"`       // e.g., "s3:PutObject"
+	Principal   string    `json:"principal"`     // IAM ARN
+	Resource    string    `json:"resource"`      // resource ARN
+	Effect      string    `json:"effect"`        // "ALLOW", "DENY"
+	PolicyID    string    `json:"policy_id"`     // which Cedar policy made the decision
+	ControlID   string    `json:"control_id"`    // framework control satisfied
+	AccountID   string    `json:"account_id"`
+	WaiverID    string    `json:"waiver_id,omitempty"` // if allowed via waiver
+	DenyReason  string    `json:"deny_reason,omitempty"`
+}
+
+// --- Policy Testing ---
+
+// PolicyTestSuite defines a set of test scenarios for Cedar policies.
+type PolicyTestSuite struct {
+	Name  string       `yaml:"name" json:"name"`
+	Cases []PolicyTestCase `yaml:"cases" json:"cases"`
+}
+
+// PolicyTestCase is a single test scenario.
+type PolicyTestCase struct {
+	Description string            `yaml:"description" json:"description"`
+	Principal   map[string]any    `yaml:"principal" json:"principal"`     // entity attributes
+	Action      string            `yaml:"action" json:"action"`
+	Resource    map[string]any    `yaml:"resource" json:"resource"`       // entity attributes
+	Expected    string            `yaml:"expected" json:"expected"`       // "ALLOW" or "DENY"
+	ControlID   string            `yaml:"control_id" json:"control_id"`
+}
+
+// --- IaC Output ---
+
+// IaCManifest describes the generated IaC artifacts from attest compile.
+type IaCManifest struct {
+	Format      string    `json:"format"`       // "terraform", "cdk"
+	GeneratedAt time.Time `json:"generated_at"`
+	Modules     []IaCModule `json:"modules"`
+}
+
+// IaCModule is a single IaC module or construct.
+type IaCModule struct {
+	Name     string   `json:"name"`      // e.g., "scps", "config-rules", "eventbridge"
+	Path     string   `json:"path"`      // output directory
+	Controls []string `json:"controls"`  // framework controls satisfied
+}
+
+// --- Posture History ---
+
+// PostureSnapshot is a saved posture at a point in time for trend analysis.
+type PostureSnapshot struct {
+	Timestamp time.Time `json:"timestamp"`
+	Posture   Posture   `json:"posture"`
+	Label     string    `json:"label,omitempty"` // e.g., "assessment-2025-q1"
+}

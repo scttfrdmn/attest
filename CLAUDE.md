@@ -45,33 +45,49 @@ live state of an AWS Organization.
 ## Architecture
 
 ```
-Artifact API --> Framework Parser
-Org API      --> Org Analyzer
-                    |
-              Control Gap Analysis
-                    |
-         +----------+----------+
-         v          v          v
-    SCP Compiler Cedar Comp  Config Comp
-         |          |          |
-         v          v          v
-    Crosswalk Manifest (control -> artifact)
-                    |
-         +----------+----------+
-         v          v          v
-     Deploy     Evaluate    Generate Docs
+Layer           Package                 What it does
+──────────────  ──────────────────────  ───────────────────────────────────
+Ingest          internal/artifact/      AWS Artifact API (reports, agreements)
+                internal/org/           AWS Organization topology analyzer
+                internal/framework/     YAML framework loader + resolver
+                internal/principal/     Entity attribute resolver (SAML, LDAP, LMS, IRB)
+
+Compile         internal/compiler/scp/  SCP generation from framework controls
+                internal/compiler/cedar Cedar policy generation
+                internal/iac/           IaC output (Terraform, CDK)
+
+Enforce         internal/evaluator/     Continuous Cedar PDP + EventBridge
+                internal/integrations/  12 AWS security service integrations
+
+Govern          internal/waiver/        Exception management (time-bounded, auditable)
+                internal/testing/       Policy unit tests, simulation, Terraform CI checks
+                internal/provision/     Automated environment creation
+                internal/store/         Git-backed policy store + versioning
+
+Report          internal/document/ssp/  SSP generation from live state
+                internal/document/oscal OSCAL export (SSP, AR, POA&M)
+                internal/reporting/     Trend analysis, incident lifecycle
+
+Reason          internal/ai/            7 Bedrock+Claude capabilities
+Present         internal/dashboard/     Go+HTMX web dashboard, SSE live feed
+                internal/auth/          Bouncing authn + Cedar authz for dashboard
+
+Core            cmd/attest/             CLI entry point (cobra)
+                pkg/schema/             Core types (SRE, Framework, Control, Crosswalk, Posture)
+                web/dashboard/          React dashboard prototype
 ```
 
-### Key packages
+### Open-core boundary
 
-- `cmd/attest/` — CLI entry point (cobra).
-- `internal/artifact/` — AWS Artifact API client (reports, agreements).
-- `internal/org/` — AWS Organizations analyzer (topology, existing SCPs).
-- `internal/framework/` — Framework loader, validator, cross-framework resolver.
-- `internal/compiler/scp/` — SCP compiler (structural enforcement).
-- `internal/compiler/cedar/` — Cedar policy compiler (operational enforcement).
-- `internal/document/ssp/` — SSP generator (and future POA&M, OSCAL).
-- `pkg/schema/` — Core data model (SRE, Framework, Control, Crosswalk, Posture).
+| Open Source (compile + enforce)            | Commercial (operate + reason)              |
+|--------------------------------------------|--------------------------------------------|
+| Framework definition schema                | Cedar PDP (continuous enforcement)         |
+| Community-maintained framework definitions | Compliance dashboard                       |
+| SCP/Cedar/Config compilers                 | AI capabilities (Bedrock + Claude)         |
+| Crosswalk manifest generator               | Multi-SRE management                       |
+| CLI gap analysis + document generation     | GRC integrations (OSCAL continuous)        |
+| IaC output (Terraform, CDK)               | Operational monitoring + alerting          |
+| Policy testing + simulation                | Bouncing auth for dashboard                |
 
 ## Domain Concepts
 
@@ -80,6 +96,8 @@ Org API      --> Org Analyzer
 - **Framework**: A compliance standard (NIST 800-171, HIPAA, etc.) as YAML.
 - **Crosswalk**: The mapping from framework controls to deployed artifacts.
 - **Posture**: Computed compliance state — enforced, partial, gap, aws_covered.
+- **Waiver**: Time-bounded, approved exception to a control with compensating controls.
+- **Principal Attributes**: Entity attributes Cedar evaluates, sourced from external systems.
 
 ## Frameworks
 
