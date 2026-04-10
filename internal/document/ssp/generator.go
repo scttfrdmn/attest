@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scttfrdmn/attest/internal/framework"
 	"github.com/scttfrdmn/attest/pkg/schema"
 )
 
