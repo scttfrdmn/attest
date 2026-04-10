@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Makefile with build, test, vet, and security scanning targets.
+- GitHub Actions security workflow: govulncheck, Trivy (filesystem + IaC),
+  Semgrep SAST. Runs on push, PR, and weekly cron.
+
 ## [0.1.0] - 2026-04-09
 
 ### Added
