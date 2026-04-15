@@ -1,0 +1,517 @@
+# HIPAA Security Rule — 45 CFR Part 164, Subpart C
+#
+# Covers the Security Standards for the Protection of Electronic Protected
+# Health Information (ePHI) in AWS-hosted research environments.
+#
+# This framework is activated when a Business Associate Agreement (BAA)
+# is signed with AWS via the Artifact agreements API.
+#
+# Source: https://www.hhs.gov/hipaa/for-professionals/security/index.html
+# Assessment: HIPAA Security Rule Crosswalk to NIST Cybersecurity Framework
+
+id: hipaa
+name: "HIPAA Security Rule"
+version: "2013"
+source: "https://www.ecfr.gov/current/title-45/subtitle-A/subchapter-C/part-164/subpart-C"
+
+artifact_reports:
+  - series: "HIPAA Compliance"
+    category: "HIPAA"
+  - series: "SOC 2 Type II"
+    category: "SOC"
+
+controls:
+
+  # ── §164.308 Administrative Safeguards ───────────────────────────────
+
+  - id: "164.308(a)(1)"
+    family: "Administrative Safeguards"
+    title: "Security Management Process — Implement policies and procedures to prevent, detect, contain, and correct security violations"
+    responsibility:
+      aws: "AWS provides security management tooling (GuardDuty, Security Hub, Config)"
+      customer: "Risk analysis, risk management policy, sanction policy, information system activity review"
+    structural:
+      - id: "scp-protect-cloudtrail"
+        description: "Deny disabling CloudTrail (required for activity review)"
+        actions:
+          - "cloudtrail:DeleteTrail"
+          - "cloudtrail:StopLogging"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /admin/"
+        effect: "Deny"
+    monitoring:
+      - id: "config-cloudtrail-enabled-hipaa"
+        resource_type: "AWS::CloudTrail::Trail"
+        check: "CloudTrail enabled with multi-region logging"
+    assessment:
+      objectives:
+        - id: "164.308(a)(1)[a]"
+          description: "Risk analysis is performed to identify ePHI security risks"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.308(a)(1)[b]"
+          description: "Risk management measures are implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.308(a)(1)[c]"
+          description: "Sanction policy is applied to workforce members who violate policies"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.308(a)(1)[d]"
+          description: "Information system activity is regularly reviewed"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "164.308(a)(2)"
+    family: "Administrative Safeguards"
+    title: "Assigned Security Responsibility — Identify the security official responsible for policies and procedures"
+    responsibility:
+      aws: "No AWS responsibility"
+      customer: "Designate a security officer; document in system security plan"
+    assessment:
+      objectives:
+        - id: "164.308(a)(2)[a]"
+          description: "A security official is identified and assigned responsibility"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "164.308(a)(3)"
+    family: "Administrative Safeguards"
+    title: "Workforce Security — Implement policies and procedures to ensure appropriate workforce access to ePHI"
+    responsibility:
+      aws: "IAM supports workforce access management"
+      customer: "Authorization/supervision procedures, workforce clearance, termination procedures"
+    structural:
+      - id: "scp-deny-admin-star"
+        description: "Deny broad administrative actions outside admin roles"
+        actions:
+          - "iam:*"
+          - "organizations:*"
+        conditions:
+          - "aws:PrincipalARN != arn:aws:iam::*:role/SREAdmin"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "164.308(a)(3)[a]"
+          description: "Workforce access to ePHI is appropriately authorized"
+          auto_assessable: true
+          evidence_source: "scp"
+        - id: "164.308(a)(3)[b]"
+          description: "Workforce clearance procedures are implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.308(a)(3)[c]"
+          description: "Termination procedures revoke ePHI access"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "164.308(a)(4)"
+    family: "Administrative Safeguards"
+    title: "Information Access Management — Implement policies and procedures for authorizing access to ePHI"
+    responsibility:
+      aws: "IAM identity-based and resource-based policies"
+      customer: "Access authorization procedures, access establishment and modification"
+    operational:
+      - id: "cedar-hipaa-access"
+        description: "ePHI access requires active authorization and covered entity membership"
+        entities: ["principal", "phi_resource"]
+        attributes:
+          principal: ["hipaa_authorized", "covered_entity_member", "training_complete"]
+          phi_resource: ["phi_classification", "covered_entity_id"]
+    assessment:
+      objectives:
+        - id: "164.308(a)(4)[a]"
+          description: "Access to ePHI is authorized only for workforce members with business need"
+          auto_assessable: true
+          evidence_source: "cedar"
+        - id: "164.308(a)(4)[b]"
+          description: "Access establishment and modification procedures are implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "164.308(a)(5)"
+    family: "Administrative Safeguards"
+    title: "Security Awareness and Training — Implement security awareness and training program for all workforce"
+    responsibility:
+      aws: "AWS provides HIPAA training materials via Artifact"
+      customer: "Security reminders, malicious software protection training, log-in monitoring training"
+    monitoring:
+      - id: "config-guardduty-enabled-hipaa"
+        resource_type: "AWS::GuardDuty::Detector"
+        check: "GuardDuty enabled for malicious software and anomaly detection"
+    assessment:
+      objectives:
+        - id: "164.308(a)(5)[a]"
+          description: "Security awareness and training program is implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.308(a)(5)[b]"
+          description: "Workforce is trained on malicious software protection"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "164.308(a)(6)"
+    family: "Administrative Safeguards"
+    title: "Security Incident Procedures — Implement policies to address security incidents"
+    responsibility:
+      aws: "AWS Security Hub aggregates findings; Incident Manager supports response"
+      customer: "Incident response and reporting procedures, documentation of incidents"
+    monitoring:
+      - id: "config-security-hub-hipaa"
+        resource_type: "AWS::SecurityHub::Hub"
+        check: "Security Hub enabled with HIPAA-relevant standards"
+    assessment:
+      objectives:
+        - id: "164.308(a)(6)[a]"
+          description: "Security incidents are identified and responded to"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.308(a)(6)[b]"
+          description: "Security incidents are documented and mitigated"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "164.308(a)(7)"
+    family: "Administrative Safeguards"
+    title: "Contingency Plan — Establish policies for responding to emergencies affecting ePHI systems"
+    responsibility:
+      aws: "AWS multi-AZ/region infrastructure, S3 durability, RDS automated backups"
+      customer: "Data backup plan, disaster recovery plan, emergency mode operation plan"
+    monitoring:
+      - id: "config-backup-enabled-hipaa"
+        resource_type: "AWS::Backup::BackupVault"
+        check: "AWS Backup enabled for ePHI-containing resources"
+    assessment:
+      objectives:
+        - id: "164.308(a)(7)[a]"
+          description: "Data backup plan is implemented and tested"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.308(a)(7)[b]"
+          description: "Disaster recovery plan is implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.308(a)(7)[c]"
+          description: "Emergency mode operation plan exists"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "164.308(a)(8)"
+    family: "Administrative Safeguards"
+    title: "Evaluation — Perform periodic technical and nontechnical evaluation of security controls"
+    responsibility:
+      aws: "AWS Artifact provides compliance reports as evaluation evidence"
+      customer: "Periodic security evaluations; attest scan + generate assess as automated evaluation"
+    assessment:
+      objectives:
+        - id: "164.308(a)(8)[a]"
+          description: "Periodic evaluation of security policies and controls is performed"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "164.308(b)(1)"
+    family: "Administrative Safeguards"
+    title: "Business Associate Contracts — Obtain satisfactory assurances from business associates protecting ePHI"
+    responsibility:
+      aws: "AWS BAA available via Artifact — activates HIPAA framework in attest"
+      customer: "Sign AWS BAA; execute BAAs with other business associates"
+    assessment:
+      objectives:
+        - id: "164.308(b)(1)[a]"
+          description: "Business Associate Agreement is signed with AWS"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.308(b)(1)[b]"
+          description: "BAAs are executed with all applicable business associates"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── §164.310 Physical Safeguards ─────────────────────────────────────
+
+  - id: "164.310(a)(1)"
+    family: "Physical Safeguards"
+    title: "Facility Access Controls — Implement policies to limit physical access to ePHI electronic information systems"
+    responsibility:
+      aws: "AWS data center physical access controls documented in SOC 2 via Artifact"
+      customer: "Physical access controls for on-premises components connecting to AWS"
+    assessment:
+      objectives:
+        - id: "164.310(a)(1)[a]"
+          description: "Physical access to ePHI systems is appropriately controlled"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "164.310(b)"
+    family: "Physical Safeguards"
+    title: "Workstation Use — Implement policies specifying proper workstation functions and physical surroundings"
+    responsibility:
+      aws: "No AWS responsibility for workstation use"
+      customer: "Workstation use policies; VPN requirements for accessing ePHI from workstations"
+    assessment:
+      objectives:
+        - id: "164.310(b)[a]"
+          description: "Workstation use policies are implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "164.310(c)"
+    family: "Physical Safeguards"
+    title: "Workstation Security — Implement physical safeguards for workstations accessing ePHI"
+    responsibility:
+      aws: "No AWS responsibility for workstation physical security"
+      customer: "Physical access restrictions on workstations; screen locks; device encryption"
+    assessment:
+      objectives:
+        - id: "164.310(c)[a]"
+          description: "Physical safeguards for workstations are implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "164.310(d)(1)"
+    family: "Physical Safeguards"
+    title: "Device and Media Controls — Implement policies for final disposition of ePHI and hardware containing it"
+    responsibility:
+      aws: "AWS media sanitization and disposal per SOC 2 — Artifact evidence available"
+      customer: "Disposal, media re-use, accountability, and data backup procedures"
+    assessment:
+      objectives:
+        - id: "164.310(d)(1)[a]"
+          description: "Disposal procedures for ePHI media are implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.310(d)(1)[b]"
+          description: "Media re-use procedures remove ePHI before reuse"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── §164.312 Technical Safeguards ────────────────────────────────────
+
+  - id: "164.312(a)(1)"
+    family: "Technical Safeguards"
+    title: "Access Control — Implement technical policies to allow only authorized persons or software programs access to ePHI"
+    responsibility:
+      aws: "IAM access control, resource-based policies, VPC isolation"
+      customer: "Unique user identification, emergency access procedure, automatic logoff, encryption/decryption"
+    structural:
+      - id: "scp-require-mfa"
+        description: "Deny all actions without MFA for human principals accessing ePHI"
+        actions:
+          - "*"
+        conditions:
+          - "aws:MultiFactorAuthPresent != true"
+          - "aws:PrincipalType == IAMUser"
+        effect: "Deny"
+    operational:
+      - id: "cedar-hipaa-authorized-principals"
+        description: "Only HIPAA-authorized principals with active BAA coverage can access PHI resources"
+        entities: ["principal", "phi_resource"]
+        attributes:
+          principal: ["hipaa_authorized", "covered_entity_member", "mfa_enabled"]
+          phi_resource: ["phi_classification", "enclave_membership"]
+    monitoring:
+      - id: "config-iam-mfa-hipaa"
+        resource_type: "AWS::IAM::User"
+        check: "MFA enabled for all IAM users with ePHI access"
+    assessment:
+      objectives:
+        - id: "164.312(a)(1)[a]"
+          description: "Unique user identification is assigned to each user"
+          auto_assessable: true
+          evidence_source: "cedar"
+        - id: "164.312(a)(1)[b]"
+          description: "Emergency access procedure exists for obtaining ePHI during emergencies"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.312(a)(1)[c]"
+          description: "Automatic logoff terminates sessions after inactivity"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.312(a)(1)[d]"
+          description: "Encryption and decryption mechanisms for ePHI are implemented"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "164.312(a)(2)(iv)"
+    family: "Technical Safeguards"
+    title: "Encryption and Decryption — Mechanism to encrypt and decrypt ePHI"
+    responsibility:
+      aws: "KMS FIPS 140-2 HSMs, S3 SSE, RDS encryption at rest, EBS encryption"
+      customer: "Enable encryption for all ePHI storage; KMS CMK management"
+    structural:
+      - id: "scp-require-kms-encryption"
+        description: "Deny storage operations without KMS encryption for ePHI workloads"
+        actions:
+          - "s3:PutObject"
+          - "rds:CreateDBInstance"
+          - "ebs:CreateVolume"
+        conditions:
+          - "encryption != aws:kms"
+        effect: "Deny"
+    monitoring:
+      - id: "config-s3-kms-hipaa"
+        resource_type: "AWS::S3::Bucket"
+        check: "S3 buckets with PHI tag use KMS encryption"
+      - id: "config-rds-encrypted-hipaa"
+        resource_type: "AWS::RDS::DBInstance"
+        check: "RDS instances encrypted with KMS"
+    assessment:
+      objectives:
+        - id: "164.312(a)(2)(iv)[a]"
+          description: "ePHI at rest is encrypted with FIPS-validated cryptography"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "164.312(b)"
+    family: "Technical Safeguards"
+    title: "Audit Controls — Implement hardware, software, and/or procedural mechanisms that record and examine activity in systems containing ePHI"
+    responsibility:
+      aws: "CloudTrail, CloudWatch Logs, S3 server access logs, RDS audit logs"
+      customer: "Enable and retain audit logs; configure CloudTrail for ePHI accounts"
+    structural:
+      - id: "scp-protect-audit-logs"
+        description: "Deny deletion or modification of audit trails for ePHI systems"
+        actions:
+          - "cloudtrail:DeleteTrail"
+          - "cloudtrail:StopLogging"
+          - "s3:DeleteBucket"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /security/"
+        effect: "Deny"
+    monitoring:
+      - id: "config-cloudtrail-hipaa"
+        resource_type: "AWS::CloudTrail::Trail"
+        check: "CloudTrail logging enabled for all management and data events in ePHI accounts"
+    assessment:
+      objectives:
+        - id: "164.312(b)[a]"
+          description: "Activity in ePHI systems is recorded and can be examined"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "164.312(c)(1)"
+    family: "Technical Safeguards"
+    title: "Integrity — Implement policies and procedures to protect ePHI from improper alteration or destruction"
+    responsibility:
+      aws: "S3 Object Lock, S3 versioning, DynamoDB point-in-time recovery"
+      customer: "Enable versioning and integrity controls for ePHI storage; hash validation"
+    monitoring:
+      - id: "config-s3-versioning-phi"
+        resource_type: "AWS::S3::Bucket"
+        check: "S3 buckets containing PHI have versioning enabled"
+    assessment:
+      objectives:
+        - id: "164.312(c)(1)[a]"
+          description: "ePHI is protected from improper alteration or destruction"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "164.312(d)"
+    family: "Technical Safeguards"
+    title: "Person or Entity Authentication — Implement procedures to verify that a person or entity seeking access to ePHI is who they claim to be"
+    responsibility:
+      aws: "IAM MFA, STS temporary credentials, Cognito identity federation"
+      customer: "MFA enforcement for ePHI access; identity federation configuration"
+    structural:
+      - id: "scp-mfa-privileged"
+        description: "Deny privileged role assumption without MFA"
+        actions:
+          - "sts:AssumeRole"
+        conditions:
+          - "aws:MultiFactorAuthPresent != true"
+          - "aws:PrincipalARN contains /admin/"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "164.312(d)[a]"
+          description: "Person or entity authentication is implemented for ePHI access"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "164.312(e)(1)"
+    family: "Technical Safeguards"
+    title: "Transmission Security — Implement technical security measures to guard against unauthorized access to ePHI transmitted over electronic communications networks"
+    responsibility:
+      aws: "TLS 1.2+ for all AWS service endpoints; FIPS 140-2 TLS options"
+      customer: "Enforce TLS via SCP; use FIPS endpoints for ePHI transmission"
+    structural:
+      - id: "scp-require-fips-endpoints"
+        description: "Deny API calls not using TLS (SecureTransport)"
+        actions:
+          - "*"
+        conditions:
+          - "aws:SecureTransport == false"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "164.312(e)(1)[a]"
+          description: "ePHI transmitted over electronic networks is protected"
+          auto_assessable: true
+          evidence_source: "scp"
+        - id: "164.312(e)(1)[b]"
+          description: "Encryption of ePHI in transit is implemented where required"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  # ── §164.314 Organizational Requirements ─────────────────────────────
+
+  - id: "164.314(a)(1)"
+    family: "Organizational Requirements"
+    title: "Business Associate Contracts — Covered entity must enter into a contract with its business associates"
+    responsibility:
+      aws: "AWS is a business associate; BAA available via Artifact"
+      customer: "Execute and maintain BAAs with all business associates including AWS"
+    assessment:
+      objectives:
+        - id: "164.314(a)(1)[a]"
+          description: "Business associate contracts are in place with all applicable parties"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "164.314(b)(1)"
+    family: "Organizational Requirements"
+    title: "Requirements for Group Health Plans — Group health plan documents must be amended to require plan sponsors to safeguard ePHI"
+    responsibility:
+      aws: "Not applicable to most research environments"
+      customer: "Applicable to covered entities operating group health plans"
+    assessment:
+      objectives:
+        - id: "164.314(b)(1)[a]"
+          description: "Group health plan documents amended as required (if applicable)"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── §164.316 Policies and Procedures ─────────────────────────────────
+
+  - id: "164.316(a)"
+    family: "Policies and Procedures"
+    title: "Policies and Procedures — Implement reasonable and appropriate policies and procedures to comply with the Security Rule"
+    responsibility:
+      aws: "No AWS responsibility"
+      customer: "Written security policies covering all Security Rule requirements; SSP"
+    assessment:
+      objectives:
+        - id: "164.316(a)[a]"
+          description: "Written security policies are implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.316(a)[b]"
+          description: "Policies are reasonable and appropriate for the organization"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "164.316(b)(1)"
+    family: "Policies and Procedures"
+    title: "Documentation — Maintain written security policies, procedures, actions, activities, and assessments"
+    responsibility:
+      aws: "No AWS responsibility"
+      customer: "Retain documentation for 6 years; attest generates and retains SSP, POA&M, assessments"
+    assessment:
+      objectives:
+        - id: "164.316(b)(1)[a]"
+          description: "Security documentation is maintained for 6 years"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "164.316(b)(1)[b]"
+          description: "Documentation is available to authorized personnel"
+          auto_assessable: false
+          evidence_source: "manual"

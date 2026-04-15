@@ -14,12 +14,19 @@ import (
 	"github.com/scttfrdmn/attest/internal/artifact"
 	"github.com/scttfrdmn/attest/internal/compiler/cedar"
 	"github.com/scttfrdmn/attest/internal/compiler/scp"
+	"github.com/scttfrdmn/attest/internal/document/assessment"
+	"github.com/scttfrdmn/attest/internal/document/oscal"
+	"github.com/scttfrdmn/attest/internal/document/poam"
+	"github.com/scttfrdmn/attest/internal/document/ssp"
 	"github.com/scttfrdmn/attest/internal/framework"
 	"github.com/scttfrdmn/attest/internal/org"
+	_ "github.com/scttfrdmn/attest/internal/store" // imported for side effects; used via store.NewStore in compile
+	attesttesting "github.com/scttfrdmn/attest/internal/testing"
+	"github.com/scttfrdmn/attest/internal/waiver"
 	"github.com/scttfrdmn/attest/pkg/schema"
 )
 
-var version = "0.3.0-dev"
+var version = "0.4.0-dev"
 
 func main() {
 	root := &cobra.Command{
@@ -614,77 +621,204 @@ func evaluateCmd() *cobra.Command {
 func generateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "generate",
-		Short: "Generate compliance documents",
+		Short: "Generate compliance documents from compiled crosswalk",
+	}
+	cmd.AddCommand(generateSSPCmd(), generatePOAMCmd(), generateAssessCmd(), generateOSCALCmd())
+	return cmd
+}
+
+func generateSSPCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "ssp",
+		Short: "Generate System Security Plan",
+		Long: `Generates an SSP from the compiled crosswalk. Every fact in the SSP is
+derived from the crosswalk manifest — no hand-written content.
+Run 'attest compile' first.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fwDir, _ := cmd.Flags().GetString("frameworks")
+			return runGenerate(fwDir, "ssp")
+		},
+	}
+	cmd.Flags().String("frameworks", "frameworks", "Path to frameworks directory")
+	return cmd
+}
+
+func generatePOAMCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "poam",
+		Short: "Generate Plan of Action & Milestones",
+		Long:  "Generates a POA&M listing all gap and partial controls with milestones and remediation guidance.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runGenerate("frameworks", "poam")
+		},
+	}
+}
+
+func generateAssessCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "assess",
+		Short: "Generate CMMC 2.0 Level 2 self-assessment",
+		Long: `Scores the SRE against NIST 800-171A assessment objectives.
+Scoring: enforced = 5pts, partial = 3pts, planned = 1pt, gap = 0pts.
+Maximum: 110 controls × 5 = 550 points.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runGenerate("frameworks", "assess")
+		},
+	}
+}
+
+func generateOSCALCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "oscal",
+		Short: "Export all documents in OSCAL format",
+		Long:  "Exports the SSP and Assessment Results in NIST OSCAL 1.1.2 JSON format.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runGenerate("frameworks", "oscal")
+		},
+	}
+}
+
+// runGenerate is the shared document generation logic.
+func runGenerate(fwDir, docType string) error {
+	// Load SRE config.
+	sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml"))
+	if err != nil {
+		return fmt.Errorf("reading .attest/sre.yaml: %w (run 'attest init' first)", err)
+	}
+	var sre schema.SRE
+	if err := yaml.Unmarshal(sreData, &sre); err != nil {
+		return fmt.Errorf("parsing sre.yaml: %w", err)
 	}
 
-	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "ssp",
-			Short: "Generate System Security Plan",
-			Long: `Generates an SSP from the current SRE state. Every fact in the SSP is
-derived from the crosswalk, deployed policies, and Cedar evaluation logs.
-The SSP is a computed artifact, not a hand-written document.`,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Println("Generating System Security Plan...")
-				fmt.Println("  Reading crosswalk manifest...")
-				fmt.Println("  Querying Cedar evaluation logs...")
-				fmt.Println("  Querying Config compliance history...")
-				fmt.Println("  Fetching Artifact report references...")
-				fmt.Println("  Generating control narratives...")
-				fmt.Println()
-				fmt.Println("SSP written to .attest/documents/ssp-nist-800-171-r2.md")
-				fmt.Println("OSCAL: .attest/documents/ssp-nist-800-171-r2.oscal.json")
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "poam",
-			Short: "Generate Plan of Action & Milestones",
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Println("Generating POA&M...")
-				fmt.Println("  Identifying control gaps...")
-				fmt.Println("  Estimating remediation effort...")
-				fmt.Println()
-				fmt.Println("POA&M written to .attest/documents/poam.md")
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "assess",
-			Short: "Generate self-assessment (CMMC, 800-171A)",
-			Long: `Scores the SRE against assessment objectives. For CMMC 2.0 Level 2,
-each NIST 800-171 control is scored based on enforcement depth:
-- Fully enforced (SCP + Cedar + Config): 5 points
-- Partially enforced: 3 points
-- Planned: 1 point
-- Gap: 0 points`,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Println("Generating self-assessment...")
-				fmt.Println("  Evaluating 110 controls against 800-171A objectives...")
-				fmt.Println()
-				fmt.Println("Score: 487/550 (88.5%)")
-				fmt.Println("  Implemented: 94 controls")
-				fmt.Println("  Partially Implemented: 11 controls")
-				fmt.Println("  Planned: 5 controls")
-				fmt.Println()
-				fmt.Println("Assessment written to .attest/documents/assessment.md")
-				fmt.Println("OSCAL: .attest/documents/assessment-results.oscal.json")
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "oscal",
-			Short: "Export all documents in OSCAL format",
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Println("Exporting to OSCAL...")
-				fmt.Println("  SSP → OSCAL SSP model")
-				fmt.Println("  Assessment → OSCAL Assessment Results model")
-				fmt.Println("  POA&M → OSCAL POA&M model")
-				return nil
-			},
-		},
-	)
-	return cmd
+	// Load crosswalk.
+	cwData, err := os.ReadFile(filepath.Join(".attest", "compiled", "crosswalk.yaml"))
+	if err != nil {
+		return fmt.Errorf("reading crosswalk: %w (run 'attest compile' first)", err)
+	}
+	var crosswalk schema.Crosswalk
+	if err := yaml.Unmarshal(cwData, &crosswalk); err != nil {
+		return fmt.Errorf("parsing crosswalk: %w", err)
+	}
+
+	// Determine framework from crosswalk.
+	fwID := strings.SplitN(crosswalk.Framework, "+", 2)[0]
+	loader := framework.NewLoader(fwDir)
+	fw, err := loader.Load(fwID)
+	if err != nil {
+		return fmt.Errorf("loading framework %s: %w", fwID, err)
+	}
+
+	// Ensure output directory exists.
+	docsDir := filepath.Join(".attest", "documents")
+	if err := os.MkdirAll(docsDir, 0750); err != nil {
+		return err
+	}
+
+	switch docType {
+	case "ssp":
+		return generateSSP(&sre, fw, &crosswalk, docsDir)
+	case "poam":
+		return generatePOAM(&sre, fw, &crosswalk, docsDir)
+	case "assess":
+		return generateAssessment(&sre, fw, &crosswalk, docsDir)
+	case "oscal":
+		if err := generateSSP(&sre, fw, &crosswalk, docsDir); err != nil {
+			return err
+		}
+		return generateOSCAL(&sre, fw, &crosswalk, docsDir)
+	}
+	return nil
+}
+
+func generateSSP(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Crosswalk, docsDir string) error {
+	fmt.Printf("Generating System Security Plan (%s)...\n", fw.Name)
+	gen := ssp.NewGenerator()
+	doc, err := gen.Generate(sre, fw, crosswalk, nil)
+	if err != nil {
+		return fmt.Errorf("generating SSP: %w", err)
+	}
+	md, err := doc.Render()
+	if err != nil {
+		return fmt.Errorf("rendering SSP: %w", err)
+	}
+	mdPath := filepath.Join(docsDir, "ssp-"+fw.ID+".md")
+	if err := os.WriteFile(mdPath, []byte(md), 0644); err != nil {
+		return err
+	}
+	fmt.Printf("  SSP written to %s\n", mdPath)
+	fmt.Printf("  Status: %s | Score: %.0f/%.0f\n", doc.OverallStatus, doc.Score, float64(len(fw.Controls)*5))
+	return nil
+}
+
+func generatePOAM(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Crosswalk, docsDir string) error {
+	fmt.Printf("Generating POA&M (%s)...\n", fw.Name)
+	gen := poam.NewGenerator()
+	doc, err := gen.Generate(sre, fw, crosswalk)
+	if err != nil {
+		return fmt.Errorf("generating POA&M: %w", err)
+	}
+	mdPath := filepath.Join(docsDir, "poam.md")
+	if err := os.WriteFile(mdPath, []byte(doc.Render()), 0644); err != nil {
+		return err
+	}
+	fmt.Printf("  POA&M written to %s\n", mdPath)
+	fmt.Printf("  Items: %d gaps, %d partial\n", doc.GapCount, doc.PartialCount)
+	return nil
+}
+
+func generateAssessment(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Crosswalk, docsDir string) error {
+	fmt.Printf("Generating self-assessment (%s)...\n", fw.Name)
+	gen := assessment.NewGenerator()
+	doc, err := gen.Generate(sre, fw, crosswalk)
+	if err != nil {
+		return fmt.Errorf("generating assessment: %w", err)
+	}
+	mdPath := filepath.Join(docsDir, "assessment.md")
+	if err := os.WriteFile(mdPath, []byte(doc.Render()), 0644); err != nil {
+		return err
+	}
+	fmt.Printf("  Assessment written to %s\n", mdPath)
+	fmt.Printf("  Score: %d/%d (%.1f%%) — %s\n", doc.TotalScore, doc.MaxScore, doc.ScorePercent, doc.Readiness)
+	return nil
+}
+
+func generateOSCAL(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Crosswalk, docsDir string) error {
+	fmt.Println("Exporting to OSCAL 1.1.2...")
+
+	// Re-generate SSP for OSCAL export.
+	sspGen := ssp.NewGenerator()
+	sspDoc, err := sspGen.Generate(sre, fw, crosswalk, nil)
+	if err != nil {
+		return err
+	}
+	sspExporter := oscal.NewSSPExporter()
+	sspJSON, err := sspExporter.ExportSSP(sspDoc)
+	if err != nil {
+		return fmt.Errorf("exporting SSP to OSCAL: %w", err)
+	}
+	sspPath := filepath.Join(docsDir, "ssp-"+fw.ID+".oscal.json")
+	if err := os.WriteFile(sspPath, sspJSON, 0644); err != nil {
+		return err
+	}
+	fmt.Printf("  SSP: %s\n", sspPath)
+
+	// Re-generate assessment for OSCAL export.
+	assGen := assessment.NewGenerator()
+	assDoc, err := assGen.Generate(sre, fw, crosswalk)
+	if err != nil {
+		return err
+	}
+	assExporter := oscal.NewAssessmentExporter()
+	assJSON, err := assExporter.ExportAssessment(assDoc)
+	if err != nil {
+		return fmt.Errorf("exporting assessment to OSCAL: %w", err)
+	}
+	assPath := filepath.Join(docsDir, "assessment-results.oscal.json")
+	if err := os.WriteFile(assPath, assJSON, 0644); err != nil {
+		return err
+	}
+	fmt.Printf("  Assessment Results: %s\n", assPath)
+	return nil
 }
 
 func diffCmd() *cobra.Command {
@@ -738,39 +872,111 @@ complement to the CLI's point-in-time commands.`,
 }
 
 func testCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "test",
 		Short: "Run policy unit tests against cedar-go",
-		Long: `Executes policy test suites defined in .attest/tests/. Each test case
-specifies a principal, action, resource with attributes and the expected
-Cedar decision (ALLOW or DENY). Tests run locally — no deployment needed.`,
+		Long: `Executes policy test suites defined in .attest/tests/*.yaml.
+Each test case specifies principal attributes, action, resource attributes,
+and expected decision (ALLOW/DENY). Tests run locally — no AWS access needed.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Running policy tests...")
-			fmt.Println("  Loading compiled Cedar policies...")
-			fmt.Println("  Executing test suites...")
+			ctx := context.Background()
+			testsDir, _ := cmd.Flags().GetString("tests")
+			cedarDir, _ := cmd.Flags().GetString("cedar")
+
+			entries, err := os.ReadDir(testsDir)
+			if os.IsNotExist(err) {
+				fmt.Printf("No test suites found in %s\n", testsDir)
+				fmt.Println("Create .yaml test suite files to get started.")
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("reading tests directory: %w", err)
+			}
+
+			runner := attesttesting.NewRunner(cedarDir)
+			totalPass, totalFail := 0, 0
+
+			for _, e := range entries {
+				if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+					continue
+				}
+				data, err := os.ReadFile(filepath.Join(testsDir, e.Name()))
+				if err != nil {
+					return err
+				}
+				var suite schema.PolicyTestSuite
+				if err := yaml.Unmarshal(data, &suite); err != nil {
+					return fmt.Errorf("parsing %s: %w", e.Name(), err)
+				}
+				result, err := runner.RunSuite(ctx, &suite)
+				if err != nil {
+					return fmt.Errorf("running suite %s: %w", suite.Name, err)
+				}
+				status := "PASS"
+				if result.Failed > 0 {
+					status = "FAIL"
+				}
+				fmt.Printf("[%s] %s: %d/%d passed\n", status, result.Name, result.Passed, result.Total)
+				for _, c := range result.Cases {
+					if !c.Passed {
+						fmt.Printf("  FAIL: %s — expected %s, got %s\n", c.Description, c.Expected, c.Actual)
+					}
+				}
+				totalPass += result.Passed
+				totalFail += result.Failed
+			}
+
+			fmt.Printf("\nTotal: %d passed, %d failed\n", totalPass, totalFail)
+			if totalFail > 0 {
+				return fmt.Errorf("%d test(s) failed", totalFail)
+			}
 			return nil
 		},
 	}
+	cmd.Flags().String("tests", filepath.Join(".attest", "tests"), "Test suites directory")
+	cmd.Flags().String("cedar", filepath.Join(".attest", "compiled", "cedar"), "Compiled Cedar policies directory")
+	return cmd
 }
 
 func checkCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "CI/CD compliance gate for Terraform plans",
-		Long: `Evaluates a Terraform plan JSON against Cedar policies to catch
-compliance violations before deployment. Outputs SARIF for GitHub
-annotation integration. Use in CI/CD pipelines.`,
+		Long: `Evaluates a Terraform plan JSON for compliance violations.
+Use --output sarif for GitHub Actions annotation integration.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
 			tf, _ := cmd.Flags().GetString("terraform")
-			fmt.Printf("Checking Terraform plan: %s\n", tf)
-			fmt.Println("  Loading Cedar policies...")
-			fmt.Println("  Extracting resource changes...")
-			fmt.Println("  Evaluating compliance...")
+			outputFmt, _ := cmd.Flags().GetString("output")
+
+			checker := attesttesting.NewTerraformChecker("")
+			result, err := checker.Check(ctx, tf)
+			if err != nil {
+				return err
+			}
+
+			switch outputFmt {
+			case "sarif":
+				fmt.Println(result.SARIF())
+			default:
+				if result.Passed {
+					fmt.Println("PASS: No compliance violations found.")
+				} else {
+					fmt.Printf("FAIL: %d violation(s) found.\n\n", len(result.Violations))
+					for _, v := range result.Violations {
+						fmt.Printf("  %s: %s\n    Control: %s | Policy: %s\n    %s\n\n",
+							v.Resource, v.Change, v.ControlID, v.PolicyID, v.Message)
+					}
+				}
+			}
+			if !result.Passed {
+				return fmt.Errorf("%d compliance violation(s)", len(result.Violations))
+			}
 			return nil
 		},
 	}
 	cmd.Flags().String("terraform", "", "Path to Terraform plan JSON")
-	cmd.Flags().String("output", "text", "Output format: text, sarif, json")
+	cmd.Flags().String("output", "text", "Output format: text, sarif")
 	_ = cmd.MarkFlagRequired("terraform")
 	return cmd
 }
@@ -813,33 +1019,104 @@ func waiverCmd() *cobra.Command {
 		Use:   "waiver",
 		Short: "Manage compliance exceptions",
 	}
-	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "create",
-			Short: "Create a new compliance waiver",
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Println("Creating waiver...")
-				return nil
-			},
+
+	waiverDir := filepath.Join(".attest", "waivers")
+	mgr := waiver.NewManager(waiverDir)
+
+	createCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a new compliance waiver",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			controlID, _ := cmd.Flags().GetString("control")
+			scope, _ := cmd.Flags().GetString("scope")
+			approvedBy, _ := cmd.Flags().GetString("approved-by")
+			expiresStr, _ := cmd.Flags().GetString("expires")
+			title, _ := cmd.Flags().GetString("title")
+			justification, _ := cmd.Flags().GetString("justification")
+			compensating, _ := cmd.Flags().GetStringSlice("compensating")
+
+			expires, err := time.Parse("2006-01-02", expiresStr)
+			if err != nil {
+				return fmt.Errorf("invalid --expires date (use YYYY-MM-DD): %w", err)
+			}
+
+			w := &schema.Waiver{
+				ID:                   fmt.Sprintf("W-%d-%s", time.Now().Year(), strings.ToUpper(strings.ReplaceAll(controlID, ".", ""))),
+				ControlID:            controlID,
+				Title:                title,
+				Scope:                scope,
+				ApprovedBy:           approvedBy,
+				ExpiresAt:            expires,
+				Justification:        justification,
+				CompensatingControls: compensating,
+			}
+
+			if err := mgr.Create(ctx, w); err != nil {
+				return err
+			}
+			fmt.Printf("Waiver created: %s\n", w.ID)
+			fmt.Printf("  Control: %s | Scope: %s | Expires: %s\n", w.ControlID, w.Scope, w.ExpiresAt.Format("2006-01-02"))
+			return nil
 		},
-		&cobra.Command{
-			Use:   "list",
-			Short: "List active waivers",
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Println("Active waivers:")
+	}
+	createCmd.Flags().String("control", "", "Control ID being waived (required)")
+	createCmd.Flags().String("scope", "", "Scope (environment or OU)")
+	createCmd.Flags().String("approved-by", "", "Approver name/title (required)")
+	createCmd.Flags().String("expires", "", "Expiry date YYYY-MM-DD (required)")
+	createCmd.Flags().String("title", "", "Short title for the exception")
+	createCmd.Flags().String("justification", "", "Justification for the exception")
+	createCmd.Flags().StringSlice("compensating", nil, "Compensating controls (comma-separated)")
+	_ = createCmd.MarkFlagRequired("control")
+	_ = createCmd.MarkFlagRequired("approved-by")
+	_ = createCmd.MarkFlagRequired("expires")
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List active waivers",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			expiringDays, _ := cmd.Flags().GetInt("expiring")
+			var waivers []schema.Waiver
+			var err error
+			if expiringDays > 0 {
+				waivers, err = mgr.ListExpiring(ctx, time.Duration(expiringDays)*24*time.Hour)
+			} else {
+				waivers, err = mgr.List(ctx)
+			}
+			if err != nil {
+				return err
+			}
+			if len(waivers) == 0 {
+				fmt.Println("No active waivers.")
 				return nil
-			},
+			}
+			fmt.Printf("%-15s %-10s %-20s %-12s %s\n", "ID", "Control", "Scope", "Expires", "Status")
+			fmt.Println(strings.Repeat("─", 72))
+			for _, w := range waivers {
+				fmt.Printf("%-15s %-10s %-20s %-12s %s\n",
+					w.ID, w.ControlID, w.Scope, w.ExpiresAt.Format("2006-01-02"), w.Status)
+			}
+			return nil
 		},
-		&cobra.Command{
-			Use:   "expire [waiver-id]",
-			Short: "Expire a waiver",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Printf("Expiring waiver: %s\n", args[0])
-				return nil
-			},
+	}
+	listCmd.Flags().Int("expiring", 0, "Show waivers expiring within N days")
+
+	expireCmd := &cobra.Command{
+		Use:   "expire [waiver-id]",
+		Short: "Expire a waiver immediately",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			if err := mgr.Expire(ctx, args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("Waiver %s expired.\n", args[0])
+			return nil
 		},
-	)
+	}
+
+	cmd.AddCommand(createCmd, listCmd, expireCmd)
 	return cmd
 }
 

@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-15
+
+### Added
+
+- `attest generate ssp` — generates a human-readable System Security Plan
+  in markdown from the compiled crosswalk. Every statement is derived from
+  deployed artifacts; nothing is hand-written. Includes CMMC scoring and
+  control narratives with evidence references.
+- `attest generate poam` — generates a Plan of Action & Milestones listing
+  all gap/partial controls with milestone IDs, scheduled completion dates,
+  and remediation guidance.
+- `attest generate assess` — CMMC 2.0 Level 2 self-assessment scoring
+  (enforced=5pts, partial=3pts, planned=1pt, gap=0pts, max 550). Includes
+  per-family breakdown and assessment readiness determination.
+- `attest generate oscal` — exports SSP and Assessment Results in NIST
+  OSCAL 1.1.2 JSON format for GRC tool interoperability.
+- `attest waiver create|list|expire` — compliance exception management.
+  Waivers are YAML files in `.attest/waivers/`, validated against required
+  fields, and returned with computed status (active/expiring/expired).
+- `attest test` — runs policy unit test suites from `.attest/tests/*.yaml`
+  against compiled Cedar policies via cedar-go. No AWS access required.
+- `attest check --terraform plan.json` — evaluates a Terraform plan for
+  compliance violations; `--output sarif` for GitHub annotation integration.
+- HIPAA Security Rule framework (`frameworks/hipaa/framework.yaml`) — 23
+  controls across 5 families. Activated via BAA agreement detection.
+  Shared SCPs (scp-require-mfa, scp-require-kms-encryption, etc.) are
+  deduplicated automatically against NIST 800-171 via the crosswalk.
+- Git-backed policy store (`internal/store/git.go`) — `.attest/` initialized
+  as a git repository on first use. Commit, Tag, and Diff methods for
+  policy-as-code lifecycle management.
+- `internal/document/ssp/renderer.go` — markdown renderer for the SSP.
+- `internal/document/poam/` — new package for POA&M generation.
+- `internal/document/assessment/` — new package for self-assessment scoring.
+- `internal/document/oscal/exporter.go` — OSCAL SSP and Assessment Results
+  exporters implemented (previously stubbed).
+- Tests: renderer (2), POA&M generator (4), assessment generator (4),
+  waiver manager (5) — 15 new tests, 72 total.
+
 ## [0.3.0] - 2026-04-15
 
 ### Added
