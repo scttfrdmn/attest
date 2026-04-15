@@ -12,12 +12,14 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/scttfrdmn/attest/internal/artifact"
+	"github.com/scttfrdmn/attest/internal/compiler/cedar"
+	"github.com/scttfrdmn/attest/internal/compiler/scp"
 	"github.com/scttfrdmn/attest/internal/framework"
 	"github.com/scttfrdmn/attest/internal/org"
 	"github.com/scttfrdmn/attest/pkg/schema"
 )
 
-var version = "0.2.0-dev"
+var version = "0.3.0-dev"
 
 func main() {
 	root := &cobra.Command{
@@ -158,10 +160,13 @@ func scanCmd() *cobra.Command {
 frameworks. Produces a posture report showing which controls are enforced,
 partially enforced, or have gaps.
 
-For v0.2.0, posture is computed from structural enforcement (SCPs) only.
-Cedar and Config evaluation will be added in v0.3.0.`,
+If --region is provided, the scanner compares the compiled crosswalk against
+actually-deployed SCPs in the live org for accurate status. Without --region,
+posture is derived from the compiled crosswalk (run 'attest compile' first).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
 			fwDir, _ := cmd.Flags().GetString("frameworks")
+			region, _ := cmd.Flags().GetString("region")
 
 			// Load SRE config.
 			sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml"))
@@ -193,18 +198,45 @@ Cedar and Config evaluation will be added in v0.3.0.`,
 				frameworks = append(frameworks, fw)
 				fmt.Printf("  Loaded framework: %s (%d controls)\n", fw.Name, len(fw.Controls))
 			}
-
 			if len(frameworks) == 0 {
 				return fmt.Errorf("no frameworks could be loaded")
 			}
 
-			// Resolve controls across frameworks.
-			rcs, err := framework.Resolve(frameworks)
-			if err != nil {
-				return fmt.Errorf("resolving controls: %w", err)
+			// Optionally load deployed SCPs for accurate comparison.
+			deployedSCPIDs := make(map[string]bool)
+			if region != "" {
+				fmt.Printf("  Checking deployed SCPs (region: %s)...\n", region)
+				analyzer, err := org.NewAnalyzer(ctx, region)
+				if err != nil {
+					fmt.Printf("  Warning: could not connect to org: %v\n", err)
+				} else {
+					deployedSCPs, err := analyzer.InventoryExistingSCPs(ctx)
+					if err != nil {
+						fmt.Printf("  Warning: could not inventory SCPs: %v\n", err)
+					} else {
+						for _, s := range deployedSCPs {
+							deployedSCPIDs[s.ID] = true
+						}
+						fmt.Printf("  Found %d deployed SCP(s)\n", len(deployedSCPs))
+					}
+				}
 			}
 
-			// Compute posture (structural only for v0.2.0).
+			// Try loading compiled crosswalk first.
+			var crosswalkEntries map[string]schema.CrosswalkEntry
+			crosswalkPath := filepath.Join(".attest", "compiled", "crosswalk.yaml")
+			if cwData, err := os.ReadFile(crosswalkPath); err == nil {
+				var cw schema.Crosswalk
+				if err := yaml.Unmarshal(cwData, &cw); err == nil {
+					crosswalkEntries = make(map[string]schema.CrosswalkEntry)
+					for _, e := range cw.Entries {
+						crosswalkEntries[e.ControlID] = e
+					}
+					fmt.Printf("  Loaded crosswalk (%d entries)\n", len(crosswalkEntries))
+				}
+			}
+
+			// Compute posture.
 			posture := &schema.Posture{
 				ComputedAt: time.Now(),
 				Frameworks: make(map[string]schema.FrameworkPosture),
@@ -216,19 +248,41 @@ Cedar and Config evaluation will be added in v0.3.0.`,
 					Controls:    make(map[string]string),
 				}
 				for _, ctrl := range fw.Controls {
-					key := deduplicationKey(ctrl)
-					group, ok := rcs.Controls[key]
-					status := "gap"
-					if ok && len(group) > 0 {
-						if len(ctrl.Structural) > 0 {
-							// Has structural enforcement defined — treat as partial
-							// until we can verify SCPs are actually deployed.
-							status = "partial"
+					var status string
+
+					if crosswalkEntries != nil {
+						// Use crosswalk status, refined by live deployment check.
+						if entry, ok := crosswalkEntries[ctrl.ID]; ok {
+							status = entry.Status
+							// If we have live SCP data, check if SCPs are actually deployed.
+							if len(deployedSCPIDs) > 0 && len(entry.SCPs) > 0 {
+								deployed := 0
+								for _, scpID := range entry.SCPs {
+									if deployedSCPIDs[scpID] {
+										deployed++
+									}
+								}
+								if deployed == 0 {
+									// Compiled but not deployed.
+									if entry.Status == "enforced" || entry.Status == "partial" {
+										status = "partial"
+									}
+								}
+							}
+						} else {
+							status = "gap"
 						}
+					} else {
+						// Fall back to framework-based analysis.
 						if len(ctrl.Structural) > 0 && len(ctrl.Operational) > 0 {
 							status = "enforced"
+						} else if len(ctrl.Structural) > 0 || len(ctrl.Operational) > 0 {
+							status = "partial"
+						} else {
+							status = "gap"
 						}
 					}
+
 					fp.Controls[ctrl.ID] = status
 					posture.TotalControls++
 					switch status {
@@ -251,7 +305,6 @@ Cedar and Config evaluation will be added in v0.3.0.`,
 			fmt.Printf("  Partial:         %d\n", posture.Partial)
 			fmt.Printf("  Gaps:            %d\n", posture.Gaps)
 
-			// Per-framework breakdown.
 			for _, fw := range frameworks {
 				fp := posture.Frameworks[fw.ID]
 				enforced, partial, gaps := 0, 0, 0
@@ -271,21 +324,21 @@ Cedar and Config evaluation will be added in v0.3.0.`,
 
 			// Save posture snapshot.
 			if err := os.MkdirAll(filepath.Join(".attest", "history"), 0750); err == nil {
-				snapshot := schema.PostureSnapshot{
-					Timestamp: posture.ComputedAt,
-					Posture:   *posture,
-				}
+				snapshot := schema.PostureSnapshot{Timestamp: posture.ComputedAt, Posture: *posture}
 				if data, err := yaml.Marshal(snapshot); err == nil {
 					fname := fmt.Sprintf("posture-%s.yaml", posture.ComputedAt.Format("2006-01-02T150405"))
 					_ = os.WriteFile(filepath.Join(".attest", "history", fname), data, 0644)
 				}
 			}
 
-			fmt.Println("\nNote: v0.2.0 reports structural enforcement only. Cedar/Config evaluation added in v0.3.0.")
+			if crosswalkEntries == nil {
+				fmt.Println("\nTip: run 'attest compile' first for crosswalk-based posture.")
+			}
 			return nil
 		},
 	}
 	cmd.Flags().String("frameworks", "frameworks", "Path to frameworks directory")
+	cmd.Flags().String("region", "", "AWS region for live SCP deployment check (optional)")
 	return cmd
 }
 
@@ -343,33 +396,192 @@ func compileCmd() *cobra.Command {
 		Use:   "compile",
 		Short: "Generate policy artifacts for active frameworks",
 		Long: `Compiles all active frameworks into deployable policy artifacts:
-SCPs (structural), Cedar policies (operational), and Config rules (monitoring).
-Produces the crosswalk manifest mapping every artifact to its framework controls.
+SCPs (structural enforcement), Cedar policies (operational enforcement),
+and the crosswalk manifest mapping every artifact to its framework controls.
 
 Use --output terraform or --output cdk to generate IaC modules alongside
-the raw policy artifacts.`,
+the raw policy artifacts (coming in v0.5.0).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			output, _ := cmd.Flags().GetString("output")
-			fmt.Println("Compiling policies for active frameworks...")
-			fmt.Println("  Resolving cross-framework control overlap...")
-			fmt.Println("  Generating SCPs (structural enforcement)...")
-			fmt.Println("  Generating Cedar policies (operational enforcement)...")
-			fmt.Println("  Generating Config rules (drift monitoring)...")
-			fmt.Println("  Writing crosswalk manifest...")
-			if output != "" {
-				fmt.Printf("  Generating %s output...\n", output)
+			fwDir, _ := cmd.Flags().GetString("frameworks")
+			iacOutput, _ := cmd.Flags().GetString("output")
+
+			// Load SRE config.
+			sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml"))
+			if err != nil {
+				return fmt.Errorf("reading .attest/sre.yaml: %w (run 'attest init' first)", err)
 			}
+			var sre schema.SRE
+			if err := yaml.Unmarshal(sreData, &sre); err != nil {
+				return fmt.Errorf("parsing sre.yaml: %w", err)
+			}
+
+			if len(sre.Frameworks) == 0 {
+				fmt.Println("No active frameworks. Run 'attest frameworks add <id>' first.")
+				return nil
+			}
+
+			fmt.Printf("Compiling policies for %d framework(s)...\n", len(sre.Frameworks))
+
+			// Load frameworks.
+			loader := framework.NewLoader(fwDir)
+			var frameworks []*schema.Framework
+			for _, ref := range sre.Frameworks {
+				fw, err := loader.Load(ref.ID)
+				if err != nil {
+					fmt.Printf("  Warning: could not load framework %s: %v\n", ref.ID, err)
+					continue
+				}
+				frameworks = append(frameworks, fw)
+			}
+			if len(frameworks) == 0 {
+				return fmt.Errorf("no frameworks could be loaded from %s", fwDir)
+			}
+
+			// Resolve cross-framework controls.
+			fmt.Println("  Resolving cross-framework control overlap...")
+			rcs, err := framework.Resolve(frameworks)
+			if err != nil {
+				return fmt.Errorf("resolving controls: %w", err)
+			}
+
+			// Compile SCPs.
+			fmt.Println("  Generating SCPs (structural enforcement)...")
+			scpCompiler := scp.NewCompiler()
+			scps, err := scpCompiler.Compile(rcs)
+			if err != nil {
+				return fmt.Errorf("compiling SCPs: %w", err)
+			}
+
+			// Compile Cedar policies.
+			fmt.Println("  Generating Cedar policies (operational enforcement)...")
+			cedarCompiler := cedar.NewCompiler()
+			cedarPolicies, err := cedarCompiler.Compile(rcs)
+			if err != nil {
+				return fmt.Errorf("compiling Cedar policies: %w", err)
+			}
+
+			// Generate Cedar schema.
+			cedarSchema := cedarCompiler.BuildSchema(rcs)
+
+			// Build crosswalk.
+			fmt.Println("  Building crosswalk manifest...")
+			crosswalk := buildCrosswalk(&sre, frameworks, scps, cedarPolicies)
+
+			// Write compiled output.
+			fmt.Println("  Writing artifacts...")
+			compiledDir := filepath.Join(".attest", "compiled")
+			if err := os.MkdirAll(filepath.Join(compiledDir, "scps"), 0750); err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Join(compiledDir, "cedar"), 0750); err != nil {
+				return err
+			}
+
+			for _, s := range scps {
+				path := filepath.Join(compiledDir, "scps", s.ID+".json")
+				if err := os.WriteFile(path, []byte(s.PolicyJSON), 0644); err != nil {
+					return fmt.Errorf("writing SCP %s: %w", s.ID, err)
+				}
+			}
+
+			for _, p := range cedarPolicies {
+				path := filepath.Join(compiledDir, "cedar", p.ID+".cedar")
+				if err := os.WriteFile(path, []byte(p.PolicyText), 0644); err != nil {
+					return fmt.Errorf("writing Cedar policy %s: %w", p.ID, err)
+				}
+			}
+
+			if err := os.WriteFile(filepath.Join(compiledDir, "cedar", "schema.cedarschema"), []byte(cedarSchema), 0644); err != nil {
+				return fmt.Errorf("writing Cedar schema: %w", err)
+			}
+
+			crosswalkBytes, err := yaml.Marshal(crosswalk)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(compiledDir, "crosswalk.yaml"), crosswalkBytes, 0644); err != nil {
+				return fmt.Errorf("writing crosswalk: %w", err)
+			}
+
+			if iacOutput != "" {
+				fmt.Printf("  IaC output (%s): coming in v0.5.0\n", iacOutput)
+			}
+
 			fmt.Println()
-			fmt.Println("Compiled artifacts written to .attest/compiled/")
-			fmt.Println("  12 SCPs, 23 Cedar policies, 8 Config rules")
-			fmt.Println("  Crosswalk: .attest/compiled/crosswalk.yaml")
+			fmt.Printf("Compiled artifacts written to %s\n", compiledDir)
+			fmt.Printf("  %d SCP(s)\n", len(scps))
+			fmt.Printf("  %d Cedar policy/policies + schema\n", len(cedarPolicies))
+			fmt.Printf("  Crosswalk: %s\n", filepath.Join(compiledDir, "crosswalk.yaml"))
 			fmt.Println()
 			fmt.Println("Run 'attest apply' to deploy to the organization.")
 			return nil
 		},
 	}
+	cmd.Flags().String("frameworks", "frameworks", "Path to frameworks directory")
 	cmd.Flags().String("output", "", "IaC output format: terraform, cdk")
 	return cmd
+}
+
+// buildCrosswalk creates the auditable control → artifact mapping.
+func buildCrosswalk(sre *schema.SRE, frameworks []*schema.Framework, scps []scp.CompiledSCP, cedarPolicies []cedar.CompiledCedarPolicy) schema.Crosswalk {
+	crosswalk := schema.Crosswalk{
+		SRE:         sre.OrgID,
+		GeneratedAt: time.Now(),
+	}
+	if len(frameworks) > 0 {
+		crosswalk.Framework = frameworks[0].ID
+		if len(frameworks) > 1 {
+			names := make([]string, len(frameworks))
+			for i, fw := range frameworks {
+				names[i] = fw.ID
+			}
+			crosswalk.Framework = strings.Join(names, "+")
+		}
+	}
+
+	// Index SCPs and Cedar policies by control ref.
+	scpsByControl := make(map[string][]string)
+	for _, s := range scps {
+		for _, ref := range s.Controls {
+			scpsByControl[ref.ControlID] = append(scpsByControl[ref.ControlID], s.ID)
+		}
+	}
+	cedarByControl := make(map[string][]string)
+	for _, p := range cedarPolicies {
+		for _, ref := range p.Controls {
+			cedarByControl[ref.ControlID] = append(cedarByControl[ref.ControlID], p.ID)
+		}
+	}
+
+	// Build an entry for every control across all frameworks.
+	seen := make(map[string]bool)
+	for _, fw := range frameworks {
+		for _, ctrl := range fw.Controls {
+			if seen[ctrl.ID] {
+				continue
+			}
+			seen[ctrl.ID] = true
+
+			entry := schema.CrosswalkEntry{ControlID: ctrl.ID}
+			entry.SCPs = scpsByControl[ctrl.ID]
+			entry.CedarPolicies = cedarByControl[ctrl.ID]
+
+			switch {
+			case len(entry.SCPs) > 0 && len(entry.CedarPolicies) > 0:
+				entry.Status = "enforced"
+			case len(entry.SCPs) > 0 || len(entry.CedarPolicies) > 0:
+				entry.Status = "partial"
+			case ctrl.Responsibility.AWS != "":
+				entry.Status = "aws_covered"
+			default:
+				entry.Status = "gap"
+			}
+
+			crosswalk.Entries = append(crosswalk.Entries, entry)
+		}
+	}
+
+	return crosswalk
 }
 
 func applyCmd() *cobra.Command {

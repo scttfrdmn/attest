@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-15
+
+### Added
+
+- NIST SP 800-171 Rev 2 framework definition — all 110 controls across all
+  14 families. 6 controls retain full structural/operational/monitoring specs;
+  remaining 104 are community-maintained skeletons with title, responsibility
+  split, and assessment objectives.
+- SCP condition parsing: framework YAML condition strings (`key != true`,
+  `key not in [v1, v2]`, ARN patterns, `contains`, etc.) now compile into
+  correct IAM Condition blocks (Bool, StringEquals, StringNotEquals, ArnLike,
+  ArnNotLike, StringLike, StringNotLike operators).
+- SCP size limit validation: policies exceeding the 5120-byte AWS limit are
+  automatically split into multiple SCPs, each individually valid.
+- Cedar schema generation: `Compiler.BuildSchema()` emits a `.cedarschema`
+  file defining all entity types and their attributes, inferred from the
+  framework's operational enforcement specs.
+- Cedar temporal constraints: `generateFromSpec` respects `TemporalConstraint`
+  — expiry constraints add `principal.training_expiry` checks, event constraints
+  add `principal.irb_active`, schedule constraints add `context.hour` bounds.
+- `attest compile` now calls real SCP and Cedar compilers, writes artifacts to
+  `.attest/compiled/scps/`, `.attest/compiled/cedar/` (including schema), and
+  `.attest/compiled/crosswalk.yaml`. Running against NIST 800-171 produces
+  26 SCPs and 7 Cedar policies.
+- `attest scan` now reads the compiled crosswalk for accurate posture. With
+  `--region`, it compares compiled SCP IDs against deployed SCPs for live
+  deployment status.
+- Principal attribute resolver SAML source: reads `attest:*` IAM role tags
+  (cui-training, cui-expiry, lab-id, admin-level) to hydrate Cedar principal
+  entities. LDAP source interface defined; implementation deferred to community.
+- `.goreleaser.yaml` for cross-platform binary releases (linux/darwin/windows,
+  amd64/arm64) with framework definitions included in archives.
+- SCP compiler tests: `TestParseCondition` (13 cases), `TestConditionInCompiledSCP`,
+  `TestSCPSizeLimit`, `TestCompileNIST800171`.
+- Cedar compiler tests: `TestCompile`, `TestCompileWithHandwrittenCedarPolicy`,
+  `TestTemporalConstraints` (3 types), `TestBuildSchema`,
+  `TestInferCedarType` (9 cases), `TestBuildSchemaWithTemporalContext`,
+  `TestCompileFullFramework`.
+
 ## [0.2.0] - 2026-04-15
 
 ### Added

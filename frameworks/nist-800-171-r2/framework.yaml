@@ -7,6 +7,10 @@
 #
 # Source: https://csrc.nist.gov/publications/detail/sp/800-171/rev-2/final
 # Assessment: NIST SP 800-171A
+#
+# 110 controls across 14 families.
+# Controls marked [detailed] have full structural/operational/monitoring specs.
+# All others are skeleton — community contributions welcome (see frameworks/CONTRIBUTING.md).
 
 id: nist-800-171-r2
 name: "NIST SP 800-171 Rev 2"
@@ -20,9 +24,10 @@ artifact_reports:
     category: "ISO"
 
 controls:
-  # ── 3.1 Access Control ──────────────────────────────────────────────
 
-  - id: "3.1.1"
+  # ── 3.1 Access Control (22 controls) ────────────────────────────────
+
+  - id: "3.1.1"  # [detailed]
     family: "Access Control"
     title: "Limit system access to authorized users, processes acting on behalf of authorized users, and devices"
     responsibility:
@@ -76,7 +81,7 @@ controls:
           auto_assessable: false
           evidence_source: "manual"
 
-  - id: "3.1.2"
+  - id: "3.1.2"  # [detailed]
     family: "Access Control"
     title: "Limit system access to the types of transactions and functions that authorized users are permitted to execute"
     responsibility:
@@ -114,7 +119,7 @@ controls:
           auto_assessable: true
           evidence_source: "scp"
 
-  - id: "3.1.3"
+  - id: "3.1.3"  # [detailed]
     family: "Access Control"
     title: "Control the flow of CUI in accordance with approved authorizations"
     responsibility:
@@ -148,12 +153,6 @@ controls:
           principal: ["cui_training_current", "role_membership", "lab_authorization"]
         cedar_policy: |
           // CUI data movement — NIST 800-171 3.1.3
-          // Only permit CUI object transfer when ALL conditions are met:
-          //   1. Destination bucket is a member of the CUI enclave
-          //   2. Destination uses KMS encryption with an enclave key
-          //   3. Principal has current CUI handling training
-          //   4. Principal's lab is authorized for CUI
-          
           forbid (
             principal,
             action == Action::"S3:PutObject",
@@ -194,7 +193,32 @@ controls:
           auto_assessable: true
           evidence_source: "cedar"
 
-  - id: "3.1.5"
+  - id: "3.1.4"
+    family: "Access Control"
+    title: "Separate the duties of individuals to reduce the risk of malevolent activity without collusion"
+    responsibility:
+      aws: "IAM separation of roles; no native duty-separation enforcement"
+      customer: "Role design, separation of production/development/admin accounts, approval workflows"
+    structural:
+      - id: "scp-separate-duties"
+        description: "Deny assuming both developer and admin roles from the same session"
+        actions:
+          - "sts:AssumeRole"
+        conditions:
+          - "aws:PrincipalARN contains /developer/ and aws:RequestedRegion == us-east-1"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.1.4[a]"
+          description: "The duties of individuals requiring separation are defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.4[b]"
+          description: "The duties of individuals requiring separation are separated"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.5"  # [detailed]
     family: "Access Control"
     title: "Employ the principle of least privilege, including for specific security functions and privileged accounts"
     responsibility:
@@ -244,9 +268,1621 @@ controls:
           auto_assessable: false
           evidence_source: "manual"
 
-  # ── 3.13 System and Communications Protection ──────────────────────
+  - id: "3.1.6"
+    family: "Access Control"
+    title: "Use non-privileged accounts or roles when accessing non-security functions"
+    responsibility:
+      aws: "IAM role switching; no enforcement of account selection"
+      customer: "Role design, user education, tooling that enforces non-privileged default sessions"
+    assessment:
+      objectives:
+        - id: "3.1.6[a]"
+          description: "Non-privileged accounts or roles are defined for non-security functions"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.6[b]"
+          description: "Non-privileged accounts or roles are used when accessing non-security functions"
+          auto_assessable: false
+          evidence_source: "manual"
 
-  - id: "3.13.1"
+  - id: "3.1.7"
+    family: "Access Control"
+    title: "Prevent non-privileged users from executing privileged functions and capture the execution of such functions in audit logs"
+    responsibility:
+      aws: "IAM policy evaluation prevents unauthorized privilege use"
+      customer: "IAM permission boundaries, SCPs, CloudTrail audit of privileged API calls"
+    structural:
+      - id: "scp-prevent-privilege-exec"
+        description: "Deny organizations: and cloudtrail: management actions for non-admin principals"
+        actions:
+          - "organizations:DeleteOrganization"
+          - "organizations:RemoveAccountFromOrganization"
+          - "cloudtrail:DeleteTrail"
+          - "cloudtrail:StopLogging"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /admin/"
+        effect: "Deny"
+    monitoring:
+      - id: "config-cloudtrail-enabled"
+        resource_type: "AWS::CloudTrail::Trail"
+        check: "CloudTrail multi-region trail enabled and logging"
+        remediation: "Enable CloudTrail with multi-region and log file validation"
+    assessment:
+      objectives:
+        - id: "3.1.7[a]"
+          description: "Privileged functions are defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.7[b]"
+          description: "Non-privileged users are prevented from executing privileged functions"
+          auto_assessable: true
+          evidence_source: "scp"
+        - id: "3.1.7[c]"
+          description: "Execution of privileged functions is captured in audit logs"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.1.8"
+    family: "Access Control"
+    title: "Limit unsuccessful logon attempts"
+    responsibility:
+      aws: "AWS Cognito, IAM temporary lockouts after repeated failures"
+      customer: "Account lockout policies in identity provider, Cognito configuration"
+    monitoring:
+      - id: "config-login-attempt-limits"
+        resource_type: "AWS::Cognito::UserPool"
+        check: "Advanced security mode enabled with account lockout configured"
+    assessment:
+      objectives:
+        - id: "3.1.8[a]"
+          description: "The means of limiting unsuccessful logon attempts is defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.8[b]"
+          description: "The defined limit of unsuccessful logon attempts is enforced"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.9"
+    family: "Access Control"
+    title: "Provide privacy and security notices consistent with CUI rules (CUI Notice and Consent Banner)"
+    responsibility:
+      aws: "No native banner enforcement; customer responsibility"
+      customer: "Login banners in identity provider, API Gateway, SSH configurations"
+    assessment:
+      objectives:
+        - id: "3.1.9[a]"
+          description: "Privacy and security notices required by CUI rules are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.9[b]"
+          description: "Privacy and security notices are displayed"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.10"
+    family: "Access Control"
+    title: "Use session lock with pattern-hiding displays after a period of inactivity"
+    responsibility:
+      aws: "AWS Console session timeouts; no enforcement of client-side lock"
+      customer: "Session timeout configuration in identity provider and applications"
+    assessment:
+      objectives:
+        - id: "3.1.10[a]"
+          description: "The period of inactivity after which a session lock is initiated is defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.10[b]"
+          description: "A session lock is initiated after the defined period of inactivity"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.11"
+    family: "Access Control"
+    title: "Terminate (automatically) a user session after a defined condition"
+    responsibility:
+      aws: "STS session duration limits (max 12 hours for roles)"
+      customer: "STS session duration configuration, application session timeouts"
+    assessment:
+      objectives:
+        - id: "3.1.11[a]"
+          description: "Conditions requiring a session to terminate are defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.11[b]"
+          description: "A user session is automatically terminated after any of the defined conditions"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.12"
+    family: "Access Control"
+    title: "Monitor and control remote access sessions"
+    responsibility:
+      aws: "AWS Systems Manager Session Manager, CloudTrail logging of API activity"
+      customer: "Remote access policies, SSM Session Manager configuration, session logging"
+    structural:
+      - id: "scp-require-ssm-sessions"
+        description: "Deny direct SSH/RDP; require SSM Session Manager for remote access"
+        actions:
+          - "ec2:RunInstances"
+        conditions:
+          - "ec2:MetadataHttpTokens != required"
+        effect: "Deny"
+    monitoring:
+      - id: "config-ssm-session-logging"
+        resource_type: "AWS::SSM::Session"
+        check: "SSM Session Manager logging to S3 and CloudWatch enabled"
+    assessment:
+      objectives:
+        - id: "3.1.12[a]"
+          description: "Remote access is allowed only through managed access control points"
+          auto_assessable: true
+          evidence_source: "scp"
+        - id: "3.1.12[b]"
+          description: "Remote access sessions are monitored"
+          auto_assessable: true
+          evidence_source: "config"
+        - id: "3.1.12[c]"
+          description: "Remote access sessions are controlled"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.13"
+    family: "Access Control"
+    title: "Employ cryptographic mechanisms to protect the confidentiality of remote access sessions"
+    responsibility:
+      aws: "TLS for all AWS API endpoints; FIPS 140-2 validated TLS options"
+      customer: "Enforce TLS, disable non-TLS endpoints, SSM Session Manager encryption"
+    structural:
+      - id: "scp-require-tls-remote"
+        description: "Deny API calls over non-TLS channels"
+        actions:
+          - "*"
+        conditions:
+          - "aws:SecureTransport == false"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.1.13[a]"
+          description: "Cryptographic mechanisms to protect the confidentiality of remote access sessions are implemented"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "3.1.14"
+    family: "Access Control"
+    title: "Route remote access via managed access control points"
+    responsibility:
+      aws: "VPC endpoints, PrivateLink, Direct Connect, Transit Gateway"
+      customer: "VPC design, route tables, security groups restricting direct internet access"
+    assessment:
+      objectives:
+        - id: "3.1.14[a]"
+          description: "Remote access is routed through managed access control points"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.15"
+    family: "Access Control"
+    title: "Authorize remote execution of privileged commands and access to security-relevant information via remote access only for operational needs"
+    responsibility:
+      aws: "IAM, STS role assumption controls"
+      customer: "Policy controls limiting when privileged commands are allowed via remote sessions"
+    assessment:
+      objectives:
+        - id: "3.1.15[a]"
+          description: "Privileged commands authorized for remote execution are defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.15[b]"
+          description: "Operational needs for remote execution of privileged commands are defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.15[c]"
+          description: "Remote execution of privileged commands is authorized only for defined operational needs"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.16"
+    family: "Access Control"
+    title: "Authorize wireless access prior to allowing such connections"
+    responsibility:
+      aws: "Not applicable to AWS infrastructure; relevant for on-premises endpoints connecting to AWS"
+      customer: "Wireless access controls for on-premises infrastructure, VPN gateway configuration"
+    assessment:
+      objectives:
+        - id: "3.1.16[a]"
+          description: "Wireless access points are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.16[b]"
+          description: "Wireless access is authorized prior to allowing connections"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.17"
+    family: "Access Control"
+    title: "Protect wireless access using authentication and encryption"
+    responsibility:
+      aws: "Not applicable to AWS infrastructure"
+      customer: "WPA3 or equivalent wireless security, certificate-based authentication"
+    assessment:
+      objectives:
+        - id: "3.1.17[a]"
+          description: "Wireless access is protected using authentication"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.17[b]"
+          description: "Wireless access is protected using encryption"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.18"
+    family: "Access Control"
+    title: "Control connection of mobile devices"
+    responsibility:
+      aws: "IAM device trust, certificate-based device authentication"
+      customer: "MDM policies, device compliance checks, conditional access"
+    assessment:
+      objectives:
+        - id: "3.1.18[a]"
+          description: "Mobile devices that process, store, or transmit CUI are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.18[b]"
+          description: "Mobile device connections are authorized and controlled"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.19"
+    family: "Access Control"
+    title: "Encrypt CUI on mobile devices and mobile computing platforms"
+    responsibility:
+      aws: "S3 and other storage encryption for data at rest"
+      customer: "Device encryption enforcement via MDM, encryption of CUI on endpoints"
+    assessment:
+      objectives:
+        - id: "3.1.19[a]"
+          description: "CUI on mobile devices is encrypted"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.20"
+    family: "Access Control"
+    title: "Verify and control/limit connections to external systems"
+    responsibility:
+      aws: "VPC peering controls, Transit Gateway, Network Firewall, Firewall Manager"
+      customer: "External system connection policies, VPC design, egress controls"
+    structural:
+      - id: "scp-control-external-connections"
+        description: "Deny VPC peering to non-approved external accounts"
+        actions:
+          - "ec2:AcceptVpcPeeringConnection"
+          - "ec2:CreateVpcPeeringConnection"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /admin/"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.1.20[a]"
+          description: "Connections to external systems are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.20[b]"
+          description: "The use of external systems is verified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.20[c]"
+          description: "Connections to external systems are controlled"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "3.1.21"
+    family: "Access Control"
+    title: "Limit use of portable storage devices on external systems"
+    responsibility:
+      aws: "Not directly applicable to AWS cloud; relevant for endpoints connecting to AWS"
+      customer: "Endpoint DLP controls, SSM policy to deny USB storage on managed instances"
+    assessment:
+      objectives:
+        - id: "3.1.21[a]"
+          description: "The use of portable storage devices is restricted on external systems"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.1.22"
+    family: "Access Control"
+    title: "Control CUI posted or processed on publicly accessible systems"
+    responsibility:
+      aws: "S3 Block Public Access, CloudFront signed URLs"
+      customer: "S3 public access settings, bucket policies, DLP controls"
+    structural:
+      - id: "scp-block-s3-public-access"
+        description: "Deny disabling S3 Block Public Access at account level"
+        actions:
+          - "s3:PutAccountPublicAccessBlock"
+          - "s3:PutBucketPublicAccessBlock"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /admin/"
+        effect: "Deny"
+    monitoring:
+      - id: "config-s3-block-public-access"
+        resource_type: "AWS::S3::Bucket"
+        check: "S3 Block Public Access enabled on all buckets and account"
+        remediation: "Enable S3 Block Public Access settings"
+    assessment:
+      objectives:
+        - id: "3.1.22[a]"
+          description: "Individuals authorized to post CUI on publicly accessible systems are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.1.22[b]"
+          description: "CUI is not posted on publicly accessible systems without authorization"
+          auto_assessable: true
+          evidence_source: "config"
+
+  # ── 3.2 Awareness and Training (3 controls) ──────────────────────────
+
+  - id: "3.2.1"
+    family: "Awareness and Training"
+    title: "Ensure that managers, systems administrators, and users of organizational systems are made aware of the security risks associated with their activities"
+    responsibility:
+      aws: "AWS Security Hub documentation, Artifact compliance reports"
+      customer: "Security awareness program, training records, LMS administration"
+    assessment:
+      objectives:
+        - id: "3.2.1[a]"
+          description: "Security risks associated with activities are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.2.1[b]"
+          description: "Managers are made aware of security risks"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.2.1[c]"
+          description: "Systems administrators are made aware of security risks"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.2.1[d]"
+          description: "Users are made aware of security risks"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.2.2"
+    family: "Awareness and Training"
+    title: "Ensure that personnel are trained to carry out their assigned information security responsibilities"
+    responsibility:
+      aws: "AWS training and certification materials"
+      customer: "Role-based security training program, training completion tracking"
+    assessment:
+      objectives:
+        - id: "3.2.2[a]"
+          description: "Information security responsibilities are identified for all personnel"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.2.2[b]"
+          description: "Personnel are trained to carry out their assigned information security responsibilities"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.2.3"
+    family: "Awareness and Training"
+    title: "Provide security awareness training on recognizing and reporting potential indicators of insider threat"
+    responsibility:
+      aws: "Amazon GuardDuty insider threat detection capabilities"
+      customer: "Insider threat awareness program, reporting mechanisms, GuardDuty configuration"
+    monitoring:
+      - id: "config-guardduty-enabled"
+        resource_type: "AWS::GuardDuty::Detector"
+        check: "GuardDuty enabled in all regions with threat intelligence feeds"
+        remediation: "Enable GuardDuty via Organizations delegated admin"
+    assessment:
+      objectives:
+        - id: "3.2.3[a]"
+          description: "Potential indicators of insider threat are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.2.3[b]"
+          description: "Personnel are trained to report potential insider threat indicators"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── 3.3 Audit and Accountability (9 controls) ────────────────────────
+
+  - id: "3.3.1"
+    family: "Audit and Accountability"
+    title: "Create and retain system audit logs and records to enable the monitoring, analysis, investigation, and reporting of unlawful or unauthorized system activity"
+    responsibility:
+      aws: "AWS CloudTrail, CloudWatch Logs infrastructure and durability"
+      customer: "CloudTrail configuration, log retention policies, S3 log bucket settings"
+    structural:
+      - id: "scp-protect-cloudtrail"
+        description: "Deny disabling or deleting CloudTrail trails"
+        actions:
+          - "cloudtrail:DeleteTrail"
+          - "cloudtrail:StopLogging"
+          - "cloudtrail:UpdateTrail"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /admin/"
+        effect: "Deny"
+    monitoring:
+      - id: "config-cloudtrail-multi-region"
+        resource_type: "AWS::CloudTrail::Trail"
+        check: "Multi-region CloudTrail trail enabled with log file validation"
+        remediation: "Enable multi-region CloudTrail with log validation"
+    assessment:
+      objectives:
+        - id: "3.3.1[a]"
+          description: "Audit and accountability policy is established"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.3.1[b]"
+          description: "Audit logs are created and retained"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.3.2"
+    family: "Audit and Accountability"
+    title: "Ensure that the actions of individual users can be uniquely traced to those users so they can be held accountable for their actions"
+    responsibility:
+      aws: "CloudTrail user identity in event records, IAM user/role attribution"
+      customer: "Federated identity configuration, IAM user naming conventions"
+    monitoring:
+      - id: "config-cloudtrail-log-integrity"
+        resource_type: "AWS::CloudTrail::Trail"
+        check: "Log file validation enabled"
+        remediation: "Enable CloudTrail log file validation"
+    assessment:
+      objectives:
+        - id: "3.3.2[a]"
+          description: "The content of the audit records includes the information necessary to uniquely trace actions to individual users"
+          auto_assessable: true
+          evidence_source: "config"
+        - id: "3.3.2[b]"
+          description: "Actions are traceable to individual users"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.3.3"
+    family: "Audit and Accountability"
+    title: "Review and update logged events"
+    responsibility:
+      aws: "CloudTrail event categories and data event configuration"
+      customer: "Periodic review of logged event types, CloudTrail advanced event selectors"
+    assessment:
+      objectives:
+        - id: "3.3.3[a]"
+          description: "Logged events are periodically reviewed"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.3.3[b]"
+          description: "Logged events are updated based on reviews"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.3.4"
+    family: "Audit and Accountability"
+    title: "Alert in the event of an audit logging process failure"
+    responsibility:
+      aws: "CloudWatch Alarms, SNS for CloudTrail delivery failures"
+      customer: "CloudWatch alarms for CloudTrail status, S3 delivery failures, log validation errors"
+    monitoring:
+      - id: "config-cloudtrail-alarm"
+        resource_type: "AWS::CloudWatch::Alarm"
+        check: "CloudWatch alarm configured for CloudTrail log delivery failures"
+    assessment:
+      objectives:
+        - id: "3.3.4[a]"
+          description: "Personnel or roles to be alerted on audit logging failure are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.3.4[b]"
+          description: "An alert is generated upon audit logging process failure"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.3.5"
+    family: "Audit and Accountability"
+    title: "Correlate audit record review, analysis, and reporting processes for investigation and response to indications of unlawful, unauthorized, suspicious, or unusual activity"
+    responsibility:
+      aws: "AWS Security Hub, Amazon Detective for log correlation"
+      customer: "Security Hub configuration, Detective activation, SIEM integration"
+    monitoring:
+      - id: "config-security-hub-enabled"
+        resource_type: "AWS::SecurityHub::Hub"
+        check: "AWS Security Hub enabled with relevant standards activated"
+        remediation: "Enable Security Hub and activate NIST 800-53 standard"
+    assessment:
+      objectives:
+        - id: "3.3.5[a]"
+          description: "Audit record review, analysis, and reporting processes are correlated"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.3.6"
+    family: "Audit and Accountability"
+    title: "Provide audit record reduction and report generation to support on-demand analysis and reporting"
+    responsibility:
+      aws: "CloudWatch Logs Insights, Athena, OpenSearch Service"
+      customer: "Log analysis tooling, Athena queries for CloudTrail Lake"
+    assessment:
+      objectives:
+        - id: "3.3.6[a]"
+          description: "An audit record reduction and report generation capability is provided"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.3.7"
+    family: "Audit and Accountability"
+    title: "Provide a system capability that compares and synchronizes internal system clocks with an authoritative source to generate time stamps for audit records"
+    responsibility:
+      aws: "AWS uses Amazon Time Sync Service (NTP) for all instances"
+      customer: "EC2 instance time sync configuration; do not override NTP settings"
+    assessment:
+      objectives:
+        - id: "3.3.7[a]"
+          description: "An authoritative time source is defined for organizational systems"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.3.7[b]"
+          description: "Internal system clocks are synchronized to the authoritative time source"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.3.8"
+    family: "Audit and Accountability"
+    title: "Protect audit information and audit tools from unauthorized access, modification, and deletion"
+    responsibility:
+      aws: "S3 Object Lock, CloudTrail log file validation, KMS encryption of logs"
+      customer: "S3 bucket policies protecting audit logs, Object Lock configuration, KMS key policies"
+    structural:
+      - id: "scp-protect-audit-logs"
+        description: "Deny modification or deletion of audit log buckets and CloudTrail"
+        actions:
+          - "s3:DeleteBucket"
+          - "s3:DeleteObject"
+          - "cloudtrail:DeleteTrail"
+          - "logs:DeleteLogGroup"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /security/"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.3.8[a]"
+          description: "Audit information is protected from unauthorized access"
+          auto_assessable: true
+          evidence_source: "scp"
+        - id: "3.3.8[b]"
+          description: "Audit tools are protected from unauthorized modification and deletion"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "3.3.9"
+    family: "Audit and Accountability"
+    title: "Limit management of audit logging to a subset of privileged users"
+    responsibility:
+      aws: "IAM permissions for CloudTrail and CloudWatch Logs management"
+      customer: "Restrict CloudTrail/CloudWatch management to security team roles"
+    structural:
+      - id: "scp-restrict-audit-management"
+        description: "Deny CloudTrail and CloudWatch management to non-security principals"
+        actions:
+          - "cloudtrail:UpdateTrail"
+          - "cloudtrail:CreateTrail"
+          - "logs:DeleteLogGroup"
+          - "logs:PutRetentionPolicy"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /security/"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.3.9[a]"
+          description: "Privileged users with access to manage audit logging are defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.3.9[b]"
+          description: "Audit logging management is limited to the defined privileged users"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  # ── 3.4 Configuration Management (9 controls) ────────────────────────
+
+  - id: "3.4.1"
+    family: "Configuration Management"
+    title: "Establish and maintain baseline configurations and inventories of organizational systems including hardware, software, firmware, and documentation"
+    responsibility:
+      aws: "AWS Config, Systems Manager Inventory for infrastructure baseline"
+      customer: "AWS Config rules for baseline enforcement, SSM Inventory configuration"
+    monitoring:
+      - id: "config-ssm-inventory-enabled"
+        resource_type: "AWS::SSM::ManagedInstance"
+        check: "SSM Inventory collection enabled for all managed instances"
+        remediation: "Configure SSM Inventory collection via State Manager"
+    assessment:
+      objectives:
+        - id: "3.4.1[a]"
+          description: "The baseline configurations are established"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.4.1[b]"
+          description: "The baseline configurations are maintained"
+          auto_assessable: true
+          evidence_source: "config"
+        - id: "3.4.1[c]"
+          description: "A current inventory of organizational systems is maintained"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.4.2"
+    family: "Configuration Management"
+    title: "Establish and enforce security configuration settings for information technology products employed in organizational systems"
+    responsibility:
+      aws: "AWS Config managed rules, Security Hub findings"
+      customer: "Custom Config rules, Systems Manager State Manager for configuration enforcement"
+    monitoring:
+      - id: "config-security-hub-score"
+        resource_type: "AWS::SecurityHub::Hub"
+        check: "Security Hub security score above 80% for activated standards"
+    assessment:
+      objectives:
+        - id: "3.4.2[a]"
+          description: "Security configuration settings are established"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.4.2[b]"
+          description: "Security configuration settings are enforced"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.4.3"
+    family: "Configuration Management"
+    title: "Track, review, approve, and log changes to organizational systems"
+    responsibility:
+      aws: "AWS Config change tracking, CloudTrail API activity"
+      customer: "Change management process, Config Rules for change detection"
+    assessment:
+      objectives:
+        - id: "3.4.3[a]"
+          description: "Changes to organizational systems are tracked"
+          auto_assessable: true
+          evidence_source: "config"
+        - id: "3.4.3[b]"
+          description: "Changes to organizational systems are reviewed and approved"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.4.3[c]"
+          description: "Changes to organizational systems are logged"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.4.4"
+    family: "Configuration Management"
+    title: "Analyze the security impact of changes prior to implementation"
+    responsibility:
+      aws: "AWS Config change impact analysis, CloudFormation change sets"
+      customer: "Change impact analysis process, CloudFormation changeset review"
+    assessment:
+      objectives:
+        - id: "3.4.4[a]"
+          description: "The security impact of changes is analyzed prior to implementation"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.4.5"
+    family: "Configuration Management"
+    title: "Define, document, approve, and enforce physical and logical access restrictions associated with changes to organizational systems"
+    responsibility:
+      aws: "IAM change management controls"
+      customer: "IAM change approval workflows, pipeline-based deployment controls"
+    assessment:
+      objectives:
+        - id: "3.4.5[a]"
+          description: "Access restrictions associated with changes are defined and documented"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.4.5[b]"
+          description: "Access restrictions associated with changes are approved"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.4.5[c]"
+          description: "Access restrictions associated with changes are enforced"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.4.6"
+    family: "Configuration Management"
+    title: "Employ the principle of least functionality by configuring organizational systems to provide only essential capabilities"
+    responsibility:
+      aws: "VPC security group defaults, IAM permission boundaries"
+      customer: "Security group least-privilege rules, disabling unused AWS services via SCP"
+    structural:
+      - id: "scp-disable-unused-services"
+        description: "Deny enabling high-risk services not approved for SRE use"
+        actions:
+          - "lightsail:*"
+          - "workspaces:*"
+          - "iot:*"
+        conditions: []
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.4.6[a]"
+          description: "Essential system capabilities are defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.4.6[b]"
+          description: "Systems are configured to provide only essential capabilities"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "3.4.7"
+    family: "Configuration Management"
+    title: "Restrict, disable, or prevent the use of nonessential programs, functions, ports, protocols, and services"
+    responsibility:
+      aws: "Security groups, Network ACLs, AWS WAF"
+      customer: "Security group configuration, NACLs, disabling unused services"
+    monitoring:
+      - id: "config-sg-restricted-ports"
+        resource_type: "AWS::EC2::SecurityGroup"
+        check: "No security groups with unrestricted inbound on high-risk ports (22, 3389)"
+        remediation: "Restrict SSH/RDP to specific IP ranges or VPN"
+    assessment:
+      objectives:
+        - id: "3.4.7[a]"
+          description: "Essential and nonessential programs and services are defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.4.7[b]"
+          description: "Nonessential programs and services are restricted or disabled"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.4.8"
+    family: "Configuration Management"
+    title: "Apply deny-by-exception (blacklisting) policy to prevent the use of unauthorized software or deny-all, permit-by-exception (whitelisting) policy to allow the execution of authorized software"
+    responsibility:
+      aws: "AWS Systems Manager Application Control"
+      customer: "SSM Application Control configuration, allowlist of approved software"
+    assessment:
+      objectives:
+        - id: "3.4.8[a]"
+          description: "A software blacklist or whitelist policy is implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.4.9"
+    family: "Configuration Management"
+    title: "Control and monitor user-installed software"
+    responsibility:
+      aws: "AWS Systems Manager, EC2 Image Builder for controlled AMIs"
+      customer: "Approved AMI policy, SSM Patch Manager, software installation controls"
+    monitoring:
+      - id: "config-approved-amis"
+        resource_type: "AWS::EC2::Instance"
+        check: "EC2 instances launched from approved AMIs only"
+    assessment:
+      objectives:
+        - id: "3.4.9[a]"
+          description: "User-installed software installation is controlled"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.4.9[b]"
+          description: "User-installed software is monitored"
+          auto_assessable: true
+          evidence_source: "config"
+
+  # ── 3.5 Identification and Authentication (11 controls) ──────────────
+
+  - id: "3.5.1"
+    family: "Identification and Authentication"
+    title: "Identify system users, processes acting on behalf of users, and devices"
+    responsibility:
+      aws: "IAM unique identifiers for users, roles, and services"
+      customer: "IAM user/role naming standards, unique identity per person, no shared accounts"
+    assessment:
+      objectives:
+        - id: "3.5.1[a]"
+          description: "System users are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.5.1[b]"
+          description: "Processes acting on behalf of users are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.5.1[c]"
+          description: "Devices are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.5.2"
+    family: "Identification and Authentication"
+    title: "Authenticate (or verify) the identities of users, processes, or devices, as a prerequisite to allowing access"
+    responsibility:
+      aws: "IAM authentication for all API calls; STS token issuance"
+      customer: "Authentication configuration in identity provider, no anonymous access"
+    structural:
+      - id: "scp-deny-unauthenticated"
+        description: "Deny anonymous access to all AWS services"
+        actions:
+          - "s3:GetObject"
+          - "s3:PutObject"
+        conditions:
+          - "aws:PrincipalType == Anonymous"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.5.2[a]"
+          description: "User identities are authenticated before access is allowed"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "3.5.3"
+    family: "Identification and Authentication"
+    title: "Use multifactor authentication for local and network access to privileged accounts and for network access to non-privileged accounts"
+    responsibility:
+      aws: "IAM MFA support for console and API; AWS SSO/IAM Identity Center MFA enforcement"
+      customer: "MFA policy enforcement, hardware MFA for privileged accounts"
+    structural:
+      - id: "scp-mfa-privileged"
+        description: "Deny privileged role assumption without MFA"
+        actions:
+          - "sts:AssumeRole"
+        conditions:
+          - "aws:MultiFactorAuthPresent != true"
+          - "aws:PrincipalARN contains /admin/"
+        effect: "Deny"
+    monitoring:
+      - id: "config-iam-mfa-for-console"
+        resource_type: "AWS::IAM::User"
+        check: "All IAM users with console access have MFA enabled"
+        remediation: "Enable virtual or hardware MFA for IAM user"
+    assessment:
+      objectives:
+        - id: "3.5.3[a]"
+          description: "MFA is used for local access to privileged accounts"
+          auto_assessable: true
+          evidence_source: "scp"
+        - id: "3.5.3[b]"
+          description: "MFA is used for network access to privileged accounts"
+          auto_assessable: true
+          evidence_source: "scp"
+        - id: "3.5.3[c]"
+          description: "MFA is used for network access to non-privileged accounts"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.5.4"
+    family: "Identification and Authentication"
+    title: "Employ replay-resistant authentication mechanisms"
+    responsibility:
+      aws: "AWS SigV4 signing with timestamps, short-lived STS tokens"
+      customer: "Use of STS temporary credentials, avoid long-lived access keys"
+    monitoring:
+      - id: "config-no-long-lived-keys"
+        resource_type: "AWS::IAM::User"
+        check: "No IAM access keys older than 90 days"
+        remediation: "Rotate or delete IAM access keys older than 90 days"
+    assessment:
+      objectives:
+        - id: "3.5.4[a]"
+          description: "Replay-resistant authentication mechanisms are implemented"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.5.5"
+    family: "Identification and Authentication"
+    title: "Employ automated tools and techniques to support the management of authenticator accounts"
+    responsibility:
+      aws: "IAM automated lifecycle management, AWS SSO/Identity Center"
+      customer: "Automated provisioning/deprovisioning via HR system integration, SCIM"
+    assessment:
+      objectives:
+        - id: "3.5.5[a]"
+          description: "Automated tools and techniques are employed to manage authenticator accounts"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.5.6"
+    family: "Identification and Authentication"
+    title: "Disable identifiers after a defined inactivity period"
+    responsibility:
+      aws: "IAM access analyzer for inactive credentials"
+      customer: "IAM credential report review, automation to disable inactive users"
+    monitoring:
+      - id: "config-iam-inactive-users"
+        resource_type: "AWS::IAM::User"
+        check: "IAM users with no activity in 90+ days are disabled"
+    assessment:
+      objectives:
+        - id: "3.5.6[a]"
+          description: "Inactivity period after which identifiers are disabled is defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.5.6[b]"
+          description: "Identifiers are disabled after the defined inactivity period"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.5.7"
+    family: "Identification and Authentication"
+    title: "Enforce a minimum password complexity and change requirements when passwords are used as authentication"
+    responsibility:
+      aws: "IAM account password policy"
+      customer: "IAM password policy configuration, identity provider password rules"
+    monitoring:
+      - id: "config-iam-password-policy"
+        resource_type: "AWS::IAM::PasswordPolicy"
+        check: "Password policy enforces minimum length 14, complexity, and 90-day rotation"
+        remediation: "Update IAM account password policy to meet complexity requirements"
+    assessment:
+      objectives:
+        - id: "3.5.7[a]"
+          description: "Password complexity requirements are defined"
+          auto_assessable: true
+          evidence_source: "config"
+        - id: "3.5.7[b]"
+          description: "Password complexity requirements are enforced"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.5.8"
+    family: "Identification and Authentication"
+    title: "Prohibit password reuse for a specified number of generations"
+    responsibility:
+      aws: "IAM account password policy (remember up to 24 passwords)"
+      customer: "IAM password policy password history setting"
+    monitoring:
+      - id: "config-iam-password-reuse"
+        resource_type: "AWS::IAM::PasswordPolicy"
+        check: "Password reuse prevention set to at least 24 generations"
+    assessment:
+      objectives:
+        - id: "3.5.8[a]"
+          description: "The number of generations for which password reuse is prohibited is defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.5.8[b]"
+          description: "Reuse of passwords is prohibited for the defined number of generations"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.5.9"
+    family: "Identification and Authentication"
+    title: "Allow temporary password use for system logons with an immediate change to a permanent password"
+    responsibility:
+      aws: "IAM temporary password on first login; forced password reset"
+      customer: "IAM user creation with temporary password and PasswordResetRequired flag"
+    assessment:
+      objectives:
+        - id: "3.5.9[a]"
+          description: "Temporary passwords are only used for initial system logon"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.5.9[b]"
+          description: "Immediate change to permanent password is required upon initial logon"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.5.10"
+    family: "Identification and Authentication"
+    title: "Store and transmit only cryptographically protected passwords"
+    responsibility:
+      aws: "AWS Secrets Manager, Systems Manager Parameter Store SecureString for password storage"
+      customer: "Password hashing in applications, use of Secrets Manager, never plaintext passwords"
+    structural:
+      - id: "scp-require-secrets-manager"
+        description: "Deny creation of SSM parameters without SecureString encryption"
+        actions:
+          - "ssm:PutParameter"
+        conditions:
+          - "ssm:Type != SecureString"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.5.10[a]"
+          description: "Passwords are cryptographically protected in storage"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.5.10[b]"
+          description: "Passwords are cryptographically protected in transit"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "3.5.11"
+    family: "Identification and Authentication"
+    title: "Obscure feedback of authentication information"
+    responsibility:
+      aws: "AWS Console does not display credentials; API never returns secret keys"
+      customer: "Application-level password field masking, audit logging without credential exposure"
+    assessment:
+      objectives:
+        - id: "3.5.11[a]"
+          description: "Authentication information is obscured during the authentication process"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── 3.6 Incident Response (3 controls) ───────────────────────────────
+
+  - id: "3.6.1"
+    family: "Incident Response"
+    title: "Establish an operational incident-handling capability that includes preparation, detection, analysis, containment, recovery, and user activities"
+    responsibility:
+      aws: "AWS Support, Shield for DDoS response, Incident Manager"
+      customer: "Incident response plan, IR playbooks, AWS Incident Manager configuration"
+    assessment:
+      objectives:
+        - id: "3.6.1[a]"
+          description: "An incident response capability is established"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.6.1[b]"
+          description: "The incident response capability addresses preparation, detection, analysis, containment, recovery, and user activities"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.6.2"
+    family: "Incident Response"
+    title: "Track, document, and report incidents to designated officials and/or authorities"
+    responsibility:
+      aws: "AWS Security Hub, Amazon Detective for incident investigation"
+      customer: "Incident ticketing, Security Hub notification rules, reporting procedures"
+    monitoring:
+      - id: "config-security-hub-findings"
+        resource_type: "AWS::SecurityHub::Hub"
+        check: "Security Hub enabled and findings routed to notification endpoint"
+    assessment:
+      objectives:
+        - id: "3.6.2[a]"
+          description: "Incidents are tracked"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.6.2[b]"
+          description: "Incidents are documented"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.6.2[c]"
+          description: "Incidents are reported"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.6.3"
+    family: "Incident Response"
+    title: "Test the organizational incident response capability"
+    responsibility:
+      aws: "AWS Fault Injection Simulator, GameDays"
+      customer: "Annual tabletop exercises, IR testing documentation"
+    assessment:
+      objectives:
+        - id: "3.6.3[a]"
+          description: "The incident response capability is tested"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── 3.7 Maintenance (6 controls) ─────────────────────────────────────
+
+  - id: "3.7.1"
+    family: "Maintenance"
+    title: "Perform maintenance on organizational systems"
+    responsibility:
+      aws: "AWS managed infrastructure maintenance (hypervisor, network, hardware)"
+      customer: "EC2 instance patching, RDS maintenance windows, Lambda runtime updates"
+    monitoring:
+      - id: "config-ssm-patch-compliance"
+        resource_type: "AWS::SSM::PatchCompliance"
+        check: "All managed instances compliant with patch baseline"
+        remediation: "Run SSM Patch Manager to apply missing patches"
+    assessment:
+      objectives:
+        - id: "3.7.1[a]"
+          description: "Maintenance of organizational systems is performed"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.7.2"
+    family: "Maintenance"
+    title: "Provide controls on the tools, techniques, mechanisms, and personnel for the maintenance of organizational systems"
+    responsibility:
+      aws: "AWS managed services eliminate most hardware maintenance; SSM for software"
+      customer: "Access controls for maintenance actions, SSM Session Manager for remote maintenance"
+    assessment:
+      objectives:
+        - id: "3.7.2[a]"
+          description: "Controls on maintenance tools, techniques, mechanisms, and personnel are provided"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.7.3"
+    family: "Maintenance"
+    title: "Ensure equipment removed for off-site maintenance is sanitized of any CUI"
+    responsibility:
+      aws: "AWS handles physical media destruction per ISO 27001/SOC 2; Artifact evidence available"
+      customer: "Verify AWS media sanitization via Artifact; no customer hardware in AWS regions"
+    assessment:
+      objectives:
+        - id: "3.7.3[a]"
+          description: "Equipment scheduled for maintenance is sanitized of CUI"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.7.4"
+    family: "Maintenance"
+    title: "Check media containing diagnostic and test programs for malicious code before the media is used in organizational systems"
+    responsibility:
+      aws: "AWS scans internal diagnostic tools"
+      customer: "Scan of any diagnostic media or scripts before use on SRE instances"
+    assessment:
+      objectives:
+        - id: "3.7.4[a]"
+          description: "Media containing diagnostic programs is checked for malicious code before use"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.7.5"
+    family: "Maintenance"
+    title: "Require MFA for remote maintenance sessions"
+    responsibility:
+      aws: "SSM Session Manager with MFA enforcement via IAM"
+      customer: "Enforce MFA for roles used in SSM sessions; require STS MFA condition"
+    structural:
+      - id: "scp-mfa-maintenance"
+        description: "Deny SSM session initiation without MFA"
+        actions:
+          - "ssm:StartSession"
+        conditions:
+          - "aws:MultiFactorAuthPresent != true"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.7.5[a]"
+          description: "MFA is required for remote maintenance sessions"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "3.7.6"
+    family: "Maintenance"
+    title: "Supervise the maintenance activities of maintenance personnel without required access authorization"
+    responsibility:
+      aws: "AWS never provides hardware access to customers; maintenance personnel screened"
+      customer: "AWS Artifact evidence of personnel screening; watch via session logging"
+    assessment:
+      objectives:
+        - id: "3.7.6[a]"
+          description: "Maintenance personnel without required access authorization are supervised"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── 3.8 Media Protection (9 controls) ────────────────────────────────
+
+  - id: "3.8.1"
+    family: "Media Protection"
+    title: "Protect (i.e., physically control and securely store) system media containing CUI, both paper and digital"
+    responsibility:
+      aws: "Physical security of AWS data centers (SOC 2, ISO 27001)"
+      customer: "Logical protection of EBS/S3 containing CUI; encryption at rest"
+    monitoring:
+      - id: "config-ebs-encrypted"
+        resource_type: "AWS::EC2::Volume"
+        check: "All EBS volumes encrypted with KMS"
+        remediation: "Enable EBS default encryption in account settings"
+    assessment:
+      objectives:
+        - id: "3.8.1[a]"
+          description: "System media containing CUI is physically controlled"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.8.1[b]"
+          description: "System media containing CUI is securely stored"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.8.2"
+    family: "Media Protection"
+    title: "Limit access to CUI on system media to authorized users"
+    responsibility:
+      aws: "S3 bucket policies, IAM resource-based policies, KMS key policies"
+      customer: "S3 bucket ACLs and policies, KMS CMK policies limiting access to CUI data"
+    operational:
+      - id: "cedar-media-access"
+        description: "Access to CUI-tagged storage resources requires CUI authorization"
+        entities: ["principal", "storage_resource"]
+        attributes:
+          principal: ["cui_authorized", "lab_membership"]
+          storage_resource: ["data_classification", "kms_key_id"]
+    assessment:
+      objectives:
+        - id: "3.8.2[a]"
+          description: "Access to CUI on system media is limited to authorized users"
+          auto_assessable: true
+          evidence_source: "cedar"
+
+  - id: "3.8.3"
+    family: "Media Protection"
+    title: "Sanitize or destroy system media before disposal or reuse"
+    responsibility:
+      aws: "AWS media sanitization policy (per SOC 2/ISO 27001); data destruction certificates available"
+      customer: "Verify via Artifact reports; delete/destroy EBS snapshots, S3 objects before reuse"
+    assessment:
+      objectives:
+        - id: "3.8.3[a]"
+          description: "System media is sanitized or destroyed before disposal or reuse"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.8.4"
+    family: "Media Protection"
+    title: "Mark media with necessary CUI markings and distribution limitations"
+    responsibility:
+      aws: "Resource tagging capabilities in all AWS services"
+      customer: "Tag enforcement for CUI data (attest:data-class), S3 object tagging policy"
+    structural:
+      - id: "scp-require-cui-tagging"
+        description: "Deny creating S3 buckets without data classification tag"
+        actions:
+          - "s3:CreateBucket"
+        conditions:
+          - "aws:RequestTag/attest:data-class == \"\""
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.8.4[a]"
+          description: "CUI markings and distribution limitations are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.8.4[b]"
+          description: "Media is marked with required CUI markings"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.8.5"
+    family: "Media Protection"
+    title: "Control access to media containing CUI during transport using cryptographic mechanisms or identify the CUI by marking the media"
+    responsibility:
+      aws: "HTTPS/TLS for all data in transit; S3 Transfer Acceleration, Direct Connect encryption"
+      customer: "Enforce TLS for all data transfers, S3 bucket policy requiring aws:SecureTransport"
+    structural:
+      - id: "scp-media-tls-in-transit"
+        description: "Deny S3 operations over HTTP (require TLS)"
+        actions:
+          - "s3:GetObject"
+          - "s3:PutObject"
+        conditions:
+          - "aws:SecureTransport == false"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.8.5[a]"
+          description: "CUI is controlled during transport"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "3.8.6"
+    family: "Media Protection"
+    title: "Implement cryptographic mechanisms to protect the confidentiality of CUI during transit unless protected by alternative physical safeguards"
+    responsibility:
+      aws: "TLS 1.2+ for all AWS service endpoints; optional FIPS 140-2 endpoints"
+      customer: "Use FIPS endpoints where required; enforce TLS via SCPs"
+    assessment:
+      objectives:
+        - id: "3.8.6[a]"
+          description: "Cryptographic mechanisms protect CUI confidentiality during transit"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "3.8.7"
+    family: "Media Protection"
+    title: "Control the use of removable media on system components"
+    responsibility:
+      aws: "Not applicable to AWS cloud infrastructure"
+      customer: "Endpoint DLP, SSM policies restricting removable media on managed instances"
+    assessment:
+      objectives:
+        - id: "3.8.7[a]"
+          description: "The use of removable media on system components is controlled"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.8.8"
+    family: "Media Protection"
+    title: "Prohibit the use of portable storage devices when such devices have no identifiable owner"
+    responsibility:
+      aws: "Not applicable to AWS cloud infrastructure"
+      customer: "Endpoint controls; policy enforcement on managed endpoints"
+    assessment:
+      objectives:
+        - id: "3.8.8[a]"
+          description: "Use of portable storage devices without identifiable owner is prohibited"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.8.9"
+    family: "Media Protection"
+    title: "Protect the confidentiality of backup CUI at storage locations"
+    responsibility:
+      aws: "AWS Backup, S3 Glacier encryption at rest"
+      customer: "Backup encryption policy, AWS Backup plan with KMS encryption"
+    monitoring:
+      - id: "config-backup-encryption"
+        resource_type: "AWS::Backup::BackupVault"
+        check: "AWS Backup vaults encrypted with KMS CMK"
+        remediation: "Create Backup vault with KMS encryption"
+    assessment:
+      objectives:
+        - id: "3.8.9[a]"
+          description: "The confidentiality of backup CUI is protected at storage locations"
+          auto_assessable: true
+          evidence_source: "config"
+
+  # ── 3.9 Personnel Security (2 controls) ──────────────────────────────
+
+  - id: "3.9.1"
+    family: "Personnel Security"
+    title: "Screen individuals prior to authorizing access to organizational systems containing CUI"
+    responsibility:
+      aws: "AWS personnel background screening (documented in SOC 2 reports via Artifact)"
+      customer: "Background check procedures for SRE administrators and CUI-handling personnel"
+    assessment:
+      objectives:
+        - id: "3.9.1[a]"
+          description: "Screening criteria are defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.9.1[b]"
+          description: "Individuals are screened prior to access authorization"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.9.2"
+    family: "Personnel Security"
+    title: "Ensure that organizational CUI is protected during and after personnel actions such as terminations and transfers"
+    responsibility:
+      aws: "IAM account deactivation; no native termination workflow"
+      customer: "Offboarding process: disable IAM, revoke role access, rotate shared credentials"
+    assessment:
+      objectives:
+        - id: "3.9.2[a]"
+          description: "CUI protection measures are taken during personnel terminations"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.9.2[b]"
+          description: "CUI protection measures are taken during personnel transfers"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── 3.10 Physical Protection (6 controls) ────────────────────────────
+
+  - id: "3.10.1"
+    family: "Physical Protection"
+    title: "Limit physical access to organizational systems to authorized individuals"
+    responsibility:
+      aws: "AWS data center physical security (biometrics, guards, access logs) — SOC 2 evidence"
+      customer: "Physical access to on-premises infrastructure connecting to AWS; Artifact evidence"
+    assessment:
+      objectives:
+        - id: "3.10.1[a]"
+          description: "Authorized individuals for physical access are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.10.1[b]"
+          description: "Physical access to organizational systems is limited to authorized individuals"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.10.2"
+    family: "Physical Protection"
+    title: "Protect and monitor the physical facility and support infrastructure for organizational systems"
+    responsibility:
+      aws: "AWS physical facility security and environmental monitoring — SOC 2 evidence"
+      customer: "Artifact SOC 2 Type II report as evidence; on-premises facility controls"
+    assessment:
+      objectives:
+        - id: "3.10.2[a]"
+          description: "Physical facilities and support infrastructure are protected"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.10.2[b]"
+          description: "Physical facilities and support infrastructure are monitored"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.10.3"
+    family: "Physical Protection"
+    title: "Escort visitors and monitor visitor activity"
+    responsibility:
+      aws: "AWS data center visitor escort policy — SOC 2 evidence"
+      customer: "On-premises visitor management; Artifact SOC 2 report as AWS evidence"
+    assessment:
+      objectives:
+        - id: "3.10.3[a]"
+          description: "Visitors are escorted"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.10.3[b]"
+          description: "Visitor activity is monitored"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.10.4"
+    family: "Physical Protection"
+    title: "Maintain audit logs of physical access"
+    responsibility:
+      aws: "AWS physical access logs maintained internally — SOC 2 evidence"
+      customer: "On-premises access control system logs; Artifact SOC 2 report as AWS evidence"
+    assessment:
+      objectives:
+        - id: "3.10.4[a]"
+          description: "Audit logs of physical access are maintained"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.10.5"
+    family: "Physical Protection"
+    title: "Control and manage physical access devices"
+    responsibility:
+      aws: "AWS manages physical access devices to data centers — SOC 2 evidence"
+      customer: "Key card and badge management for on-premises components"
+    assessment:
+      objectives:
+        - id: "3.10.5[a]"
+          description: "Physical access devices are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.10.5[b]"
+          description: "Physical access devices are managed and controlled"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.10.6"
+    family: "Physical Protection"
+    title: "Enforce safeguarding measures for CUI at alternate work sites"
+    responsibility:
+      aws: "Same cloud controls apply regardless of where user connects from"
+      customer: "Remote work policy, VPN requirements, endpoint encryption for remote users"
+    assessment:
+      objectives:
+        - id: "3.10.6[a]"
+          description: "Alternate work sites where CUI is processed are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.10.6[b]"
+          description: "Safeguarding measures for CUI at alternate work sites are defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.10.6[c]"
+          description: "Safeguarding measures for CUI at alternate work sites are enforced"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── 3.11 Risk Assessment (3 controls) ────────────────────────────────
+
+  - id: "3.11.1"
+    family: "Risk Assessment"
+    title: "Periodically assess the risk to organizational operations, organizational assets, and individuals, resulting from the operation of organizational systems"
+    responsibility:
+      aws: "AWS Security Hub compliance score, Inspector findings as risk indicators"
+      customer: "Formal risk assessment process, use of Security Hub/Inspector findings as inputs"
+    assessment:
+      objectives:
+        - id: "3.11.1[a]"
+          description: "The frequency of risk assessments is defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.11.1[b]"
+          description: "Risk assessments are performed with the defined frequency"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.11.2"
+    family: "Risk Assessment"
+    title: "Scan for vulnerabilities in organizational systems and applications periodically and when new vulnerabilities affecting those systems and applications are identified"
+    responsibility:
+      aws: "Amazon Inspector for EC2, Lambda, ECR vulnerability scanning"
+      customer: "Inspector activation, scan scheduling, remediation of identified vulnerabilities"
+    monitoring:
+      - id: "config-inspector-enabled"
+        resource_type: "AWS::Inspector2::Coverage"
+        check: "Amazon Inspector v2 enabled for EC2 and ECR scanning in all accounts"
+        remediation: "Enable Inspector v2 via Organizations delegated admin"
+    assessment:
+      objectives:
+        - id: "3.11.2[a]"
+          description: "Vulnerability scanning is performed periodically"
+          auto_assessable: true
+          evidence_source: "config"
+        - id: "3.11.2[b]"
+          description: "Vulnerability scanning is performed when new vulnerabilities are identified"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.11.3"
+    family: "Risk Assessment"
+    title: "Remediate vulnerabilities in accordance with risk assessments"
+    responsibility:
+      aws: "Inspector provides remediation recommendations; AWS patches managed services"
+      customer: "SSM Patch Manager for EC2 patching; remediation SLAs based on severity"
+    monitoring:
+      - id: "config-inspector-findings-high"
+        resource_type: "AWS::Inspector2::Finding"
+        check: "No Inspector findings at CRITICAL or HIGH severity older than 30 days"
+        remediation: "Apply patches via SSM Patch Manager or update vulnerable packages"
+    assessment:
+      objectives:
+        - id: "3.11.3[a]"
+          description: "Vulnerabilities are remediated in accordance with risk assessments"
+          auto_assessable: true
+          evidence_source: "config"
+
+  # ── 3.12 Security Assessment (4 controls) ────────────────────────────
+
+  - id: "3.12.1"
+    family: "Security Assessment"
+    title: "Periodically assess the security controls in organizational systems to determine if the controls are effective"
+    responsibility:
+      aws: "AWS conducts internal assessments per FedRAMP/SOC 2 — Artifact evidence"
+      customer: "Attest compile + scan as automated control assessment; manual review of gaps"
+    assessment:
+      objectives:
+        - id: "3.12.1[a]"
+          description: "Security controls are periodically assessed"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.12.1[b]"
+          description: "The effectiveness of the security controls is determined"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.12.2"
+    family: "Security Assessment"
+    title: "Develop and implement plans of action designed to correct deficiencies and reduce or eliminate vulnerabilities in organizational systems"
+    responsibility:
+      aws: "No direct AWS responsibility; customer-owned process"
+      customer: "POA&M management, remediation planning, attest generate poam output"
+    assessment:
+      objectives:
+        - id: "3.12.2[a]"
+          description: "Plans of action are developed to correct security control deficiencies"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.12.2[b]"
+          description: "Plans of action are implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.12.3"
+    family: "Security Assessment"
+    title: "Monitor security controls on an ongoing basis to ensure the continued effectiveness of the controls"
+    responsibility:
+      aws: "AWS Config continuous compliance monitoring, Security Hub continuous findings"
+      customer: "Config rule compliance monitoring, Security Hub integration, attest watch"
+    monitoring:
+      - id: "config-continuous-compliance"
+        resource_type: "AWS::Config::ConfigRule"
+        check: "All attest-generated Config rules active and reporting compliance"
+    assessment:
+      objectives:
+        - id: "3.12.3[a]"
+          description: "Security controls are monitored on an ongoing basis"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.12.4"
+    family: "Security Assessment"
+    title: "Develop, document, and periodically update system security plans that describe system boundaries, system environments of operation, how security requirements are implemented"
+    responsibility:
+      aws: "No direct AWS responsibility; customer-owned document"
+      customer: "System Security Plan — generated by attest generate ssp from live system state"
+    assessment:
+      objectives:
+        - id: "3.12.4[a]"
+          description: "A system security plan is developed that describes the system boundaries and security requirements"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.12.4[b]"
+          description: "The system security plan is periodically updated"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── 3.13 System and Communications Protection (16 controls) ──────────
+
+  - id: "3.13.1"  # [detailed]
     family: "System and Communications Protection"
     title: "Monitor, control, and protect communications at external system boundaries and key internal boundaries"
     responsibility:
@@ -279,7 +1915,162 @@ controls:
         resource_type: "AWS::EC2::VPC"
         check: "Flow logs enabled and delivered to centralized audit"
 
-  - id: "3.13.11"
+  - id: "3.13.2"
+    family: "System and Communications Protection"
+    title: "Employ architectural designs, software development techniques, and systems engineering principles promoting security"
+    responsibility:
+      aws: "AWS Well-Architected Framework, security pillar best practices"
+      customer: "VPC segmentation, use of private subnets, defense-in-depth architecture"
+    assessment:
+      objectives:
+        - id: "3.13.2[a]"
+          description: "Security is embedded in the architecture design"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.13.3"
+    family: "System and Communications Protection"
+    title: "Separate user functionality from system management functionality"
+    responsibility:
+      aws: "AWS Console/API separation; no native enforcement"
+      customer: "Separate AWS accounts for user workloads and management; OU separation"
+    assessment:
+      objectives:
+        - id: "3.13.3[a]"
+          description: "User functionality is separated from system management functionality"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.13.4"
+    family: "System and Communications Protection"
+    title: "Prevent unauthorized and unintended information transfer via shared system resources"
+    responsibility:
+      aws: "EC2 instance isolation, EBS volume isolation between accounts"
+      customer: "VPC design, resource policies preventing cross-account data leakage"
+    assessment:
+      objectives:
+        - id: "3.13.4[a]"
+          description: "Unauthorized information transfer via shared resources is prevented"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.13.5"
+    family: "System and Communications Protection"
+    title: "Implement subnetworks for publicly accessible system components that are physically or logically separated from internal networks"
+    responsibility:
+      aws: "VPC public/private subnet architecture, Internet Gateway, NAT Gateway"
+      customer: "VPC design with segregated public and private subnets; no CUI in public subnets"
+    monitoring:
+      - id: "config-vpc-subnet-separation"
+        resource_type: "AWS::EC2::Subnet"
+        check: "CUI-tagged instances not in public subnets"
+    assessment:
+      objectives:
+        - id: "3.13.5[a]"
+          description: "Subnetworks for publicly accessible components are separated from internal networks"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.13.6"
+    family: "System and Communications Protection"
+    title: "Deny network communications traffic by default and allow network communications traffic by exception (i.e., deny all, permit by exception)"
+    responsibility:
+      aws: "Security group default deny inbound; NACL default deny"
+      customer: "Explicitly allow required traffic in security groups; default deny all"
+    structural:
+      - id: "scp-deny-default-sg-open"
+        description: "Deny modifying default security group to allow all traffic"
+        actions:
+          - "ec2:AuthorizeSecurityGroupIngress"
+          - "ec2:AuthorizeSecurityGroupEgress"
+        conditions:
+          - "ec2:SecurityGroupID == default"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.13.6[a]"
+          description: "Network traffic is denied by default"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.13.6[b]"
+          description: "Network traffic is allowed by exception"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.13.7"
+    family: "System and Communications Protection"
+    title: "Prevent remote devices from simultaneously using non-remote connections with the system and communicate via some other connection to resources in other networks (i.e., split tunneling)"
+    responsibility:
+      aws: "VPN Gateway routing policy, Client VPN endpoint configuration"
+      customer: "Client VPN split-tunneling disabled; force all traffic through VPN"
+    assessment:
+      objectives:
+        - id: "3.13.7[a]"
+          description: "Split tunneling is prevented for remote device connections"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.13.8"
+    family: "System and Communications Protection"
+    title: "Implement cryptographic mechanisms to prevent unauthorized disclosure of CUI during transmission unless otherwise protected by alternative physical safeguards"
+    responsibility:
+      aws: "TLS 1.2+ enforced on all AWS service endpoints; optional FIPS 140-2"
+      customer: "Enforce TLS via SCP; FIPS endpoint configuration"
+    structural:
+      - id: "scp-require-tls-transit"
+        description: "Deny all API calls not using TLS (SecureTransport)"
+        actions:
+          - "*"
+        conditions:
+          - "aws:SecureTransport == false"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.13.8[a]"
+          description: "Cryptographic mechanisms are implemented to prevent unauthorized disclosure of CUI during transmission"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "3.13.9"
+    family: "System and Communications Protection"
+    title: "Terminate network connections associated with communications sessions after a defined period of inactivity"
+    responsibility:
+      aws: "ELB idle timeout, RDS connection timeout, STS session duration"
+      customer: "ALB idle timeout configuration, API Gateway timeout, session management"
+    assessment:
+      objectives:
+        - id: "3.13.9[a]"
+          description: "The period of inactivity for network connection termination is defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.13.9[b]"
+          description: "Network connections are terminated after the defined period of inactivity"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.13.10"
+    family: "System and Communications Protection"
+    title: "Establish and manage cryptographic keys for cryptography employed in organizational systems"
+    responsibility:
+      aws: "AWS KMS manages key storage, rotation, and access control"
+      customer: "KMS CMK creation, key policies, annual key rotation enablement"
+    monitoring:
+      - id: "config-kms-key-rotation"
+        resource_type: "AWS::KMS::Key"
+        check: "KMS CMK annual rotation enabled"
+        remediation: "Enable automatic key rotation for KMS CMKs"
+    assessment:
+      objectives:
+        - id: "3.13.10[a]"
+          description: "Cryptographic keys are generated and distributed"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.13.10[b]"
+          description: "Cryptographic keys are stored and destroyed appropriately"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.13.11"  # [detailed]
     family: "System and Communications Protection"
     title: "Employ FIPS-validated cryptography when used to protect the confidentiality of CUI"
     responsibility:
@@ -322,3 +2113,255 @@ controls:
           description: "FIPS-validated cryptography is employed to protect CUI confidentiality"
           auto_assessable: true
           evidence_source: "scp"
+
+  - id: "3.13.12"
+    family: "System and Communications Protection"
+    title: "Prohibit remote activation of collaborative computing devices and provide indication of use to present users"
+    responsibility:
+      aws: "EC2 instance console access controls; Chime, Workspaces controls"
+      customer: "Policy controls for video/audio collaboration tools in SRE environments"
+    assessment:
+      objectives:
+        - id: "3.13.12[a]"
+          description: "Collaborative computing devices that can be remotely activated are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.13.12[b]"
+          description: "Remote activation of collaborative computing devices is prohibited"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.13.13"
+    family: "System and Communications Protection"
+    title: "Control and monitor the use of mobile code"
+    responsibility:
+      aws: "Lambda execution controls; no native mobile code monitoring"
+      customer: "Lambda function policies, code signing, approved runtime versions"
+    structural:
+      - id: "scp-lambda-code-signing"
+        description: "Deny Lambda function creation without code signing configuration"
+        actions:
+          - "lambda:CreateFunction"
+          - "lambda:UpdateFunctionCode"
+        conditions:
+          - "lambda:CodeSigningConfigArn == \"\""
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "3.13.13[a]"
+          description: "Acceptable mobile code and mobile code technologies are defined"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.13.13[b]"
+          description: "The use of mobile code is controlled and monitored"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "3.13.14"
+    family: "System and Communications Protection"
+    title: "Control and monitor the use of Voice over Internet Protocol (VoIP) technologies"
+    responsibility:
+      aws: "Amazon Chime, Connect controls"
+      customer: "SCP to restrict VoIP service usage in SRE environments if not approved"
+    assessment:
+      objectives:
+        - id: "3.13.14[a]"
+          description: "VoIP technologies in use are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.13.14[b]"
+          description: "VoIP technologies are controlled and monitored"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.13.15"
+    family: "System and Communications Protection"
+    title: "Protect the authenticity of communications sessions"
+    responsibility:
+      aws: "AWS SigV4 request signing, TLS session authentication"
+      customer: "TLS certificate management, certificate pinning for critical services"
+    assessment:
+      objectives:
+        - id: "3.13.15[a]"
+          description: "The authenticity of communications sessions is protected"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.13.16"
+    family: "System and Communications Protection"
+    title: "Protect the confidentiality of CUI at rest"
+    responsibility:
+      aws: "S3 SSE, EBS encryption, RDS encryption at rest"
+      customer: "Enable encryption at rest for all CUI storage; KMS CMK management"
+    structural:
+      - id: "scp-encrypt-at-rest"
+        description: "Deny creation of unencrypted storage resources"
+        actions:
+          - "s3:CreateBucket"
+          - "rds:CreateDBInstance"
+          - "dynamodb:CreateTable"
+        conditions:
+          - "aws:RequestTag/attest:data-class contains CUI"
+        effect: "Deny"
+    monitoring:
+      - id: "config-rds-encrypted"
+        resource_type: "AWS::RDS::DBInstance"
+        check: "RDS instances encrypted at rest with KMS"
+        remediation: "Create encrypted RDS snapshot and restore"
+      - id: "config-dynamodb-encrypted"
+        resource_type: "AWS::DynamoDB::Table"
+        check: "DynamoDB tables encrypted with customer-managed KMS key"
+    assessment:
+      objectives:
+        - id: "3.13.16[a]"
+          description: "CUI at rest is encrypted"
+          auto_assessable: true
+          evidence_source: "config"
+
+  # ── 3.14 System and Information Integrity (7 controls) ───────────────
+
+  - id: "3.14.1"
+    family: "System and Information Integrity"
+    title: "Identify, report, and correct system flaws in a timely manner"
+    responsibility:
+      aws: "Amazon Inspector for vulnerability identification; AWS patch advisories"
+      customer: "Inspector activation, SSM Patch Manager for patching, remediation SLAs"
+    monitoring:
+      - id: "config-inspector-v2"
+        resource_type: "AWS::Inspector2::Coverage"
+        check: "Amazon Inspector v2 enabled org-wide with EC2 and Lambda scanning"
+        remediation: "Enable Inspector v2 via Organizations delegated admin account"
+      - id: "config-ssm-patch-compliance-v2"
+        resource_type: "AWS::SSM::PatchCompliance"
+        check: "All managed instances patch-compliant within 30 days of patch release"
+    assessment:
+      objectives:
+        - id: "3.14.1[a]"
+          description: "System flaws are identified"
+          auto_assessable: true
+          evidence_source: "config"
+        - id: "3.14.1[b]"
+          description: "System flaws are reported"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.14.1[c]"
+          description: "System flaws are corrected in a timely manner"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.14.2"
+    family: "System and Information Integrity"
+    title: "Provide protection from malicious code at appropriate locations within organizational systems"
+    responsibility:
+      aws: "Amazon GuardDuty malware protection, Inspector for known CVEs"
+      customer: "GuardDuty Malware Protection activation, EC2 endpoint protection agents"
+    monitoring:
+      - id: "config-guardduty-malware"
+        resource_type: "AWS::GuardDuty::Detector"
+        check: "GuardDuty Malware Protection enabled"
+        remediation: "Enable GuardDuty Malware Protection in GuardDuty settings"
+    assessment:
+      objectives:
+        - id: "3.14.2[a]"
+          description: "Malicious code protection mechanisms are implemented"
+          auto_assessable: true
+          evidence_source: "config"
+        - id: "3.14.2[b]"
+          description: "Malicious code protection is updated when new releases are available"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.14.3"
+    family: "System and Information Integrity"
+    title: "Monitor system security alerts and advisories and take action in response"
+    responsibility:
+      aws: "AWS Health Dashboard, Security Bulletins, Security Hub findings"
+      customer: "AWS Health event subscriptions, Security Hub notification rules, response procedures"
+    monitoring:
+      - id: "config-health-events"
+        resource_type: "AWS::Health::Event"
+        check: "AWS Health event notifications configured for security-relevant events"
+    assessment:
+      objectives:
+        - id: "3.14.3[a]"
+          description: "Security alerts and advisories are received"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "3.14.3[b]"
+          description: "Actions are taken in response to alerts and advisories"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.14.4"
+    family: "System and Information Integrity"
+    title: "Update malicious code protection mechanisms when new releases are available"
+    responsibility:
+      aws: "GuardDuty threat intelligence automatically updated by AWS"
+      customer: "GuardDuty enabled; endpoint AV tools updated via SSM or AMI pipeline"
+    assessment:
+      objectives:
+        - id: "3.14.4[a]"
+          description: "Malicious code protection mechanisms are updated when new releases are available"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "3.14.5"
+    family: "System and Information Integrity"
+    title: "Perform periodic scans of organizational systems and real-time scans of files from external sources as files are downloaded, opened, or executed"
+    responsibility:
+      aws: "Inspector continuous scanning, GuardDuty real-time event analysis"
+      customer: "Inspector scheduled scans, GuardDuty S3 malware protection for upload scanning"
+    monitoring:
+      - id: "config-inspector-continuous-scan"
+        resource_type: "AWS::Inspector2::Coverage"
+        check: "Inspector continuous scanning enabled (not just on-demand)"
+    assessment:
+      objectives:
+        - id: "3.14.5[a]"
+          description: "Periodic scans of organizational systems are performed"
+          auto_assessable: true
+          evidence_source: "config"
+        - id: "3.14.5[b]"
+          description: "Real-time scans of files from external sources are performed"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.14.6"
+    family: "System and Information Integrity"
+    title: "Monitor organizational systems to detect attacks and indicators of potential attacks"
+    responsibility:
+      aws: "Amazon GuardDuty, AWS Security Hub, VPC Flow Logs, CloudTrail"
+      customer: "GuardDuty and Security Hub activation org-wide, threat detection configuration"
+    monitoring:
+      - id: "config-guardduty-active"
+        resource_type: "AWS::GuardDuty::Detector"
+        check: "GuardDuty enabled in all accounts and regions; findings routed to Security Hub"
+        remediation: "Enable GuardDuty via Organizations delegated admin"
+      - id: "config-vpc-flow-logs-all"
+        resource_type: "AWS::EC2::VPC"
+        check: "VPC flow logs enabled in all VPCs"
+        remediation: "Enable VPC flow logs with delivery to central audit account"
+    assessment:
+      objectives:
+        - id: "3.14.6[a]"
+          description: "Attacks and indicators of potential attacks are detected"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "3.14.7"
+    family: "System and Information Integrity"
+    title: "Identify unauthorized use of organizational systems"
+    responsibility:
+      aws: "GuardDuty anomaly detection, IAM Access Analyzer, CloudTrail anomaly"
+      customer: "GuardDuty, Security Hub, Access Analyzer activation; behavioral baseline"
+    monitoring:
+      - id: "config-access-analyzer-enabled"
+        resource_type: "AWS::AccessAnalyzer::Analyzer"
+        check: "IAM Access Analyzer enabled in all accounts to detect external access"
+        remediation: "Enable Access Analyzer via Organizations in all accounts"
+    assessment:
+      objectives:
+        - id: "3.14.7[a]"
+          description: "Unauthorized use of organizational systems is identified"
+          auto_assessable: true
+          evidence_source: "config"

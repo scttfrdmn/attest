@@ -1,0 +1,47 @@
+version: 2
+
+project_name: attest
+
+builds:
+  - main: ./cmd/attest
+    binary: attest
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "attest_{{.Version}}_{{.Os}}_{{.Arch}}"
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+      - frameworks/**
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: file
+  path: CHANGELOG.md
+
+release:
+  github:
+    owner: scttfrdmn
+    name: attest
+  name_template: "{{.Tag}}"
