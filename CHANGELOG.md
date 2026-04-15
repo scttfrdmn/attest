@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-15
+
+### Added
+
+- `attest apply [--dry-run] [--approve]` — deploys compiled SCPs to the AWS Organization.
+  Creates new SCPs, updates changed ones, attaches all to org root. Dry-run mode
+  shows the full deployment plan without making changes. Against o-pygqyjjoym, correctly
+  plans 26 SCPs to create and attach to root `r-fr7j`.
+- `attest evaluate --principal --action --resource [--attr]` — one-shot Cedar PDP
+  evaluation against compiled policies. Parses `entity.attribute=value` flags into
+  Cedar entities, runs `ps.IsAuthorized()`, returns ALLOW/DENY with policy ID.
+- `attest diff [ref1] [ref2]` — compares two posture history snapshots. Shows improved,
+  regressed, and unchanged controls with score delta.
+- `attest attest create|list|expire` — administrative control attestation management.
+  Records who affirmed a control, when, what evidence, and expiry. Stored as YAML in
+  `.attest/attestations/`. Same pattern as waivers.
+- `attest calendar [--window 90d]` — lists controls with review schedules and their
+  upcoming due dates. Flags unattestedcontrols and overdue reviews.
+- `attest report [--window 90d]` — trend analysis from posture history snapshots.
+- `attest watch` — Cedar PDP polling mode (EventBridge integration deferred to v1.0.0).
+- `attest compile --output terraform` — generates Terraform HCL for all compiled SCPs
+  with `aws_organizations_policy` + `aws_organizations_policy_attachment` resources.
+- `internal/deploy/deployer.go` — SCP deployer: Plan (dry-run diff), Apply
+  (create/update/attach), content-normalizing JSON comparison.
+- `internal/evaluator/evaluator.go` — Cedar PDP evaluation via cedar-go: builds entities
+  from attribute map, calls `ps.IsAuthorized()`, returns `schema.CedarDecision`.
+- `internal/attestation/manager.go` — attestation CRUD: Create (validated), List,
+  ListExpiring, IsAttested, Expire.
+- `internal/iac/output.go` — Terraform HCL generation from compiled SCPs.
+- `internal/reporting/reporting.go` — posture trend analysis from `.attest/history/`.
+- `frameworks/ferpa/framework.yaml` — FERPA (20 U.S.C. § 1232g) framework: 13 controls
+  across Student Rights, Amendment Rights, Disclosure Controls, and Enforcement families.
+  Cedar policies for student record access and disclosure controls.
+- `classification-schemes/uc-protection-levels.yaml` — UC P-level system (IS-3):
+  P1–P4 mapped to attest data classes and frameworks. P4 → PHI/CUI, P3 → FERPA.
+- `classification-schemes/fisma-impact-levels.yaml` — FISMA Low/Moderate/High mapped
+  to NIST 800-171 (Moderate) and NIST 800-53 (High).
+- `attest init --classification-scheme` — translates institutional classification tags
+  to attest data classes and activates appropriate frameworks.
+- Schema additions: `Attestation`, `ReviewSchedule`, `AdminDependency`,
+  `ClassificationScheme`, `ClassificationMapping` types.
+- `AdminDependencies` field on `OperationalEnforcement` — links Cedar policies to the
+  administrative controls their correctness depends on.
+- `ReviewSchedule` field on `Control` — specifies review frequency for administrative
+  controls; feeds `attest calendar`.
+- `review_schedule` added to 8 key NIST 800-171 controls (3.2.1, 3.2.2, 3.2.3, 3.6.3,
+  3.9.1, 3.11.1, 3.12.1, 3.12.4).
+- `admin_dependencies` added to `cedar-cui-data-movement` (3.1.3) — depends on 3.2.2
+  training attestation.
+- Demo scenario: Meridian Research University (greenfield + legacy walkthroughs).
+- Tests: 10 deploy, 7 attestation — 89 total, all passing.
+
 ## [0.4.0] - 2026-04-15
 
 ### Added

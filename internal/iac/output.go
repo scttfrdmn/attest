@@ -1,20 +1,12 @@
-// Package iac generates Infrastructure-as-Code output from compiled
-// policy artifacts. Supports Terraform modules and CDK constructs
-// so organizations deploy through existing IaC pipelines rather than
-// a separate `attest apply` channel.
-//
-// `attest compile --output terraform` writes a Terraform module tree:
-//   - SCPs (aws_organizations_policy + aws_organizations_policy_attachment)
-//   - Config conformance packs
-//   - EventBridge rules wiring CloudTrail → Cedar PDP
-//   - Security service enablement (GuardDuty, Inspector, Macie, Security Hub)
-//
-// Every resource is tagged with managed_by=attest and the specific
-// framework controls it satisfies.
+// Package iac generates Infrastructure-as-Code output from compiled policy artifacts.
+// Supports Terraform modules so organizations deploy through existing IaC pipelines.
 package iac
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 // Format is the IaC output format.
@@ -36,28 +28,102 @@ func NewGenerator(format Format, outputDir string) *Generator {
 	return &Generator{format: format, outputDir: outputDir}
 }
 
-// Generate writes the IaC modules/constructs to the output directory.
+// Generate writes the IaC modules to the output directory.
 func (g *Generator) Generate(compiledDir string) error {
 	switch g.format {
 	case FormatTerraform:
 		return g.generateTerraform(compiledDir)
 	case FormatCDK:
-		return g.generateCDK(compiledDir)
+		return fmt.Errorf("CDK output not yet implemented; use --output terraform")
 	default:
 		return fmt.Errorf("unsupported IaC format: %s", g.format)
 	}
 }
 
+// generateTerraform produces a Terraform module for all compiled SCPs.
+// Each SCP becomes an aws_organizations_policy resource attached to the org root.
 func (g *Generator) generateTerraform(compiledDir string) error {
-	// TODO: Generate Terraform modules:
-	//   - scps/main.tf (aws_organizations_policy resources)
-	//   - config/main.tf (aws_config_conformance_pack)
-	//   - eventbridge/main.tf (aws_cloudwatch_event_rule)
-	//   - security/main.tf (GuardDuty, Inspector, Macie, Security Hub enablement)
-	return fmt.Errorf("not implemented")
+	scpDir := filepath.Join(compiledDir, "scps")
+	entries, err := os.ReadDir(scpDir)
+	if os.IsNotExist(err) {
+		return fmt.Errorf("no compiled SCPs found in %s (run 'attest compile' first)", scpDir)
+	}
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(g.outputDir, 0750); err != nil {
+		return err
+	}
+
+	var b strings.Builder
+
+	// Header.
+	b.WriteString(`# Attest-generated Terraform module
+# Auto-generated — do not edit manually
+# Re-generate with: attest compile --output terraform
+
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
 }
 
-func (g *Generator) generateCDK(compiledDir string) error {
-	// TODO: Generate Python CDK stack with constructs for each resource type.
-	return fmt.Errorf("not implemented")
+data "aws_organizations_organization" "current" {}
+
+`)
+
+	// One resource block per compiled SCP.
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		resourceName := strings.ReplaceAll(id, "-", "_")
+
+		b.WriteString(fmt.Sprintf(`resource "aws_organizations_policy" "%s" {
+  name        = %q
+  description = "Managed by attest — do not edit manually"
+  type        = "SERVICE_CONTROL_POLICY"
+  content     = file("${path.module}/scps/%s")
+  tags = {
+    managed_by = "attest"
+  }
+}
+
+resource "aws_organizations_policy_attachment" "%s" {
+  policy_id = aws_organizations_policy.%s.id
+  target_id = data.aws_organizations_organization.current.roots[0].id
+}
+
+`, resourceName, id, e.Name(), resourceName, resourceName))
+	}
+
+	mainTF := filepath.Join(g.outputDir, "main.tf")
+	if err := os.WriteFile(mainTF, []byte(b.String()), 0644); err != nil {
+		return fmt.Errorf("writing main.tf: %w", err)
+	}
+
+	// Copy SCP JSON files into the terraform directory.
+	tfSCPDir := filepath.Join(g.outputDir, "scps")
+	if err := os.MkdirAll(tfSCPDir, 0750); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(scpDir, e.Name()))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(tfSCPDir, e.Name()), data, 0644); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

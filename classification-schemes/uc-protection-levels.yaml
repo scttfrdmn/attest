@@ -1,0 +1,92 @@
+# University of California Protection Levels (P-Levels)
+# UC BFB IS-3: Electronic Information Security Policy
+# Source: https://security.ucop.edu/policies/it-security.html
+#
+# The UC P-level system classifies all institutional data P1–P4.
+# P4 data maps to HIPAA (if PHI), NIST 800-171 (if CUI/DoD-funded),
+# or both. P3 includes FERPA-protected student records.
+#
+# Usage:
+#   attest init --region us-east-1 --classification-scheme uc-protection-levels
+#
+# This scheme translates UC account tags (e.g., UC:DataProtectionLevel=P4)
+# to attest data classes and activates the appropriate frameworks.
+
+scheme_id: uc-protection-levels
+name: "University of California Protection Levels (IS-3)"
+description: |
+  UC systemwide data classification under BFB IS-3. Applies to all UC campuses:
+  Berkeley, Davis, Irvine, Los Angeles, Merced, Riverside, San Diego,
+  San Francisco, Santa Barbara, Santa Cruz, and the Office of the President.
+source: "https://security.ucop.edu/policies/it-security.html"
+
+# Tag key on AWS accounts that holds the P-level value.
+# UC campuses typically set this via AWS Organizations tag policies.
+tag_key: "UC:DataProtectionLevel"
+
+mappings:
+  P1:
+    attest_classes: []
+    frameworks: []
+    description: "Public data — freely shareable with no restrictions"
+    examples:
+      - "Published research papers and preprints"
+      - "Publicly available course catalogs and schedules"
+      - "Press releases and marketing materials"
+
+  P2:
+    attest_classes: []
+    frameworks: []
+    description: "Internal use — accessible to UC community, not intended for public release"
+    examples:
+      - "Internal administrative communications"
+      - "Non-sensitive business processes"
+      - "De-identified research data with no re-identification risk"
+
+  P3:
+    attest_classes:
+      - FERPA
+    frameworks:
+      - ferpa
+    description: |
+      Sensitive — confidential data requiring protection per law or policy.
+      Includes student education records (FERPA), internal personnel records,
+      and certain financial data.
+    examples:
+      - "Student grades, transcripts, enrollment records (FERPA)"
+      - "Personnel files and performance reviews"
+      - "Donor information and gift records"
+      - "Pre-decisional administrative documents"
+    notes: |
+      FERPA framework activated automatically for all P3 accounts.
+      Student data in AWS requires CloudTrail audit logging and access controls
+      limiting disclosure to officials with legitimate educational interest.
+
+  P4:
+    attest_classes:
+      - PHI
+      - CUI
+    frameworks:
+      - hipaa
+      - nist-800-171-r2
+    description: |
+      Highly sensitive — regulated data requiring the strongest protections.
+      Includes Protected Health Information (PHI), Controlled Unclassified
+      Information (CUI), financial account data, and authentication credentials.
+      Specific frameworks activated based on Artifact agreements:
+        - Signed BAA with AWS → hipaa activated
+        - Active DoD/federal contract → nist-800-171-r2 activated
+    examples:
+      - "Patient health records, clinical trial data (PHI → HIPAA)"
+      - "DoD-funded research with CUI markings (CUI → NIST 800-171)"
+      - "Genomic data linked to individuals (PHI)"
+      - "Export-controlled research data (CUI // AT, EAR-controlled)"
+      - "Social Security Numbers, financial account numbers"
+      - "Authentication credentials and cryptographic keys"
+    notes: |
+      P4 does not automatically activate both hipaa and nist-800-171-r2.
+      Framework activation depends on the data type and Artifact agreements:
+        - PHI-only data + signed BAA → hipaa only
+        - CUI-only data + DoD contract → nist-800-171-r2 only
+        - Both PHI and CUI → both frameworks (most restrictive applies)
+      Consult your campus CISO before activating both simultaneously.

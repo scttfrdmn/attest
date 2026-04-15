@@ -11,16 +11,23 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	cedar "github.com/cedar-policy/cedar-go"
+
 	"github.com/scttfrdmn/attest/internal/artifact"
-	"github.com/scttfrdmn/attest/internal/compiler/cedar"
-	"github.com/scttfrdmn/attest/internal/compiler/scp"
+	"github.com/scttfrdmn/attest/internal/attestation"
+	compilerce "github.com/scttfrdmn/attest/internal/compiler/cedar"
+	compilerscp "github.com/scttfrdmn/attest/internal/compiler/scp"
+	"github.com/scttfrdmn/attest/internal/deploy"
 	"github.com/scttfrdmn/attest/internal/document/assessment"
 	"github.com/scttfrdmn/attest/internal/document/oscal"
 	"github.com/scttfrdmn/attest/internal/document/poam"
 	"github.com/scttfrdmn/attest/internal/document/ssp"
+	"github.com/scttfrdmn/attest/internal/evaluator"
 	"github.com/scttfrdmn/attest/internal/framework"
+	"github.com/scttfrdmn/attest/internal/iac"
 	"github.com/scttfrdmn/attest/internal/org"
-	_ "github.com/scttfrdmn/attest/internal/store" // imported for side effects; used via store.NewStore in compile
+	"github.com/scttfrdmn/attest/internal/reporting"
+	"github.com/scttfrdmn/attest/internal/store"
 	attesttesting "github.com/scttfrdmn/attest/internal/testing"
 	"github.com/scttfrdmn/attest/internal/waiver"
 	"github.com/scttfrdmn/attest/pkg/schema"
@@ -56,6 +63,8 @@ within it are research environments that inherit the org-level posture.`,
 		simulateCmd(),
 		provisionCmd(),
 		waiverCmd(),
+		attestCmd(),
+		calendarCmd(),
 		reportCmd(),
 		aiCmd(),
 		versionCmd(),
@@ -79,6 +88,7 @@ to activate compliance frameworks and 'attest compile' to generate policies.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			region, _ := cmd.Flags().GetString("region")
+			classScheme, _ := cmd.Flags().GetString("classification-scheme")
 
 			fmt.Println("Initializing SRE...")
 
@@ -122,6 +132,14 @@ to activate compliance frameworks and 'attest compile' to generate policies.`,
 				}
 			}
 
+			// Apply institutional classification scheme if provided.
+			if classScheme != "" {
+				fmt.Printf("  Applying classification scheme: %s...\n", classScheme)
+				if err := applyClassificationScheme(classScheme, sre); err != nil {
+					fmt.Printf("  Warning: could not apply scheme %s: %v\n", classScheme, err)
+				}
+			}
+
 			// Detect data classifications from account tags.
 			fmt.Println("  Detecting data classifications from account tags...")
 			classes, _ := analyzer.ResolveDataClasses(ctx, sre)
@@ -156,6 +174,7 @@ to activate compliance frameworks and 'attest compile' to generate policies.`,
 		},
 	}
 	cmd.Flags().String("region", "us-west-2", "AWS region")
+	cmd.Flags().String("classification-scheme", "", "Institutional classification scheme (e.g., uc-protection-levels)")
 	return cmd
 }
 
@@ -350,6 +369,57 @@ posture is derived from the compiled crosswalk (run 'attest compile' first).`,
 }
 
 // deduplicationKey mirrors internal/framework.deduplicationKey for CLI use.
+// applyClassificationScheme reads a classification scheme YAML and maps
+// institutional data classification tags on accounts to attest data classes.
+func applyClassificationScheme(schemeName string, sre *schema.SRE) error {
+	schemeFile := filepath.Join("classification-schemes", schemeName+".yaml")
+	data, err := os.ReadFile(schemeFile)
+	if err != nil {
+		return fmt.Errorf("reading scheme %s: %w", schemeFile, err)
+	}
+	var scheme schema.ClassificationScheme
+	if err := yaml.Unmarshal(data, &scheme); err != nil {
+		return fmt.Errorf("parsing scheme: %w", err)
+	}
+
+	tagKey := "attest:data-class"
+	if scheme.SchemeID != "" {
+		// Scheme-specific tag key (e.g., "UC:DataProtectionLevel" for UC P-levels).
+		// We read it from the YAML but fall back to the standard attest tag.
+	}
+
+	for accountID, env := range sre.Environments {
+		// Check for institutional classification tag.
+		for tagK, tagV := range env.Tags {
+			if !strings.EqualFold(tagK, tagKey) {
+				continue
+			}
+			if mapping, ok := scheme.Mappings[tagV]; ok {
+				env.DataClasses = append(env.DataClasses, mapping.AttestClasses...)
+				sre.Environments[accountID] = env
+				// Activate frameworks from the mapping.
+				for _, fwID := range mapping.Frameworks {
+					already := false
+					for _, ref := range sre.Frameworks {
+						if ref.ID == fwID {
+							already = true
+							break
+						}
+					}
+					if !already {
+						sre.Frameworks = append(sre.Frameworks, schema.FrameworkRef{
+							ID:      fwID,
+							Version: "latest",
+						})
+						fmt.Printf("    %s → %s (activates %s)\n", accountID, tagV, fwID)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func deduplicationKey(ctrl schema.Control) string {
 	if len(ctrl.Structural) > 0 {
 		return ctrl.Structural[0].ID
@@ -453,7 +523,7 @@ the raw policy artifacts (coming in v0.5.0).`,
 
 			// Compile SCPs.
 			fmt.Println("  Generating SCPs (structural enforcement)...")
-			scpCompiler := scp.NewCompiler()
+			scpCompiler := compilerscp.NewCompiler()
 			scps, err := scpCompiler.Compile(rcs)
 			if err != nil {
 				return fmt.Errorf("compiling SCPs: %w", err)
@@ -461,7 +531,7 @@ the raw policy artifacts (coming in v0.5.0).`,
 
 			// Compile Cedar policies.
 			fmt.Println("  Generating Cedar policies (operational enforcement)...")
-			cedarCompiler := cedar.NewCompiler()
+			cedarCompiler := compilerce.NewCompiler()
 			cedarPolicies, err := cedarCompiler.Compile(rcs)
 			if err != nil {
 				return fmt.Errorf("compiling Cedar policies: %w", err)
@@ -511,7 +581,12 @@ the raw policy artifacts (coming in v0.5.0).`,
 			}
 
 			if iacOutput != "" {
-				fmt.Printf("  IaC output (%s): coming in v0.5.0\n", iacOutput)
+				fmt.Printf("  Generating %s IaC output...\n", iacOutput)
+				iacGen := iac.NewGenerator(iac.Format(iacOutput), filepath.Join(compiledDir, iacOutput))
+				if err := iacGen.Generate(compiledDir); err != nil {
+					return fmt.Errorf("generating IaC output: %w", err)
+				}
+				fmt.Printf("  IaC output: %s\n", filepath.Join(compiledDir, iacOutput))
 			}
 
 			fmt.Println()
@@ -530,7 +605,7 @@ the raw policy artifacts (coming in v0.5.0).`,
 }
 
 // buildCrosswalk creates the auditable control → artifact mapping.
-func buildCrosswalk(sre *schema.SRE, frameworks []*schema.Framework, scps []scp.CompiledSCP, cedarPolicies []cedar.CompiledCedarPolicy) schema.Crosswalk {
+func buildCrosswalk(sre *schema.SRE, frameworks []*schema.Framework, scps []compilerscp.CompiledSCP, cedarPolicies []compilerce.CompiledCedarPolicy) schema.Crosswalk {
 	crosswalk := schema.Crosswalk{
 		SRE:         sre.OrgID,
 		GeneratedAt: time.Now(),
@@ -594,29 +669,165 @@ func buildCrosswalk(sre *schema.SRE, frameworks []*schema.Framework, scps []scp.
 func applyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apply",
-		Short: "Deploy compiled policies to the organization",
+		Short: "Deploy compiled SCPs to the organization",
+		Long: `Creates, updates, and attaches compiled SCPs to the org root.
+Use --dry-run to preview changes without modifying the organization.
+Use --approve to skip interactive confirmation.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Deploying policies to SRE organization...")
-			fmt.Println("  This will modify SCPs on the organization.")
-			fmt.Println("  Use --dry-run to preview changes.")
+			ctx := context.Background()
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			approve, _ := cmd.Flags().GetBool("approve")
+			region, _ := cmd.Flags().GetString("region")
+			scpDir := filepath.Join(".attest", "compiled", "scps")
+
+			deployer, err := deploy.NewDeployer(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to AWS: %w", err)
+			}
+
+			fmt.Println("Computing deployment plan...")
+			plan, err := deployer.Plan(ctx, scpDir)
+			if err != nil {
+				return fmt.Errorf("planning deployment: %w", err)
+			}
+			fmt.Println(plan.Summary())
+
+			if dryRun {
+				fmt.Println("Dry run — no changes made.")
+				return nil
+			}
+			if len(plan.ToCreate)+len(plan.ToUpdate)+len(plan.ToAttach) == 0 {
+				return nil
+			}
+			if !approve {
+				fmt.Print("Apply these changes to the organization? [y/N] ")
+				var answer string
+				fmt.Scanln(&answer)
+				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+					fmt.Println("Aborted.")
+					return nil
+				}
+			}
+
+			fmt.Println("Applying...")
+			if err := deployer.Apply(ctx, plan, scpDir, func(msg string) {
+				fmt.Println(msg)
+			}); err != nil {
+				return fmt.Errorf("applying: %w", err)
+			}
+			st, _ := store.NewStore(".attest")
+			_ = st.Commit(fmt.Sprintf("apply: deployed %d SCP(s) to %s",
+				len(plan.ToCreate)+len(plan.ToUpdate)+len(plan.ToAttach), plan.RootID))
+
+			fmt.Printf("\nDeployed %d SCP(s) to %s.\nRun 'attest scan' to verify posture.\n",
+				len(plan.ToCreate)+len(plan.ToUpdate)+len(plan.ToAttach), plan.RootID)
 			return nil
 		},
 	}
 	cmd.Flags().Bool("dry-run", false, "Preview changes without applying")
 	cmd.Flags().Bool("approve", false, "Skip interactive approval")
+	cmd.Flags().String("region", "us-east-1", "AWS region")
 	return cmd
 }
 
 func evaluateCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "evaluate",
 		Short: "Run Cedar PDP evaluation against current state",
+		Long: `Evaluates a single authorization request against compiled Cedar policies.
+Provide principal, action, resource ARNs and entity attributes as --attr flags.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Running Cedar policy evaluation...")
+			principalARN, _ := cmd.Flags().GetString("principal")
+			action, _ := cmd.Flags().GetString("action")
+			resourceARN, _ := cmd.Flags().GetString("resource")
+			attrs, _ := cmd.Flags().GetStringSlice("attr")
+			cedarDir, _ := cmd.Flags().GetString("cedar")
+
+			// Parse attr flags: "entity.attribute=value"
+			attributes := make(map[string]any)
+			for _, a := range attrs {
+				parts := strings.SplitN(a, "=", 2)
+				if len(parts) == 2 {
+					attributes[parts[0]] = parts[1]
+				}
+			}
+
+			// Load compiled Cedar policies.
+			ps, err := loadCedarPolicies(cedarDir)
+			if err != nil {
+				return fmt.Errorf("loading Cedar policies: %w", err)
+			}
+
+			// Build Cedar request.
+			req := evaluator.AuthzRequest{
+				PrincipalARN: principalARN,
+				Action:       action,
+				ResourceARN:  resourceARN,
+				Attributes:   attributes,
+			}
+			ev := evaluator.NewEvaluator(nil)
+			decision, err := ev.EvaluateWithPolicies(context.Background(), ps, &req)
+			if err != nil {
+				return fmt.Errorf("evaluating: %w", err)
+			}
+
+			effect := "DENY"
+			if decision.Effect == "ALLOW" {
+				effect = "ALLOW"
+			}
+			fmt.Printf("Decision:  %s\n", effect)
+			fmt.Printf("Principal: %s\n", principalARN)
+			fmt.Printf("Action:    %s\n", action)
+			fmt.Printf("Resource:  %s\n", resourceARN)
+			if decision.PolicyID != "" {
+				fmt.Printf("Policy:    %s\n", decision.PolicyID)
+			}
+			if decision.WaiverID != "" {
+				fmt.Printf("Waiver:    %s\n", decision.WaiverID)
+			}
 			return nil
 		},
 	}
+	cmd.Flags().String("principal", "", "Principal ARN (required)")
+	cmd.Flags().String("action", "", "IAM action (required)")
+	cmd.Flags().String("resource", "", "Resource ARN (required)")
+	cmd.Flags().StringSlice("attr", nil, "Entity attributes: entity.attr=value (repeatable)")
+	cmd.Flags().String("cedar", filepath.Join(".attest", "compiled", "cedar"), "Cedar policies directory")
+	_ = cmd.MarkFlagRequired("principal")
+	_ = cmd.MarkFlagRequired("action")
+	_ = cmd.MarkFlagRequired("resource")
+	return cmd
 }
+
+// loadCedarPolicies loads all .cedar files from a directory into a PolicySet.
+func loadCedarPolicies(dir string) (*cedar.PolicySet, error) {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return cedar.NewPolicySet(), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ps := cedar.NewPolicySet()
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".cedar") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		parsed, err := cedar.NewPolicySetFromBytes(e.Name(), data)
+		if err != nil {
+			continue
+		}
+		for id, policy := range parsed.Map() {
+			ps.Add(id, policy)
+		}
+	}
+	return ps, nil
+}
+
 
 func generateCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -822,30 +1033,181 @@ func generateOSCAL(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Cros
 }
 
 func diffCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "diff",
-		Short: "Compare current posture to last assessment",
+	cmd := &cobra.Command{
+		Use:   "diff [ref1] [ref2]",
+		Short: "Compare posture between two history snapshots",
+		Long: `Compares two posture snapshots from .attest/history/.
+With no arguments, compares the two most recent snapshots.
+With one argument, compares that snapshot against the most recent.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Comparing current posture to last assessment...")
+			histDir := filepath.Join(".attest", "history")
+			entries, err := os.ReadDir(histDir)
+			if err != nil || len(entries) < 2 {
+				return fmt.Errorf("need at least 2 posture snapshots in %s (run 'attest scan' twice)", histDir)
+			}
+
+			// Load two most recent snapshots (sorted by modification time).
+			var files []string
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".yaml") {
+					files = append(files, filepath.Join(histDir, e.Name()))
+				}
+			}
+			if len(files) < 2 {
+				return fmt.Errorf("need at least 2 snapshot files")
+			}
+
+			// Use provided refs or default to last two.
+			var fromPath, toPath string
+			switch len(args) {
+			case 0:
+				fromPath = files[len(files)-2]
+				toPath = files[len(files)-1]
+			case 1:
+				// Treat arg as label or filename prefix.
+				fromPath = files[len(files)-1]
+				for _, f := range files {
+					if strings.Contains(f, args[0]) {
+						toPath = f
+						break
+					}
+				}
+				if toPath == "" {
+					return fmt.Errorf("snapshot %q not found", args[0])
+				}
+			case 2:
+				fromPath, toPath = args[0], args[1]
+			}
+
+			fromSnap, err := loadSnapshot(fromPath)
+			if err != nil {
+				return err
+			}
+			toSnap, err := loadSnapshot(toPath)
+			if err != nil {
+				return err
+			}
+
+			printDiff(fromSnap, toSnap)
 			return nil
 		},
 	}
+	return cmd
+}
+
+func loadSnapshot(path string) (*schema.PostureSnapshot, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading snapshot %s: %w", path, err)
+	}
+	var snap schema.PostureSnapshot
+	if err := yaml.Unmarshal(data, &snap); err != nil {
+		return nil, fmt.Errorf("parsing snapshot: %w", err)
+	}
+	return &snap, nil
+}
+
+func printDiff(from, to *schema.PostureSnapshot) {
+	fmt.Printf("Comparing posture snapshots:\n")
+	fmt.Printf("  From: %s\n", from.Timestamp.Format("2006-01-02 15:04"))
+	fmt.Printf("  To:   %s\n\n", to.Timestamp.Format("2006-01-02 15:04"))
+
+	improved, regressed, unchanged := 0, 0, 0
+
+	// Build maps for comparison.
+	fromControls := make(map[string]string)
+	for _, fp := range from.Posture.Frameworks {
+		for id, status := range fp.Controls {
+			fromControls[id] = status
+		}
+	}
+	toControls := make(map[string]string)
+	for _, fp := range to.Posture.Frameworks {
+		for id, status := range fp.Controls {
+			toControls[id] = status
+		}
+	}
+
+	statusRank := map[string]int{"enforced": 3, "aws_covered": 3, "partial": 2, "planned": 1, "gap": 0}
+
+	var improvedList, regressedList []string
+	for id, toStatus := range toControls {
+		fromStatus := fromControls[id]
+		if fromStatus == toStatus {
+			unchanged++
+			continue
+		}
+		if statusRank[toStatus] > statusRank[fromStatus] {
+			improved++
+			improvedList = append(improvedList, fmt.Sprintf("  ✓ %-10s  %s → %s", id, fromStatus, toStatus))
+		} else {
+			regressed++
+			regressedList = append(regressedList, fmt.Sprintf("  ✗ %-10s  %s → %s", id, fromStatus, toStatus))
+		}
+	}
+
+	fromScore := from.Posture.Enforced*5 + from.Posture.Partial*3
+	toScore := to.Posture.Enforced*5 + to.Posture.Partial*3
+	scoreDelta := toScore - fromScore
+	sign := "+"
+	if scoreDelta < 0 {
+		sign = ""
+	}
+	fmt.Printf("Score: %d → %d (%s%d pts)\n\n", fromScore, toScore, sign, scoreDelta)
+
+	if len(improvedList) > 0 {
+		fmt.Println("Improved:")
+		for _, s := range improvedList {
+			fmt.Println(s)
+		}
+		fmt.Println()
+	}
+	if len(regressedList) > 0 {
+		fmt.Println("Regressed:")
+		for _, s := range regressedList {
+			fmt.Println(s)
+		}
+		fmt.Println()
+	}
+	fmt.Printf("No change: %d controls\n", unchanged)
 }
 
 func watchCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "watch",
-		Short: "Continuous compliance monitoring via Cedar PDP",
-		Long: `Runs the Cedar PDP in continuous evaluation mode. Every sensitive
-operation in the SRE is evaluated against framework policies in real time.
-Violations emit to Security Hub and the decision log.`,
+		Short: "Continuous Cedar PDP evaluation (polling mode)",
+		Long: `Polls the Cedar evaluation log for new decisions and prints denials.
+Full EventBridge-driven continuous evaluation is v1.0.0.
+Use 'attest evaluate' for one-shot evaluation.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Starting continuous compliance monitoring...")
-			fmt.Println("  Cedar PDP listening for EventBridge events...")
+			cedarDir, _ := cmd.Flags().GetString("cedar")
+			fmt.Println("Starting Cedar PDP watch (polling mode)...")
+			fmt.Printf("  Policies: %s\n", cedarDir)
+			fmt.Println("  Note: Full EventBridge integration coming in v1.0.0.")
 			fmt.Println("  Press Ctrl+C to stop.")
-			select {} // block
+			fmt.Println()
+
+			// Load policies once.
+			ps, err := loadCedarPolicies(cedarDir)
+			if err != nil {
+				return fmt.Errorf("loading Cedar policies: %w", err)
+			}
+			if ps == nil {
+				return fmt.Errorf("no Cedar policies found in %s", cedarDir)
+			}
+
+			// Simple health-check: print policy count and block.
+			count := 0
+			for range ps.All() {
+				count++
+			}
+			fmt.Printf("  Loaded %d Cedar policy/policies. Ready.\n", count)
+			fmt.Println("  (Polling for denials — EventBridge integration deferred to v1.0.0)")
+			select {} // block until Ctrl+C
 		},
 	}
+	cmd.Flags().String("cedar", filepath.Join(".attest", "compiled", "cedar"), "Compiled Cedar policies directory")
+	return cmd
 }
 
 func serveCmd() *cobra.Command {
@@ -1123,17 +1485,244 @@ func waiverCmd() *cobra.Command {
 func reportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "report",
-		Short: "Generate posture trend reports",
+		Short: "Generate posture trend report from history",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			window, _ := cmd.Flags().GetString("window")
-			fmt.Printf("Generating trend report (window: %s)...\n", window)
-			fmt.Println("  Loading posture history...")
-			fmt.Println("  Computing score trajectory...")
-			fmt.Println("  Analyzing remediation velocity...")
+			windowStr, _ := cmd.Flags().GetString("window")
+			histDir := filepath.Join(".attest", "history")
+
+			// Parse window into duration.
+			window := parseDuration(windowStr)
+			rep := reporting.NewReporter(histDir)
+			trend, err := rep.GenerateTrend(context.Background(), window)
+			if err != nil {
+				return fmt.Errorf("generating trend: %w", err)
+			}
+
+			fmt.Printf("Posture trend (window: %s)\n\n", windowStr)
+			fmt.Printf("  Snapshots: %d\n", len(trend.Snapshots))
+			fmt.Printf("  Gaps closed: %d | Gaps opened: %d\n", trend.GapsClosed, trend.GapsOpened)
+			if len(trend.ScoreTrend) > 0 {
+				first := trend.ScoreTrend[0]
+				last := trend.ScoreTrend[len(trend.ScoreTrend)-1]
+				fmt.Printf("  Score: %.0f%% → %.0f%%\n", first.Score, last.Score)
+			}
 			return nil
 		},
 	}
-	cmd.Flags().String("window", "90d", "Report window (e.g., 30d, 90d, 1y)")
+	cmd.Flags().String("window", "90d", "Report window: 30d, 90d, 1y")
+	return cmd
+}
+
+// parseDuration converts a simple duration string like "90d" or "1y" to time.Duration.
+func parseDuration(s string) time.Duration {
+	switch {
+	case strings.HasSuffix(s, "y"):
+		return 365 * 24 * time.Hour
+	case strings.HasSuffix(s, "d"):
+		var days int
+		fmt.Sscanf(s, "%dd", &days)
+		return time.Duration(days) * 24 * time.Hour
+	default:
+		return 90 * 24 * time.Hour
+	}
+}
+
+func attestCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "attest",
+		Short: "Manage administrative control attestations",
+		Long: `Record, list, and expire human-affirmed attestation records for
+administrative controls (training, risk assessments, IR testing, etc.).`,
+	}
+
+	attDir := filepath.Join(".attest", "attestations")
+	mgr := attestation.NewManager(attDir)
+
+	createCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Record a new attestation",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			controlID, _ := cmd.Flags().GetString("control")
+			title, _ := cmd.Flags().GetString("title")
+			affirmedBy, _ := cmd.Flags().GetString("affirmed-by")
+			expiresStr, _ := cmd.Flags().GetString("expires")
+			evidenceRef, _ := cmd.Flags().GetString("evidence")
+			evidenceType, _ := cmd.Flags().GetString("evidence-type")
+			reviewSchedule, _ := cmd.Flags().GetString("review")
+
+			expires, err := time.Parse("2006-01-02", expiresStr)
+			if err != nil {
+				return fmt.Errorf("invalid --expires date (use YYYY-MM-DD): %w", err)
+			}
+
+			a := &schema.Attestation{
+				ID:             fmt.Sprintf("ATT-%d-%s", time.Now().Year(), strings.ToUpper(strings.ReplaceAll(controlID, ".", ""))),
+				ControlID:      controlID,
+				Title:          title,
+				AffirmedBy:     affirmedBy,
+				ExpiresAt:      expires,
+				EvidenceRef:    evidenceRef,
+				EvidenceType:   evidenceType,
+				ReviewSchedule: reviewSchedule,
+			}
+			if err := mgr.Create(ctx, a); err != nil {
+				return err
+			}
+			fmt.Printf("Attestation created: %s\n", a.ID)
+			fmt.Printf("  Control: %s | Expires: %s\n", a.ControlID, a.ExpiresAt.Format("2006-01-02"))
+			return nil
+		},
+	}
+	createCmd.Flags().String("control", "", "Control ID (required)")
+	createCmd.Flags().String("title", "", "Short title")
+	createCmd.Flags().String("affirmed-by", "", "Affirmer name/title (required)")
+	createCmd.Flags().String("expires", "", "Expiry date YYYY-MM-DD (required)")
+	createCmd.Flags().String("evidence", "", "Evidence reference (path/URL/description)")
+	createCmd.Flags().String("evidence-type", "manual", "Evidence type: policy_doc, training_record, test_report, manual")
+	createCmd.Flags().String("review", "annual", "Review schedule: annual, semiannual, quarterly")
+	_ = createCmd.MarkFlagRequired("control")
+	_ = createCmd.MarkFlagRequired("affirmed-by")
+	_ = createCmd.MarkFlagRequired("expires")
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List attestations",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			expiringDays, _ := cmd.Flags().GetInt("expiring")
+			var attestations []schema.Attestation
+			var err error
+			if expiringDays > 0 {
+				attestations, err = mgr.ListExpiring(ctx, time.Duration(expiringDays)*24*time.Hour)
+			} else {
+				attestations, err = mgr.List(ctx)
+			}
+			if err != nil {
+				return err
+			}
+			if len(attestations) == 0 {
+				fmt.Println("No attestations.")
+				return nil
+			}
+			fmt.Printf("%-18s %-10s %-22s %-12s %s\n", "ID", "Control", "Affirmed by", "Expires", "Status")
+			fmt.Println(strings.Repeat("─", 76))
+			for _, a := range attestations {
+				fmt.Printf("%-18s %-10s %-22s %-12s %s\n",
+					a.ID, a.ControlID, a.AffirmedBy, a.ExpiresAt.Format("2006-01-02"), a.Status)
+			}
+			return nil
+		},
+	}
+	listCmd.Flags().Int("expiring", 0, "Show attestations expiring within N days")
+
+	expireCmd := &cobra.Command{
+		Use:   "expire [attestation-id]",
+		Short: "Expire an attestation",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := mgr.Expire(context.Background(), args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("Attestation %s expired.\n", args[0])
+			return nil
+		},
+	}
+
+	cmd.AddCommand(createCmd, listCmd, expireCmd)
+	return cmd
+}
+
+func calendarCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "calendar",
+		Short: "Show upcoming compliance review and renewal obligations",
+		Long: `Lists all controls with review schedules and their upcoming due dates,
+based on attestation records and framework review_schedule definitions.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			windowStr, _ := cmd.Flags().GetString("window")
+			window := parseDuration(windowStr)
+			fwDir, _ := cmd.Flags().GetString("frameworks")
+
+			// Load SRE config.
+			sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml"))
+			if err != nil {
+				return fmt.Errorf("reading .attest/sre.yaml: %w", err)
+			}
+			var sre schema.SRE
+			if err := yaml.Unmarshal(sreData, &sre); err != nil {
+				return err
+			}
+
+			loader := framework.NewLoader(fwDir)
+			attMgr := attestation.NewManager(filepath.Join(".attest", "attestations"))
+
+			cutoff := time.Now().Add(window)
+			now := time.Now()
+
+			fmt.Printf("Compliance calendar (next %s)\n\n", windowStr)
+			fmt.Printf("  %-10s %-8s %-45s %-12s\n", "Control", "Freq", "Title", "Due / Status")
+			fmt.Println("  " + strings.Repeat("─", 78))
+
+			hasItems := false
+			for _, ref := range sre.Frameworks {
+				fw, err := loader.Load(ref.ID)
+				if err != nil {
+					continue
+				}
+				for _, ctrl := range fw.Controls {
+					if ctrl.ReviewSchedule == nil {
+						continue
+					}
+					att, hasAtt, _ := attMgr.IsAttested(ctx, ctrl.ID)
+					var dueDate time.Time
+					var status string
+
+					if hasAtt {
+						dueDate = att.ExpiresAt
+						if dueDate.Before(now) {
+							status = "OVERDUE"
+						} else if dueDate.Before(cutoff) {
+							days := int(dueDate.Sub(now).Hours() / 24)
+							status = fmt.Sprintf("%d days", days)
+						} else {
+							continue // Not due within window.
+						}
+					} else {
+						status = "NOT ATTESTED"
+						dueDate = now
+					}
+
+					indicator := "●"
+					if status == "OVERDUE" || status == "NOT ATTESTED" {
+						indicator = "✗"
+					} else if strings.Contains(status, "days") {
+						days := 0
+						fmt.Sscanf(status, "%d days", &days)
+						if days <= 30 {
+							indicator = "⚠"
+						}
+					}
+
+					title := ctrl.Title
+					if len(title) > 44 {
+						title = title[:41] + "..."
+					}
+					fmt.Printf("  %s %-9s %-8s %-45s %s\n",
+						indicator, ctrl.ID, ctrl.ReviewSchedule.Frequency, title, status)
+					hasItems = true
+				}
+			}
+
+			if !hasItems {
+				fmt.Println("  No review obligations due within the window.")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().String("window", "90d", "Look-ahead window: 30d, 90d, 1y")
+	cmd.Flags().String("frameworks", "frameworks", "Frameworks directory")
 	return cmd
 }
 

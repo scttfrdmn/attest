@@ -93,6 +93,10 @@ type Control struct {
 	// Assessment defines how this control is evaluated for self-assessment
 	// (e.g., NIST 800-171A assessment objectives).
 	Assessment *AssessmentSpec `yaml:"assessment,omitempty" json:"assessment,omitempty"`
+
+	// ReviewSchedule specifies how often this administrative control must be reviewed.
+	// Only applicable to controls with evidence_source: manual.
+	ReviewSchedule *ReviewSchedule `yaml:"review_schedule,omitempty" json:"review_schedule,omitempty"`
 }
 
 // Responsibility captures the shared responsibility model for a control.
@@ -118,6 +122,11 @@ type OperationalEnforcement struct {
 	Attributes  map[string][]string   `yaml:"attributes" json:"attributes"` // per-entity attributes to evaluate
 	CedarPolicy string                `yaml:"cedar_policy,omitempty" json:"cedar_policy,omitempty"` // raw Cedar policy text
 	Temporal    *TemporalConstraint   `yaml:"temporal,omitempty" json:"temporal,omitempty"`
+
+	// AdminDependencies links this Cedar policy to the administrative controls
+	// whose correctness it depends on. When training lapses (3.2.2), the Cedar
+	// policy evaluating principal.cui_training_current degrades to "partial".
+	AdminDependencies []AdminDependency `yaml:"admin_dependencies,omitempty" json:"admin_dependencies,omitempty"`
 }
 
 // TemporalConstraint enables time-bounded or event-conditional policies.
@@ -301,7 +310,67 @@ type IaCModule struct {
 
 // PostureSnapshot is a saved posture at a point in time for trend analysis.
 type PostureSnapshot struct {
-	Timestamp time.Time `json:"timestamp"`
-	Posture   Posture   `json:"posture"`
-	Label     string    `json:"label,omitempty"` // e.g., "assessment-2025-q1"
+	Timestamp time.Time `json:"timestamp" yaml:"timestamp"`
+	Posture   Posture   `json:"posture" yaml:"posture"`
+	Label     string    `json:"label,omitempty" yaml:"label,omitempty"` // e.g., "assessment-2025-q1"
+}
+
+// --- Attestation ---
+
+// Attestation is a human-affirmed statement that an administrative control is satisfied.
+// Unlike technical controls (SCPs, Cedar policies), administrative controls require
+// human processes — training programs, risk assessments, IR testing — that attest
+// tracks via attestation records with bounded validity periods.
+type Attestation struct {
+	ID             string    `yaml:"id" json:"id"`                                 // e.g., "ATT-2026-003"
+	ControlID      string    `yaml:"control_id" json:"control_id"`                 // e.g., "3.2.1"
+	ObjectiveID    string    `yaml:"objective_id,omitempty" json:"objective_id,omitempty"` // e.g., "3.2.1[a]"
+	Title          string    `yaml:"title" json:"title"`
+	AffirmedBy     string    `yaml:"affirmed_by" json:"affirmed_by"`               // e.g., "CISO Dr. Park"
+	AffirmedAt     time.Time `yaml:"affirmed_at" json:"affirmed_at"`
+	ExpiresAt      time.Time `yaml:"expires_at" json:"expires_at"`
+	EvidenceRef    string    `yaml:"evidence_ref" json:"evidence_ref"`             // path/URL/description
+	EvidenceType   string    `yaml:"evidence_type" json:"evidence_type"`           // "policy_doc", "training_record", "test_report", "manual"
+	ReviewSchedule string    `yaml:"review_schedule,omitempty" json:"review_schedule,omitempty"` // "annual", "semiannual", "quarterly"
+	Status         string    `yaml:"status" json:"status"`                         // "current", "expiring", "expired"
+	Notes          string    `yaml:"notes,omitempty" json:"notes,omitempty"`
+}
+
+// --- Review Schedule ---
+
+// ReviewSchedule specifies how frequently an administrative control must be reviewed.
+type ReviewSchedule struct {
+	Frequency string `yaml:"frequency" json:"frequency"` // "annual", "semiannual", "quarterly", "event_driven"
+	Trigger   string `yaml:"trigger" json:"trigger"`     // "calendar" | "event"
+}
+
+// --- Admin Dependency ---
+
+// AdminDependency links an operational (Cedar) control to the administrative
+// controls whose correctness it depends on. When training (3.2.2) lapses,
+// the Cedar policy evaluating principal.cui_training_current degrades.
+type AdminDependency struct {
+	ControlID   string `yaml:"control_id" json:"control_id"`   // admin control ID (e.g., "3.2.2")
+	Attribute   string `yaml:"attribute" json:"attribute"`     // Cedar attribute ("principal.cui_training_current")
+	Consequence string `yaml:"consequence" json:"consequence"` // what happens if unmet
+}
+
+// --- Classification Scheme ---
+
+// ClassificationScheme maps an institutional data classification system
+// (e.g., UC P-levels) to attest data classes and compliance frameworks.
+type ClassificationScheme struct {
+	SchemeID    string                         `yaml:"scheme_id" json:"scheme_id"`
+	Name        string                         `yaml:"name" json:"name"`
+	Description string                         `yaml:"description" json:"description"`
+	Source      string                         `yaml:"source" json:"source"`
+	Mappings    map[string]ClassificationMapping `yaml:"mappings" json:"mappings"`
+}
+
+// ClassificationMapping maps one institutional classification level to attest data classes.
+type ClassificationMapping struct {
+	AttestClasses []string `yaml:"attest_classes" json:"attest_classes"`
+	Frameworks    []string `yaml:"frameworks" json:"frameworks"`
+	Description   string   `yaml:"description" json:"description"`
+	Notes         string   `yaml:"notes,omitempty" json:"notes,omitempty"`
 }

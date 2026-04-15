@@ -1,0 +1,77 @@
+# FISMA Impact Levels — Federal Information Security Modernization Act
+# FIPS 199: Standards for Security Categorization of Federal Information
+# NIST SP 800-60: Guide for Mapping Types of Information to Security Categories
+#
+# Used by federal agencies and federally-funded research institutions.
+# Maps to FedRAMP authorization levels for cloud services.
+#
+# Usage:
+#   attest init --region us-east-1 --classification-scheme fisma-impact-levels
+#
+# Accounts tagged with the FISMA impact level automatically activate
+# the corresponding compliance framework.
+
+scheme_id: fisma-impact-levels
+name: "FISMA Impact Levels (FIPS 199)"
+description: |
+  Federal information security categorization per FIPS 199. Used by federal agencies
+  and institutions operating federal systems or processing federal data under
+  FISMA, FedRAMP, or NIST 800-53 requirements.
+source: "https://csrc.nist.gov/publications/detail/fips/199/final"
+
+# AWS tag key that holds the FISMA impact level.
+tag_key: "FISMA:ImpactLevel"
+
+mappings:
+  Low:
+    attest_classes: []
+    frameworks: []
+    description: |
+      Low impact — loss of confidentiality, integrity, or availability would have
+      a limited adverse effect on organizational operations, assets, or individuals.
+    examples:
+      - "Publicly available government information"
+      - "Administrative data with no PII"
+      - "Internal collaboration tools"
+
+  Moderate:
+    attest_classes:
+      - CUI
+    frameworks:
+      - nist-800-171-r2
+    description: |
+      Moderate impact — loss would have a serious adverse effect.
+      Covers most federal data including CUI, pre-decisional information,
+      and data requiring protection under law.
+      Maps to FedRAMP Moderate baseline and NIST 800-53 Moderate controls.
+    examples:
+      - "Controlled Unclassified Information (CUI)"
+      - "Law enforcement sensitive data"
+      - "Privacy Act protected data"
+      - "Federal financial data"
+    notes: |
+      NIST 800-171 is the CUI-specific subset of 800-53 Moderate.
+      For full FedRAMP Moderate compliance, use nist-800-53-r5 (when available).
+      NIST 800-171 is appropriate for non-federal systems processing CUI.
+
+  High:
+    attest_classes:
+      - CUI
+      - PHI
+    frameworks:
+      - nist-800-171-r2
+      - hipaa
+    description: |
+      High impact — loss would have a severe or catastrophic adverse effect.
+      Covers critical infrastructure, national security systems, financial systems,
+      and high-sensitivity health data.
+      Maps to FedRAMP High baseline.
+    examples:
+      - "Critical infrastructure data"
+      - "High-sensitivity health records (PHI)"
+      - "Law enforcement operations data"
+      - "Emergency response systems"
+    notes: |
+      High impact systems may require additional controls beyond NIST 800-171.
+      Consult your agency ISSO for full NIST 800-53 High control implementation.
+      FedRAMP High authorization required for federal system ATO.

@@ -1,0 +1,301 @@
+# FERPA — Family Educational Rights and Privacy Act
+# 20 U.S.C. § 1232g; 34 CFR Part 99
+#
+# Protects student education records at institutions receiving federal funding.
+# Relevant to universities running teaching and student research environments.
+#
+# Data class: FERPA (student education records, personally identifiable information)
+#
+# Key deduplication: FERPA shares access control and audit requirements with
+# NIST 800-171 (3.1.x, 3.3.x). SCPs scp-require-mfa and scp-protect-audit-logs
+# are shared via the crosswalk deduplication system.
+#
+# Source: https://studentprivacy.ed.gov/ferpa
+
+id: ferpa
+name: "FERPA (Family Educational Rights and Privacy Act)"
+version: "2012"
+source: "https://www.ecfr.gov/current/title-34/subtitle-A/part-99"
+
+artifact_reports:
+  - series: "FERPA Guidance"
+    category: "Education"
+
+controls:
+
+  # ── Right to Inspect and Review Education Records (§99.10–99.12) ─────
+
+  - id: "99.10"
+    family: "Student Rights"
+    title: "Right to inspect and review education records"
+    responsibility:
+      aws: "S3 access controls and audit logging for student record storage"
+      customer: "Implement access controls allowing eligible students to inspect their own records; audit log of all access"
+    structural:
+      - id: "scp-require-mfa"
+        description: "Deny access to FERPA data without MFA"
+        actions:
+          - "*"
+        conditions:
+          - "aws:MultiFactorAuthPresent != true"
+          - "aws:PrincipalType == IAMUser"
+        effect: "Deny"
+    monitoring:
+      - id: "config-ferpa-s3-access"
+        resource_type: "AWS::S3::Bucket"
+        check: "S3 buckets containing FERPA data have access logging enabled"
+        remediation: "Enable S3 server access logging"
+    assessment:
+      objectives:
+        - id: "99.10[a]"
+          description: "Eligible students can inspect and review their education records"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "99.10[b]"
+          description: "Institution responds to inspection requests within 45 days"
+          auto_assessable: false
+          evidence_source: "manual"
+    review_schedule:
+      frequency: "annual"
+      trigger: "calendar"
+
+  - id: "99.11"
+    family: "Student Rights"
+    title: "Limitations on the right to inspect and review education records"
+    responsibility:
+      aws: "IAM resource-level permissions for record system access"
+      customer: "Implement role-based access preventing inspection of other students' records"
+    operational:
+      - id: "cedar-ferpa-student-access"
+        description: "Students can only access their own education records"
+        entities: ["principal", "education_record"]
+        attributes:
+          principal: ["student_id", "enrollment_status", "mfa_enabled"]
+          education_record: ["student_id", "record_type", "ferpa_restricted"]
+        admin_dependencies:
+          - control_id: "99.34"
+            attribute: "principal.legitimate_educational_interest"
+            consequence: "Access denied if no legitimate educational interest established"
+    assessment:
+      objectives:
+        - id: "99.11[a]"
+          description: "Access to specific record types is appropriately restricted"
+          auto_assessable: true
+          evidence_source: "cedar"
+
+  - id: "99.12"
+    family: "Student Rights"
+    title: "What are the definitions of the terms used in §99.10 through §99.12"
+    responsibility:
+      aws: "No direct AWS responsibility"
+      customer: "Define education records scope in data classification policy"
+    assessment:
+      objectives:
+        - id: "99.12[a]"
+          description: "Education records are defined and classified appropriately"
+          auto_assessable: false
+          evidence_source: "manual"
+    review_schedule:
+      frequency: "annual"
+      trigger: "event"
+
+  # ── Right to Seek Amendment (§99.20–99.22) ───────────────────────────
+
+  - id: "99.20"
+    family: "Amendment Rights"
+    title: "Right to seek amendment of education records"
+    responsibility:
+      aws: "No direct AWS responsibility; S3 versioning supports amendment history"
+      customer: "Implement amendment request process; maintain amendment history"
+    monitoring:
+      - id: "config-ferpa-s3-versioning"
+        resource_type: "AWS::S3::Bucket"
+        check: "S3 buckets with education records have versioning enabled"
+        remediation: "Enable S3 versioning for FERPA-tagged buckets"
+    assessment:
+      objectives:
+        - id: "99.20[a]"
+          description: "Students have a process to request amendment of inaccurate records"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "99.21"
+    family: "Amendment Rights"
+    title: "Under what conditions does FERPA apply to students' rights to request amendment"
+    responsibility:
+      aws: "No direct AWS responsibility"
+      customer: "Amendment hearing process and timeline compliance"
+    assessment:
+      objectives:
+        - id: "99.21[a]"
+          description: "Institution provides hearing if amendment request is denied"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── Disclosure Conditions (§99.30–99.37) ─────────────────────────────
+
+  - id: "99.30"
+    family: "Disclosure Controls"
+    title: "Prior consent requirement for disclosure of education records"
+    responsibility:
+      aws: "S3 bucket policies, IAM resource policies for access control"
+      customer: "Prevent disclosure of PII without written consent; enforce via data policies"
+    structural:
+      - id: "scp-ferpa-block-s3-public-access"
+        description: "Deny disabling S3 Block Public Access on FERPA-tagged accounts"
+        actions:
+          - "s3:PutAccountPublicAccessBlock"
+          - "s3:PutBucketPublicAccessBlock"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /admin/"
+        effect: "Deny"
+    operational:
+      - id: "cedar-ferpa-disclosure"
+        description: "Education record disclosure requires written consent or FERPA exception"
+        entities: ["principal", "education_record", "requesting_party"]
+        attributes:
+          principal: ["ferpa_authorized", "legitimate_educational_interest"]
+          education_record: ["ferpa_restricted", "student_id"]
+          requesting_party: ["consent_on_file", "ferpa_exception_type"]
+    assessment:
+      objectives:
+        - id: "99.30[a]"
+          description: "Prior written consent obtained before disclosure of education records"
+          auto_assessable: true
+          evidence_source: "cedar"
+        - id: "99.30[b]"
+          description: "Consent records are maintained"
+          auto_assessable: false
+          evidence_source: "manual"
+    review_schedule:
+      frequency: "annual"
+      trigger: "calendar"
+
+  - id: "99.31"
+    family: "Disclosure Controls"
+    title: "Conditions under which prior consent is not required for disclosure"
+    responsibility:
+      aws: "CloudTrail audit of all data access provides disclosure log"
+      customer: "Document and enforce each FERPA exception; maintain disclosure log"
+    monitoring:
+      - id: "config-ferpa-cloudtrail"
+        resource_type: "AWS::CloudTrail::Trail"
+        check: "CloudTrail logging enabled for S3 data events in FERPA accounts"
+        remediation: "Enable CloudTrail data event logging for FERPA S3 buckets"
+    assessment:
+      objectives:
+        - id: "99.31[a]"
+          description: "Disclosure exceptions are documented and followed"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "99.32"
+    family: "Disclosure Controls"
+    title: "Recordkeeping requirements — record of disclosures"
+    responsibility:
+      aws: "CloudTrail provides the audit log; S3 access logs provide object-level tracking"
+      customer: "Maintain disclosure records; configure CloudTrail with appropriate retention"
+    structural:
+      - id: "scp-protect-audit-logs"
+        description: "Protect FERPA disclosure audit logs from deletion"
+        actions:
+          - "cloudtrail:DeleteTrail"
+          - "cloudtrail:StopLogging"
+          - "s3:DeleteBucket"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /security/"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "99.32[a]"
+          description: "Record of disclosures maintained for each student's records"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "99.34"
+    family: "Disclosure Controls"
+    title: "Conditions for disclosure to school officials with legitimate educational interest"
+    responsibility:
+      aws: "IAM role-based access with least privilege"
+      customer: "Define legitimate educational interest; implement RBAC for school officials"
+    operational:
+      - id: "cedar-ferpa-official-access"
+        description: "School officials access FERPA data only for legitimate educational interest"
+        entities: ["principal", "education_record"]
+        attributes:
+          principal: ["official_role", "legitimate_educational_interest", "department"]
+          education_record: ["student_id", "record_type"]
+    assessment:
+      objectives:
+        - id: "99.34[a]"
+          description: "Legitimate educational interest is defined for each official role"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "99.34[b]"
+          description: "Access is limited to officials with legitimate educational interest"
+          auto_assessable: true
+          evidence_source: "cedar"
+    review_schedule:
+      frequency: "annual"
+      trigger: "calendar"
+
+  - id: "99.36"
+    family: "Disclosure Controls"
+    title: "Conditions for disclosure in health or safety emergencies"
+    responsibility:
+      aws: "No direct AWS responsibility"
+      customer: "Emergency disclosure procedures and documentation"
+    assessment:
+      objectives:
+        - id: "99.36[a]"
+          description: "Emergency disclosure procedures are defined and documented"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "99.37"
+    family: "Disclosure Controls"
+    title: "Conditions for disclosure of directory information"
+    responsibility:
+      aws: "S3 access policies for directory information storage"
+      customer: "Directory information policy; opt-out mechanism; public access controls"
+    assessment:
+      objectives:
+        - id: "99.37[a]"
+          description: "Directory information is defined with student opt-out mechanism"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "99.37[b]"
+          description: "Non-directory PII is not publicly disclosed"
+          auto_assessable: true
+          evidence_source: "config"
+
+  # ── Enforcement (§99.60–99.67) ────────────────────────────────────────
+
+  - id: "99.63"
+    family: "Enforcement"
+    title: "Investigations and findings — FPCO may investigate complaints"
+    responsibility:
+      aws: "Audit logs and compliance reports available from Artifact"
+      customer: "Maintain evidence of FERPA compliance; cooperate with FPCO investigations"
+    assessment:
+      objectives:
+        - id: "99.63[a]"
+          description: "Institution can demonstrate FERPA compliance with audit evidence"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "99.64"
+    family: "Enforcement"
+    title: "Requirement to notify eligible students of complaint procedures"
+    responsibility:
+      aws: "No direct AWS responsibility"
+      customer: "Annual notification of FERPA rights to eligible students"
+    assessment:
+      objectives:
+        - id: "99.64[a]"
+          description: "Annual FERPA rights notification sent to all eligible students"
+          auto_assessable: false
+          evidence_source: "manual"
+    review_schedule:
+      frequency: "annual"
+      trigger: "calendar"
