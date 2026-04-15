@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/scttfrdmn/attest/internal/document/assessment"
-	"github.com/scttfrdmn/attest/internal/document/ssp"
+	"github.com/provabl/attest/internal/document/assessment"
+	"github.com/provabl/attest/internal/document/ssp"
 )
 
 const oscalVersion = "1.1.2"

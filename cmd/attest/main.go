@@ -13,24 +13,24 @@ import (
 
 	cedar "github.com/cedar-policy/cedar-go"
 
-	"github.com/scttfrdmn/attest/internal/artifact"
-	"github.com/scttfrdmn/attest/internal/attestation"
-	compilerce "github.com/scttfrdmn/attest/internal/compiler/cedar"
-	compilerscp "github.com/scttfrdmn/attest/internal/compiler/scp"
-	"github.com/scttfrdmn/attest/internal/deploy"
-	"github.com/scttfrdmn/attest/internal/document/assessment"
-	"github.com/scttfrdmn/attest/internal/document/oscal"
-	"github.com/scttfrdmn/attest/internal/document/poam"
-	"github.com/scttfrdmn/attest/internal/document/ssp"
-	"github.com/scttfrdmn/attest/internal/evaluator"
-	"github.com/scttfrdmn/attest/internal/framework"
-	"github.com/scttfrdmn/attest/internal/iac"
-	"github.com/scttfrdmn/attest/internal/org"
-	"github.com/scttfrdmn/attest/internal/reporting"
-	"github.com/scttfrdmn/attest/internal/store"
-	attesttesting "github.com/scttfrdmn/attest/internal/testing"
-	"github.com/scttfrdmn/attest/internal/waiver"
-	"github.com/scttfrdmn/attest/pkg/schema"
+	"github.com/provabl/attest/internal/artifact"
+	"github.com/provabl/attest/internal/attestation"
+	compilerce "github.com/provabl/attest/internal/compiler/cedar"
+	compilerscp "github.com/provabl/attest/internal/compiler/scp"
+	"github.com/provabl/attest/internal/deploy"
+	"github.com/provabl/attest/internal/document/assessment"
+	"github.com/provabl/attest/internal/document/oscal"
+	"github.com/provabl/attest/internal/document/poam"
+	"github.com/provabl/attest/internal/document/ssp"
+	"github.com/provabl/attest/internal/evaluator"
+	"github.com/provabl/attest/internal/framework"
+	"github.com/provabl/attest/internal/iac"
+	"github.com/provabl/attest/internal/org"
+	"github.com/provabl/attest/internal/reporting"
+	"github.com/provabl/attest/internal/store"
+	attesttesting "github.com/provabl/attest/internal/testing"
+	"github.com/provabl/attest/internal/waiver"
+	"github.com/provabl/attest/pkg/schema"
 )
 
 var version = "0.4.0-dev"
@@ -68,6 +68,7 @@ within it are research environments that inherit the org-level posture.`,
 		reportCmd(),
 		aiCmd(),
 		versionCmd(),
+		verifyCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -1797,4 +1798,35 @@ func versionCmd() *cobra.Command {
 		Short: "Print version",
 		Run:   func(cmd *cobra.Command, args []string) { fmt.Printf("attest %s\n", version) },
 	}
+}
+
+func verifyCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "verify <binary>",
+		Short: "Verify attest binary signature via cosign/Sigstore",
+		Long: `Verifies the cosign keyless signature of an attest binary downloaded
+from GitHub Releases. Checks the Sigstore/Rekor transparency log.
+
+Example:
+  attest verify ./attest-linux-amd64`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			binary := args[0]
+			org, _ := cmd.Flags().GetString("org")
+
+			fmt.Printf("Verifying: %s\n", binary)
+			fmt.Printf("Expected identity: github.com/%s/attest\n", org)
+			fmt.Printf("OIDC issuer: https://token.actions.githubusercontent.com\n\n")
+			fmt.Printf("Run:\n")
+			fmt.Printf("  cosign verify-blob %s \\\n", binary)
+			fmt.Printf("    --bundle %s.bundle \\\n", binary)
+			fmt.Printf("    --certificate-identity-regexp 'github.com/%s/attest' \\\n", org)
+			fmt.Printf("    --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'\n\n")
+			fmt.Println("Download the .bundle file alongside the binary from the GitHub Release.")
+			fmt.Println("Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/")
+			return nil
+		},
+	}
+	cmd.Flags().String("org", "provabl", "GitHub org that signed the release")
+	return cmd
 }

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/scttfrdmn/attest/pkg/schema"
+	"github.com/provabl/attest/pkg/schema"
 )
 
 // writeFramework writes a framework YAML file to a temp directory.

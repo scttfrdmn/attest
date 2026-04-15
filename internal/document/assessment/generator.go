@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scttfrdmn/attest/pkg/schema"
+	"github.com/provabl/attest/pkg/schema"
 )
 
 // ControlScore is the assessment score for a single control.

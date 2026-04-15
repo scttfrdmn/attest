@@ -158,7 +158,7 @@ When ISO 27001 is active alongside NIST 800-171, the ISO controls inherit the
 enforcement artifacts from mapped NIST controls. The marginal cost of ISO 27001
 certification drops substantially when CMMC work is already done.
 
-See: [Cross-framework mapping issue #54](https://github.com/scttfrdmn/attest/issues/54)
+See: [Cross-framework mapping issue #54](https://github.com/provabl/attest/issues/54)
 
 ---
 
@@ -187,6 +187,6 @@ All tracked in v1.0.0 milestone.
 - [Principal attribute resolution](./principal-attributes.md)
 - [ITAR framework](../frameworks/itar.md)
 - [Ark integration](../integrations/ark.md)
-- [Issue #60: Multi-framework posture gaps](https://github.com/scttfrdmn/attest/issues/60)
-- [Issue #61: ITAR framework](https://github.com/scttfrdmn/attest/issues/61)
-- [Issue #62: Conflict detection](https://github.com/scttfrdmn/attest/issues/62) (note: renumbered from earlier)
+- [Issue #60: Multi-framework posture gaps](https://github.com/provabl/attest/issues/60)
+- [Issue #61: ITAR framework](https://github.com/provabl/attest/issues/61)
+- [Issue #62: Conflict detection](https://github.com/provabl/attest/issues/62) (note: renumbered from earlier)

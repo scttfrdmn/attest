@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/scttfrdmn/attest/internal/framework"
-	"github.com/scttfrdmn/attest/pkg/schema"
+	"github.com/provabl/attest/internal/framework"
+	"github.com/provabl/attest/pkg/schema"
 )
 
 func TestCompile(t *testing.T) {

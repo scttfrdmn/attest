@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scttfrdmn/attest/pkg/schema"
+	"github.com/provabl/attest/pkg/schema"
 )
 
 func makeTestData() (*schema.SRE, *schema.Framework, *schema.Crosswalk) {

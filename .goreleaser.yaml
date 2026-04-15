@@ -32,9 +32,29 @@ archives:
       - LICENSE
       - CHANGELOG.md
       - frameworks/**
+      - classification-schemes/**
 
 checksum:
   name_template: "checksums.txt"
+
+# Keyless cosign signing via Sigstore/Rekor.
+# Verifiable: cosign verify-blob <binary> --bundle <binary>.bundle
+#   --certificate-identity-regexp 'github.com/provabl/attest'
+#   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+signs:
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+sbom:
+  - artifacts: archive
 
 changelog:
   use: file
@@ -42,6 +62,9 @@ changelog:
 
 release:
   github:
-    owner: scttfrdmn
+    owner: provabl
     name: attest
   name_template: "{{.Tag}}"
+  extra_files:
+    - glob: "*.pem"
+    - glob: "*.sig"

@@ -9,7 +9,7 @@ import (
 	configtypes "github.com/aws/aws-sdk-go-v2/service/configservice/types"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	"github.com/aws/aws-sdk-go-v2/service/organizations/types"
-	"github.com/scttfrdmn/attest/pkg/schema"
+	"github.com/provabl/attest/pkg/schema"
 )
 
 // mockOrgAPI implements orgAPI for testing.

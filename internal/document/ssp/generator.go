@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scttfrdmn/attest/pkg/schema"
+	"github.com/provabl/attest/pkg/schema"
 )
 
 // SSP is a generated System Security Plan.

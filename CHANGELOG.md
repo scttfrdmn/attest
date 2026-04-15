@@ -226,5 +226,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Access Control and System and Communications Protection families).
 - CLAUDE.md project rules and conventions.
 
-[Unreleased]: https://github.com/scttfrdmn/attest/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/scttfrdmn/attest/releases/tag/v0.1.0
+[Unreleased]: https://github.com/provabl/attest/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/provabl/attest/releases/tag/v0.1.0

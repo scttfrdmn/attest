@@ -10,7 +10,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/scttfrdmn/attest/pkg/schema"
+	"github.com/provabl/attest/pkg/schema"
 )
 
 // Request describes a new environment to provision.

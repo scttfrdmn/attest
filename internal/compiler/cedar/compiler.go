@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/scttfrdmn/attest/internal/framework"
-	"github.com/scttfrdmn/attest/pkg/schema"
+	"github.com/provabl/attest/internal/framework"
+	"github.com/provabl/attest/pkg/schema"
 )
 
 // CompiledCedarPolicy pairs a generated Cedar policy with crosswalk metadata.

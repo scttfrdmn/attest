@@ -152,4 +152,4 @@ not met.
 - [Principal attribute resolution](./principal-attributes.md)
 - [Ark integration](../integrations/ark.md)
 - [ITAR framework](../frameworks/itar.md) — us_person as an admin-sourced attribute
-- [Issue #48: Admin-to-technical bridge](https://github.com/scttfrdmn/attest/issues/48)
+- [Issue #48: Admin-to-technical bridge](https://github.com/provabl/attest/issues/48)

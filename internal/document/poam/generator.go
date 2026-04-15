@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scttfrdmn/attest/pkg/schema"
+	"github.com/provabl/attest/pkg/schema"
 )
 
 // Entry is a single POA&M action item.

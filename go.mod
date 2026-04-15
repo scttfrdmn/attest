@@ -1,4 +1,4 @@
-module github.com/scttfrdmn/attest
+module github.com/provabl/attest
 
 go 1.25
 

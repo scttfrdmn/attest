@@ -33,7 +33,7 @@ live state of an AWS Organization.
 ## Go Conventions
 
 - Go 1.24+.
-- Module path: `github.com/scttfrdmn/attest`.
+- Module path: `github.com/provabl/attest`.
 - Follow standard Go project layout: `cmd/`, `internal/`, `pkg/`.
 - `internal/` is for packages not intended for external consumption.
 - `pkg/` is for packages safe for external import (currently `schema`).
