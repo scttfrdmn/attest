@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-15
+
 ### Added
+
+- `attest init` now reads a live AWS Organization via the Organizations API:
+  builds SRE model, inventories existing SCPs, detects Artifact agreements,
+  resolves data classifications from account tags, and writes `.attest/sre.yaml`.
+- `attest scan` loads `.attest/sre.yaml` and active frameworks, resolves
+  cross-framework controls, computes structural posture (SCP coverage), and
+  saves a posture snapshot to `.attest/history/`.
+- `internal/artifact/client.go` — full implementation of the Artifact API:
+  `ListReports` (paginated), `GetReportMetadata`, `DownloadReport` (via
+  GetTermForReport + GetReport presigned URL), `ListAgreements`
+  (ListCustomerAgreements), `DetectFrameworkActivations`, `DetectReportChanges`.
+- `internal/org/analyzer.go` — full implementation of the Organizations analyzer:
+  `BuildOrgTree` (recursive OU walk), `BuildSRE`, `InventoryExistingSCPs`,
+  `InventoryConfigRules` (management account; cross-account deferred to v0.3.0).
+  Account tags `attest:data-class`, `attest:owner`, `attest:purpose` drive the
+  environment model.
+- `internal/artifact/client_test.go` — 16 table-driven tests with mock SDK.
+- `internal/org/analyzer_test.go` — 13 table-driven tests with mock SDK.
+- `internal/framework/loader_test.go` — 8 tests including live NIST 800-171 load.
+- `.github/workflows/ci.yml` — CI pipeline: go vet, go test, go build on push/PR.
+- AWS SDK v2 dependencies: `service/artifact`, `service/organizations`,
+  `service/configservice`, `config`.
+- Isolation VPC `vpc-096e8f408e16a2c22` (10.99.0.0/16) tagged `attest-dev`
+  in us-west-2 for future test resources.
+
+### Added (previous unreleased items)
 
 - Makefile with build, test, vet, and security scanning targets.
 - GitHub Actions security workflow: govulncheck, Trivy (filesystem + IaC),

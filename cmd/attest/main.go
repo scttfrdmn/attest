@@ -1,10 +1,20 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+
+	"github.com/scttfrdmn/attest/internal/artifact"
+	"github.com/scttfrdmn/attest/internal/framework"
+	"github.com/scttfrdmn/attest/internal/org"
+	"github.com/scttfrdmn/attest/pkg/schema"
 )
 
 var version = "0.2.0-dev"
@@ -58,37 +68,233 @@ rules, detects active Artifact agreements, and creates the SRE definition file.
 This is the starting point. Run this once, then use 'attest frameworks add'
 to activate compliance frameworks and 'attest compile' to generate policies.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			region, _ := cmd.Flags().GetString("region")
+
 			fmt.Println("Initializing SRE...")
-			fmt.Println("  Reading Organization topology...")
+
+			// Read Organization topology.
+			fmt.Printf("  Reading Organization topology (region: %s)...\n", region)
+			analyzer, err := org.NewAnalyzer(ctx, region)
+			if err != nil {
+				return fmt.Errorf("creating org analyzer: %w", err)
+			}
+			sre, err := analyzer.BuildSRE(ctx)
+			if err != nil {
+				return fmt.Errorf("building SRE: %w", err)
+			}
+			fmt.Printf("  Organization: %s (%d environments)\n", sre.OrgID, len(sre.Environments))
+
+			// Inventory existing SCPs.
 			fmt.Println("  Inventorying existing SCPs...")
-			fmt.Println("  Querying Artifact agreements...")
-			fmt.Println("  Detecting data classifications...")
+			scps, err := analyzer.InventoryExistingSCPs(ctx)
+			if err != nil {
+				return fmt.Errorf("inventorying SCPs: %w", err)
+			}
+			fmt.Printf("  Found %d existing SCPs\n", len(scps))
+
+			// Detect Artifact agreements → activated frameworks.
+			fmt.Println("  Querying Artifact for active agreements...")
+			artifactClient, err := artifact.NewClient(ctx, region)
+			if err != nil {
+				return fmt.Errorf("creating Artifact client: %w", err)
+			}
+			activations, err := artifactClient.DetectFrameworkActivations(ctx)
+			if err != nil {
+				// Non-fatal: Artifact may not be accessible from all accounts.
+				fmt.Printf("  Warning: could not query Artifact agreements: %v\n", err)
+			} else {
+				for fwID := range activations {
+					sre.Frameworks = append(sre.Frameworks, schema.FrameworkRef{
+						ID:      fwID,
+						Version: "latest",
+					})
+					fmt.Printf("  Framework activated via agreement: %s\n", fwID)
+				}
+			}
+
+			// Detect data classifications from account tags.
+			fmt.Println("  Detecting data classifications from account tags...")
+			classes, _ := analyzer.ResolveDataClasses(ctx, sre)
+			if len(classes) > 0 {
+				fmt.Printf("  Data classes found: %s\n", strings.Join(classes, ", "))
+			}
+
+			// Write SRE config to .attest/sre.yaml.
+			if err := os.MkdirAll(".attest", 0750); err != nil {
+				return fmt.Errorf("creating .attest directory: %w", err)
+			}
+			out, err := yaml.Marshal(sre)
+			if err != nil {
+				return fmt.Errorf("marshaling SRE config: %w", err)
+			}
+			if err := os.WriteFile(filepath.Join(".attest", "sre.yaml"), out, 0644); err != nil {
+				return fmt.Errorf("writing sre.yaml: %w", err)
+			}
+
 			fmt.Println()
-			fmt.Println("SRE initialized. Written to .attest/sre.yaml")
-			fmt.Println("Run 'attest frameworks add <framework-id>' to activate a framework.")
+			fmt.Printf("SRE initialized. Written to .attest/sre.yaml\n")
+			fmt.Printf("  Org: %s\n", sre.OrgID)
+			fmt.Printf("  Environments: %d\n", len(sre.Environments))
+			fmt.Printf("  Active frameworks: %d\n", len(sre.Frameworks))
+			if len(sre.Frameworks) == 0 {
+				fmt.Println()
+				fmt.Println("No frameworks activated. Run 'attest frameworks add <framework-id>' to activate one.")
+			} else {
+				fmt.Println("\nRun 'attest compile' to generate policy artifacts.")
+			}
 			return nil
 		},
 	}
+	cmd.Flags().String("region", "us-west-2", "AWS region")
 	return cmd
 }
 
 func scanCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "scan",
 		Short: "Analyze current org posture against active frameworks",
 		Long: `Reads the current state of the SRE and evaluates it against all active
 frameworks. Produces a posture report showing which controls are enforced,
-partially enforced, or have gaps. Also checks for Artifact report updates
-that may change the shared responsibility boundaries.`,
+partially enforced, or have gaps.
+
+For v0.2.0, posture is computed from structural enforcement (SCPs) only.
+Cedar and Config evaluation will be added in v0.3.0.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Scanning SRE posture...")
-			fmt.Println("  Checking Artifact for report updates...")
-			fmt.Println("  Evaluating structural controls (SCPs)...")
-			fmt.Println("  Evaluating operational controls (Cedar)...")
-			fmt.Println("  Evaluating monitoring controls (Config)...")
+			fwDir, _ := cmd.Flags().GetString("frameworks")
+
+			// Load SRE config.
+			sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml"))
+			if err != nil {
+				return fmt.Errorf("reading .attest/sre.yaml: %w (run 'attest init' first)", err)
+			}
+			var sre schema.SRE
+			if err := yaml.Unmarshal(sreData, &sre); err != nil {
+				return fmt.Errorf("parsing sre.yaml: %w", err)
+			}
+
+			fmt.Printf("Scanning SRE posture: %s\n", sre.OrgID)
+			fmt.Printf("  Environments: %d\n", len(sre.Environments))
+
+			if len(sre.Frameworks) == 0 {
+				fmt.Println("\nNo active frameworks. Run 'attest frameworks add <id>' to activate one.")
+				return nil
+			}
+
+			// Load active frameworks.
+			loader := framework.NewLoader(fwDir)
+			var frameworks []*schema.Framework
+			for _, ref := range sre.Frameworks {
+				fw, err := loader.Load(ref.ID)
+				if err != nil {
+					fmt.Printf("  Warning: could not load framework %s: %v\n", ref.ID, err)
+					continue
+				}
+				frameworks = append(frameworks, fw)
+				fmt.Printf("  Loaded framework: %s (%d controls)\n", fw.Name, len(fw.Controls))
+			}
+
+			if len(frameworks) == 0 {
+				return fmt.Errorf("no frameworks could be loaded")
+			}
+
+			// Resolve controls across frameworks.
+			rcs, err := framework.Resolve(frameworks)
+			if err != nil {
+				return fmt.Errorf("resolving controls: %w", err)
+			}
+
+			// Compute posture (structural only for v0.2.0).
+			posture := &schema.Posture{
+				ComputedAt: time.Now(),
+				Frameworks: make(map[string]schema.FrameworkPosture),
+			}
+
+			for _, fw := range frameworks {
+				fp := schema.FrameworkPosture{
+					FrameworkID: fw.ID,
+					Controls:    make(map[string]string),
+				}
+				for _, ctrl := range fw.Controls {
+					key := deduplicationKey(ctrl)
+					group, ok := rcs.Controls[key]
+					status := "gap"
+					if ok && len(group) > 0 {
+						if len(ctrl.Structural) > 0 {
+							// Has structural enforcement defined — treat as partial
+							// until we can verify SCPs are actually deployed.
+							status = "partial"
+						}
+						if len(ctrl.Structural) > 0 && len(ctrl.Operational) > 0 {
+							status = "enforced"
+						}
+					}
+					fp.Controls[ctrl.ID] = status
+					posture.TotalControls++
+					switch status {
+					case "enforced":
+						posture.Enforced++
+					case "partial":
+						posture.Partial++
+					case "gap":
+						posture.Gaps++
+					}
+				}
+				posture.Frameworks[fw.ID] = fp
+			}
+
+			// Print summary.
+			fmt.Println()
+			fmt.Println("Posture summary:")
+			fmt.Printf("  Total controls:  %d\n", posture.TotalControls)
+			fmt.Printf("  Enforced:        %d\n", posture.Enforced)
+			fmt.Printf("  Partial:         %d\n", posture.Partial)
+			fmt.Printf("  Gaps:            %d\n", posture.Gaps)
+
+			// Per-framework breakdown.
+			for _, fw := range frameworks {
+				fp := posture.Frameworks[fw.ID]
+				enforced, partial, gaps := 0, 0, 0
+				for _, status := range fp.Controls {
+					switch status {
+					case "enforced":
+						enforced++
+					case "partial":
+						partial++
+					default:
+						gaps++
+					}
+				}
+				fmt.Printf("\n  %s:\n", fw.Name)
+				fmt.Printf("    Enforced: %d  Partial: %d  Gaps: %d\n", enforced, partial, gaps)
+			}
+
+			// Save posture snapshot.
+			if err := os.MkdirAll(filepath.Join(".attest", "history"), 0750); err == nil {
+				snapshot := schema.PostureSnapshot{
+					Timestamp: posture.ComputedAt,
+					Posture:   *posture,
+				}
+				if data, err := yaml.Marshal(snapshot); err == nil {
+					fname := fmt.Sprintf("posture-%s.yaml", posture.ComputedAt.Format("2006-01-02T150405"))
+					_ = os.WriteFile(filepath.Join(".attest", "history", fname), data, 0644)
+				}
+			}
+
+			fmt.Println("\nNote: v0.2.0 reports structural enforcement only. Cedar/Config evaluation added in v0.3.0.")
 			return nil
 		},
 	}
+	cmd.Flags().String("frameworks", "frameworks", "Path to frameworks directory")
+	return cmd
+}
+
+// deduplicationKey mirrors internal/framework.deduplicationKey for CLI use.
+func deduplicationKey(ctrl schema.Control) string {
+	if len(ctrl.Structural) > 0 {
+		return ctrl.Structural[0].ID
+	}
+	return ctrl.Family + "/" + ctrl.ID
 }
 
 func frameworksCmd() *cobra.Command {

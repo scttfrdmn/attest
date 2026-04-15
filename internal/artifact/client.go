@@ -10,6 +10,11 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	awsartifact "github.com/aws/aws-sdk-go-v2/service/artifact"
+	"github.com/aws/aws-sdk-go-v2/service/artifact/types"
 )
 
 // Report represents a compliance report from AWS Artifact.
@@ -21,60 +26,152 @@ type Report struct {
 	Description string
 	PeriodStart time.Time
 	PeriodEnd   time.Time
-	Version     int
+	Version     int64
 	ARN         string
 }
 
 // Agreement represents a customer-accepted agreement (BAA, NDA, ITAR addendum, etc.).
 type Agreement struct {
-	ID          string
-	Type        string // e.g., "BAA", "ITAR", "NDA"
-	State       string // "ACTIVE", "TERMINATED"
-	AcceptedAt  time.Time
+	ID         string
+	Type       string    // e.g., "BAA", "ITAR", "CUSTOM"
+	State      string    // "ACTIVE", "TERMINATED"
+	AcceptedAt time.Time // EffectiveStart from the API
+}
+
+// artifactAPI is the interface we use for the Artifact SDK client,
+// defined to enable mocking in tests.
+type artifactAPI interface {
+	ListReports(ctx context.Context, params *awsartifact.ListReportsInput, optFns ...func(*awsartifact.Options)) (*awsartifact.ListReportsOutput, error)
+	GetReportMetadata(ctx context.Context, params *awsartifact.GetReportMetadataInput, optFns ...func(*awsartifact.Options)) (*awsartifact.GetReportMetadataOutput, error)
+	GetReport(ctx context.Context, params *awsartifact.GetReportInput, optFns ...func(*awsartifact.Options)) (*awsartifact.GetReportOutput, error)
+	GetTermForReport(ctx context.Context, params *awsartifact.GetTermForReportInput, optFns ...func(*awsartifact.Options)) (*awsartifact.GetTermForReportOutput, error)
+	ListCustomerAgreements(ctx context.Context, params *awsartifact.ListCustomerAgreementsInput, optFns ...func(*awsartifact.Options)) (*awsartifact.ListCustomerAgreementsOutput, error)
 }
 
 // Client wraps the AWS Artifact API.
 type Client struct {
-	// awsClient would be the actual SDK client; omitted for scaffold.
+	svc    artifactAPI
 	region string
 }
 
-// NewClient creates an Artifact API client.
-func NewClient(region string) (*Client, error) {
-	return &Client{region: region}, nil
+// NewClient creates an Artifact API client using the default credential chain.
+func NewClient(ctx context.Context, region string) (*Client, error) {
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+	if err != nil {
+		return nil, fmt.Errorf("loading AWS config: %w", err)
+	}
+	return &Client{
+		svc:    awsartifact.NewFromConfig(cfg),
+		region: region,
+	}, nil
+}
+
+// newClientWithSvc creates a client with an injected API implementation (for testing).
+func newClientWithSvc(svc artifactAPI, region string) *Client {
+	return &Client{svc: svc, region: region}
 }
 
 // ListReports enumerates all available compliance reports.
 // Paginates automatically. Results include metadata for change detection.
 func (c *Client) ListReports(ctx context.Context) ([]Report, error) {
-	// TODO: Call artifact:ListReports, paginate via nextToken, map to Report.
-	// Each report has: id, name, category, series, description, periodStart,
-	// periodEnd, version, arn, state, acceptanceType.
-	return nil, fmt.Errorf("not implemented")
+	var reports []Report
+	var nextToken *string
+
+	for {
+		out, err := c.svc.ListReports(ctx, &awsartifact.ListReportsInput{
+			NextToken: nextToken,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("listing Artifact reports: %w", err)
+		}
+
+		for _, r := range out.Reports {
+			reports = append(reports, reportSummaryToReport(r))
+		}
+
+		if out.NextToken == nil {
+			break
+		}
+		nextToken = out.NextToken
+	}
+
+	return reports, nil
 }
 
 // GetReportMetadata retrieves metadata for a specific report without downloading it.
 // Used for version tracking and change detection between scans.
 func (c *Client) GetReportMetadata(ctx context.Context, reportID string) (*Report, error) {
-	return nil, fmt.Errorf("not implemented")
+	out, err := c.svc.GetReportMetadata(ctx, &awsartifact.GetReportMetadataInput{
+		ReportId: aws.String(reportID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting report metadata %s: %w", reportID, err)
+	}
+	if out.ReportDetails == nil {
+		return nil, fmt.Errorf("report %s: no details returned", reportID)
+	}
+	r := reportDetailToReport(out.ReportDetails)
+	return &r, nil
 }
 
 // DownloadReport retrieves the actual report document via presigned URL.
 // Returns the raw document bytes (typically PDF).
+// If termToken is empty, it is fetched automatically via GetTermForReport.
 func (c *Client) DownloadReport(ctx context.Context, reportID string, termToken string) ([]byte, error) {
-	// Step 1: Call GetTermForReport to get the term token (if not provided).
-	// Step 2: Call GetReport with reportId + termToken → presigned S3 URL.
-	// Step 3: HTTP GET on the presigned URL → document bytes.
-	return nil, fmt.Errorf("not implemented")
+	if termToken == "" {
+		termOut, err := c.svc.GetTermForReport(ctx, &awsartifact.GetTermForReportInput{
+			ReportId: aws.String(reportID),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("getting term for report %s: %w", reportID, err)
+		}
+		if termOut.TermToken == nil {
+			return nil, fmt.Errorf("report %s: no term token returned", reportID)
+		}
+		termToken = *termOut.TermToken
+	}
+
+	out, err := c.svc.GetReport(ctx, &awsartifact.GetReportInput{
+		ReportId:  aws.String(reportID),
+		TermToken: aws.String(termToken),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting report %s: %w", reportID, err)
+	}
+	if out.DocumentPresignedUrl == nil {
+		return nil, fmt.Errorf("report %s: no presigned URL returned", reportID)
+	}
+
+	return fetchPresigned(*out.DocumentPresignedUrl)
 }
 
 // ListAgreements enumerates all accepted customer agreements.
 // This tells us which frameworks are activated for this org:
 //   - Signed BAA → HIPAA controls active
 //   - ITAR addendum → ITAR controls active
-//   - etc.
 func (c *Client) ListAgreements(ctx context.Context) ([]Agreement, error) {
-	return nil, fmt.Errorf("not implemented")
+	var agreements []Agreement
+	var nextToken *string
+
+	for {
+		out, err := c.svc.ListCustomerAgreements(ctx, &awsartifact.ListCustomerAgreementsInput{
+			NextToken: nextToken,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("listing customer agreements: %w", err)
+		}
+
+		for _, a := range out.CustomerAgreements {
+			agreements = append(agreements, customerAgreementToAgreement(a))
+		}
+
+		if out.NextToken == nil {
+			break
+		}
+		nextToken = out.NextToken
+	}
+
+	return agreements, nil
 }
 
 // DetectFrameworkActivations maps active agreements to framework IDs.
@@ -86,6 +183,8 @@ func (c *Client) DetectFrameworkActivations(ctx context.Context) (map[string]Agr
 	}
 
 	// Map agreement types to framework IDs.
+	// Agreement.Type comes from AgreementType enum; names from the Artifact console
+	// (e.g., the HIPAA BAA shows Type="BAA").
 	activations := make(map[string]Agreement)
 	for _, a := range agreements {
 		if a.State != "ACTIVE" {
@@ -96,7 +195,6 @@ func (c *Client) DetectFrameworkActivations(ctx context.Context) (map[string]Agr
 			activations["hipaa"] = a
 		case "ITAR":
 			activations["itar"] = a
-		// Add more as frameworks are defined.
 		}
 	}
 	return activations, nil
@@ -105,7 +203,7 @@ func (c *Client) DetectFrameworkActivations(ctx context.Context) (map[string]Agr
 // DetectReportChanges compares current report versions against a previously
 // stored manifest. Returns reports that have been updated since last scan.
 // This triggers re-extraction of shared responsibility data.
-func (c *Client) DetectReportChanges(ctx context.Context, lastKnown map[string]int) ([]Report, error) {
+func (c *Client) DetectReportChanges(ctx context.Context, lastKnown map[string]int64) ([]Report, error) {
 	reports, err := c.ListReports(ctx)
 	if err != nil {
 		return nil, err
@@ -120,9 +218,65 @@ func (c *Client) DetectReportChanges(ctx context.Context, lastKnown map[string]i
 	return changed, nil
 }
 
+// --- type mapping helpers ---
+
+func reportSummaryToReport(r types.ReportSummary) Report {
+	rep := Report{
+		ID:          aws.ToString(r.Id),
+		Name:        aws.ToString(r.Name),
+		Category:    aws.ToString(r.Category),
+		Series:      aws.ToString(r.Series),
+		Description: aws.ToString(r.Description),
+		ARN:         aws.ToString(r.Arn),
+	}
+	if r.Version != nil {
+		rep.Version = *r.Version
+	}
+	if r.PeriodStart != nil {
+		rep.PeriodStart = *r.PeriodStart
+	}
+	if r.PeriodEnd != nil {
+		rep.PeriodEnd = *r.PeriodEnd
+	}
+	return rep
+}
+
+func reportDetailToReport(r *types.ReportDetail) Report {
+	rep := Report{
+		ID:          aws.ToString(r.Id),
+		Name:        aws.ToString(r.Name),
+		Category:    aws.ToString(r.Category),
+		Series:      aws.ToString(r.Series),
+		Description: aws.ToString(r.Description),
+		ARN:         aws.ToString(r.Arn),
+	}
+	if r.Version != nil {
+		rep.Version = *r.Version
+	}
+	if r.PeriodStart != nil {
+		rep.PeriodStart = *r.PeriodStart
+	}
+	if r.PeriodEnd != nil {
+		rep.PeriodEnd = *r.PeriodEnd
+	}
+	return rep
+}
+
+func customerAgreementToAgreement(a types.CustomerAgreementSummary) Agreement {
+	ag := Agreement{
+		ID:    aws.ToString(a.Id),
+		Type:  string(a.Type),
+		State: string(a.State),
+	}
+	if a.EffectiveStart != nil {
+		ag.AcceptedAt = *a.EffectiveStart
+	}
+	return ag
+}
+
 // fetchPresigned performs an HTTP GET on a presigned S3 URL.
 func fetchPresigned(url string) ([]byte, error) {
-	resp, err := http.Get(url)
+	resp, err := http.Get(url) //nolint:gosec // presigned URLs are generated by the AWS SDK
 	if err != nil {
 		return nil, fmt.Errorf("fetching presigned URL: %w", err)
 	}
