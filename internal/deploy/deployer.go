@@ -37,13 +37,18 @@ type PlannedSCP struct {
 	HasChange bool   // true if content differs from deployed version
 }
 
+// scpPerTargetLimit is the AWS hard limit for SCPs attached to a root/OU/account.
+const SCPPerTargetLimit = 5
+
 // DeployPlan describes what `attest apply` would do.
 type DeployPlan struct {
-	ToCreate  []PlannedSCP // new SCPs to create and attach
-	ToUpdate  []PlannedSCP // existing SCPs whose content has changed
-	ToAttach  []PlannedSCP // existing SCPs not yet attached to root
-	NoChange  []PlannedSCP // SCPs already deployed and current
-	RootID    string       // org root ID (r-xxxx)
+	ToCreate     []PlannedSCP // new SCPs to create and attach
+	ToUpdate     []PlannedSCP // existing SCPs whose content has changed
+	ToAttach     []PlannedSCP // existing SCPs not yet attached to root
+	NoChange     []PlannedSCP // SCPs already deployed and current
+	RootID       string       // org root ID (r-xxxx)
+	QuotaWarning string       // non-empty if deployment would exceed SCP limit
+	CurrentCount int          // SCPs currently attached to root
 }
 
 // Summary returns a human-readable deployment summary.
@@ -111,7 +116,13 @@ func (d *Deployer) Plan(ctx context.Context, scpDir string) (*DeployPlan, error)
 		return nil, fmt.Errorf("listing root-attached SCPs: %w", err)
 	}
 
-	plan := &DeployPlan{RootID: rootID}
+	// Count currently attached SCPs (including non-attest ones like FullAWSAccess).
+	currentCount, err := d.countAttachedSCPs(ctx, rootID)
+	if err != nil {
+		return nil, fmt.Errorf("counting attached SCPs: %w", err)
+	}
+
+	plan := &DeployPlan{RootID: rootID, CurrentCount: currentCount}
 
 	for attID, content := range compiled {
 		name := attID // "attest-scp-require-mfa"
@@ -142,6 +153,16 @@ func (d *Deployer) Plan(ctx context.Context, scpDir string) (*DeployPlan, error)
 				AttestID: attID, OrgID: existingPolicy.ID, Action: "no-change",
 			})
 		}
+	}
+
+	// Quota check: would deploying exceed the 5-per-target hard limit?
+	newToAttach := len(plan.ToCreate) + len(plan.ToAttach)
+	projectedTotal := currentCount + newToAttach
+	if projectedTotal > SCPPerTargetLimit {
+		plan.QuotaWarning = fmt.Sprintf(
+			"deployment would attach %d SCP(s) to root (%d existing + %d new = %d total, limit is %d)\n"+
+				"  Solution: run 'attest compile --scp-strategy merged' to produce ≤4 composite SCPs",
+			newToAttach, currentCount, newToAttach, projectedTotal, SCPPerTargetLimit)
 	}
 
 	return plan, nil
@@ -297,6 +318,28 @@ func (d *Deployer) listAttachedToRoot(ctx context.Context, rootID string) (map[s
 		nextToken = out.NextToken
 	}
 	return attached, nil
+}
+
+// countAttachedSCPs returns the total number of SCPs attached to the target.
+func (d *Deployer) countAttachedSCPs(ctx context.Context, targetID string) (int, error) {
+	count := 0
+	var nextToken *string
+	for {
+		out, err := d.orgSvc.ListPoliciesForTarget(ctx, &organizations.ListPoliciesForTargetInput{
+			TargetId:  aws.String(targetID),
+			Filter:    types.PolicyTypeServiceControlPolicy,
+			NextToken: nextToken,
+		})
+		if err != nil {
+			return 0, err
+		}
+		count += len(out.Policies)
+		if out.NextToken == nil {
+			break
+		}
+		nextToken = out.NextToken
+	}
+	return count, nil
 }
 
 // loadCompiledSCPs reads all .json files from scpDir, returning a map of

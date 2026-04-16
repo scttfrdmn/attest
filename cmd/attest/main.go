@@ -13,6 +13,10 @@ import (
 
 	cedar "github.com/cedar-policy/cedar-go"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
+	iamSvc "github.com/aws/aws-sdk-go-v2/service/iam"
+
 	"github.com/provabl/attest/internal/ai"
 	"github.com/provabl/attest/internal/artifact"
 	"github.com/provabl/attest/internal/attestation"
@@ -54,6 +58,7 @@ within it are research environments that inherit the org-level posture.`,
 		frameworksCmd(),
 		compileCmd(),
 		applyCmd(),
+		preflightCmd(),
 		evaluateCmd(),
 		generateCmd(),
 		diffCmd(),
@@ -362,12 +367,87 @@ posture is derived from the compiled crosswalk (run 'attest compile' first).`,
 			if crosswalkEntries == nil {
 				fmt.Println("\nTip: run 'attest compile' first for crosswalk-based posture.")
 			}
+
+			// Optional: direct API verification (free, no Config required).
+			verify, _ := cmd.Flags().GetBool("verify")
+			if verify && region != "" {
+				runVerification(context.Background(), region, &sre)
+			} else if verify {
+				fmt.Println("\nNote: --verify requires --region to check live org state.")
+			}
 			return nil
 		},
 	}
 	cmd.Flags().String("frameworks", "frameworks", "Path to frameworks directory")
 	cmd.Flags().String("region", "", "AWS region for live SCP deployment check (optional)")
+	cmd.Flags().Bool("verify", false, "Run direct API spot-checks (CloudTrail, SCPs, S3 encryption) — free, no Config required")
 	return cmd
+}
+
+// runVerification performs direct AWS API spot-checks for compliance verification.
+// All API calls are free — no AWS Config or Security Hub required.
+func runVerification(ctx context.Context, region string, sre *schema.SRE) {
+	fmt.Println("\nDirect API verification (no Config required):")
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+	if err != nil {
+		fmt.Printf("  Warning: could not load AWS config for verification: %v\n", err)
+		return
+	}
+
+	// Check 1: CloudTrail status.
+	ctClient := cloudtrail.NewFromConfig(cfg)
+	trueVal := true
+	trails, err := ctClient.DescribeTrails(ctx, &cloudtrail.DescribeTrailsInput{
+		IncludeShadowTrails: &trueVal,
+	})
+	if err != nil {
+		fmt.Printf("  cloudtrail: could not check (%v)\n", err)
+	} else {
+		multiRegion := 0
+		for _, t := range trails.TrailList {
+			if t.IsMultiRegionTrail != nil && *t.IsMultiRegionTrail {
+				multiRegion++
+			}
+		}
+		if multiRegion > 0 {
+			fmt.Printf("  ✓ CloudTrail: %d multi-region trail(s) active\n", multiRegion)
+		} else if len(trails.TrailList) > 0 {
+			fmt.Printf("  ⚠ CloudTrail: %d trail(s) but none multi-region\n", len(trails.TrailList))
+		} else {
+			fmt.Printf("  ✗ CloudTrail: no trails found\n")
+		}
+	}
+
+	// Check 2: Attest SCPs at root (via Organizations).
+	orgAnalyzer, err := org.NewAnalyzer(ctx, region)
+	if err == nil {
+		scps, err := orgAnalyzer.InventoryExistingSCPs(ctx)
+		attestSCPs := 0
+		for _, s := range scps {
+			if strings.HasPrefix(s.Name, "attest-") {
+				attestSCPs++
+			}
+		}
+		if err != nil {
+			fmt.Printf("  SCPs: could not check (%v)\n", err)
+		} else if attestSCPs > 0 {
+			fmt.Printf("  ✓ Attest SCPs: %d deployed to org\n", attestSCPs)
+		} else {
+			fmt.Printf("  ⚠ Attest SCPs: none deployed (run 'attest apply')\n")
+		}
+	}
+
+	// Check 3: IAM password policy.
+	iamClient := iamSvc.NewFromConfig(cfg)
+	_, err = iamClient.GetAccountPasswordPolicy(ctx, &iamSvc.GetAccountPasswordPolicyInput{})
+	if err != nil {
+		fmt.Printf("  ⚠ IAM password policy: not configured\n")
+	} else {
+		fmt.Printf("  ✓ IAM password policy: active\n")
+	}
+
+	fmt.Println("  (Config and Security Hub not required — $0 ongoing cost)")
 }
 
 // deduplicationKey mirrors internal/framework.deduplicationKey for CLI use.
@@ -569,11 +649,28 @@ the raw policy artifacts (coming in v0.5.0).`,
 			}
 
 			// Compile SCPs.
-			fmt.Println("  Generating SCPs (structural enforcement)...")
+			scpStrategy, _ := cmd.Flags().GetString("scp-strategy")
 			scpCompiler := compilerscp.NewCompiler()
-			scps, err := scpCompiler.Compile(rcs)
-			if err != nil {
-				return fmt.Errorf("compiling SCPs: %w", err)
+			var scps []compilerscp.CompiledSCP
+			if scpStrategy == "merged" {
+				fmt.Println("  Generating SCPs (merged strategy — intelligent bin-packing)...")
+				var scpStats compilerscp.CompileStats
+				var scpErr error
+				scps, scpStats, scpErr = scpCompiler.IntelligentCompile(rcs)
+				err = scpErr
+				if err != nil {
+					return fmt.Errorf("compiling SCPs (merged): %w", err)
+				}
+				fmt.Printf("  %d structural specs → %d unique conditions → %d SCP document(s)\n",
+					scpStats.InputSpecs, scpStats.UniqueConditions, scpStats.SCPCount)
+				fmt.Printf("  SCP budget: %d / %d chars used (%.1f%%)\n",
+					scpStats.TotalChars, compilerscp.TotalBudget, scpStats.BudgetUsed)
+			} else {
+				fmt.Println("  Generating SCPs (individual strategy)...")
+				scps, err = scpCompiler.Compile(rcs)
+				if err != nil {
+					return fmt.Errorf("compiling SCPs: %w", err)
+				}
 			}
 
 			// Compile Cedar policies.
@@ -594,7 +691,14 @@ the raw policy artifacts (coming in v0.5.0).`,
 			// Write compiled output.
 			fmt.Println("  Writing artifacts...")
 			compiledDir := filepath.Join(".attest", "compiled")
-			if err := os.MkdirAll(filepath.Join(compiledDir, "scps"), 0750); err != nil {
+			scpsDir := filepath.Join(compiledDir, "scps")
+
+			// Clear existing SCPs before writing — ensures no stale artifacts from
+			// a previous compile with a different strategy.
+			if err := os.RemoveAll(scpsDir); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("clearing scps dir: %w", err)
+			}
+			if err := os.MkdirAll(scpsDir, 0750); err != nil {
 				return err
 			}
 			if err := os.MkdirAll(filepath.Join(compiledDir, "cedar"), 0750); err != nil {
@@ -602,7 +706,7 @@ the raw policy artifacts (coming in v0.5.0).`,
 			}
 
 			for _, s := range scps {
-				path := filepath.Join(compiledDir, "scps", s.ID+".json")
+				path := filepath.Join(scpsDir, s.ID+".json")
 				if err := os.WriteFile(path, []byte(s.PolicyJSON), 0644); err != nil {
 					return fmt.Errorf("writing SCP %s: %w", s.ID, err)
 				}
@@ -648,6 +752,7 @@ the raw policy artifacts (coming in v0.5.0).`,
 	}
 	cmd.Flags().String("frameworks", "frameworks", "Path to frameworks directory")
 	cmd.Flags().String("output", "", "IaC output format: terraform, cdk")
+	cmd.Flags().String("scp-strategy", "individual", "SCP compilation strategy: individual (one SCP per spec, for inspection) or merged (intelligent bin-packing, for production — fits within 5-per-target limit)")
 	return cmd
 }
 
@@ -732,6 +837,10 @@ Use --approve to skip interactive confirmation.`,
 			}
 			fmt.Println(plan.Summary())
 
+			if plan.QuotaWarning != "" {
+				fmt.Printf("\n  ⚠ Quota warning: %s\n\n", plan.QuotaWarning)
+			}
+
 			if dryRun {
 				fmt.Println("Dry run — no changes made.")
 				return nil
@@ -773,6 +882,104 @@ Use --approve to skip interactive confirmation.`,
 	}
 	cmd.Flags().Bool("dry-run", false, "Preview changes without applying")
 	cmd.Flags().Bool("approve", false, "Skip interactive approval")
+	cmd.Flags().String("region", "us-east-1", "AWS region")
+	return cmd
+}
+
+func preflightCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "preflight",
+		Short: "Check AWS prerequisites before running attest apply",
+		Long: `Validates that your AWS Organization is ready for attest apply:
+  - Organization feature set (ALL features required)
+  - SCP policy type enabled on root
+  - SCP quota: current usage vs. compiled SCP count
+  - IAM permissions for deployment
+
+Run this before 'attest apply' to catch issues early.
+
+The SCP per-target limit is a hard limit of 5 (AWS Organizations).
+Use 'attest compile --scp-strategy merged' to produce ≤4 composite SCPs
+that fit within this limit alongside the FullAWSAccess default policy.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			region, _ := cmd.Flags().GetString("region")
+
+			fmt.Printf("Checking prerequisites for attest apply...\n\n")
+
+			// Connect to AWS.
+			deployer, err := deploy.NewDeployer(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to AWS: %w", err)
+			}
+
+			allGood := true
+			fail := func(format string, a ...any) {
+				fmt.Printf("  ✗ "+format+"\n", a...)
+				allGood = false
+			}
+			pass := func(format string, a ...any) {
+				fmt.Printf("  ✓ "+format+"\n", a...)
+			}
+			warn := func(format string, a ...any) {
+				fmt.Printf("  ⚠ "+format+"\n", a...)
+			}
+
+			// Check 1: Organization features.
+			analyzer, err := org.NewAnalyzer(ctx, region)
+			if err != nil {
+				fail("Could not connect to Organizations API: %v", err)
+				goto result
+			}
+			{
+				sre, err := analyzer.BuildSRE(ctx)
+				if err != nil {
+					fail("Could not describe organization: %v", err)
+					goto result
+				}
+				pass("Organization: %s", sre.OrgID)
+			}
+
+			// Check 2: Run Plan() to get root ID, SCP type status, and quota.
+			{
+				scpDir := filepath.Join(".attest", "compiled", "scps")
+				plan, err := deployer.Plan(ctx, scpDir)
+				if err != nil && !os.IsNotExist(err) {
+					fail("Plan check failed: %v", err)
+					goto result
+				}
+
+				if plan != nil {
+					pass("Root: %s", plan.RootID)
+					pass("SCPs currently attached: %d/%d", plan.CurrentCount, deploy.SCPPerTargetLimit)
+
+					compiledCount := len(plan.ToCreate) + len(plan.ToUpdate) + len(plan.NoChange) + len(plan.ToAttach)
+					if compiledCount == 0 {
+						warn("No compiled SCPs found in %s (run 'attest compile' first)", scpDir)
+					} else {
+						projectedTotal := plan.CurrentCount + len(plan.ToCreate) + len(plan.ToAttach)
+						if plan.QuotaWarning != "" {
+							fail("SCP quota: would reach %d/%d (exceeds limit)", projectedTotal, deploy.SCPPerTargetLimit)
+							fmt.Printf("      %s\n", plan.QuotaWarning)
+						} else {
+							pass("SCP quota: %d compiled, %d total after apply (within limit of %d)",
+								compiledCount, projectedTotal, deploy.SCPPerTargetLimit)
+						}
+					}
+				}
+			}
+
+		result:
+			fmt.Println()
+			if allGood {
+				fmt.Println("Result: READY — run 'attest apply --dry-run' to preview")
+			} else {
+				fmt.Println("Result: NOT READY — resolve issues above before running 'attest apply'")
+				return fmt.Errorf("preflight failed")
+			}
+			return nil
+		},
+	}
 	cmd.Flags().String("region", "us-east-1", "AWS region")
 	return cmd
 }

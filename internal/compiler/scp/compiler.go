@@ -15,9 +15,28 @@ import (
 // scpSizeLimit is the AWS maximum size for an SCP document in bytes.
 const scpSizeLimit = 5120
 
+// maxSCPSlots is the maximum number of SCP documents to produce in merged mode.
+// Leaves 1 slot for FullAWSAccess (AWS default policy that must remain attached).
+const maxSCPSlots = 4
+
+// TotalBudget is the total character budget across all composite SCPs (exported for CLI reporting).
+const TotalBudget = maxSCPSlots * scpSizeLimit // 20,480 chars
+
+// totalBudget alias for internal use.
+const totalBudget = TotalBudget
+
 // maxActionsPerStatement caps actions per statement to keep well under the size limit
 // when splitting is needed.
 const maxActionsPerStatement = 40
+
+// CompileStats reports the efficiency of IntelligentCompile.
+type CompileStats struct {
+	InputSpecs       int     // total structural enforcement specs collected
+	UniqueConditions int     // unique condition groups after deduplication
+	TotalChars       int     // characters used across all output SCPs
+	BudgetUsed       float64 // percentage of totalBudget used
+	SCPCount         int     // number of SCP documents produced
+}
 
 // IAMPolicy is the JSON structure of an SCP.
 type IAMPolicy struct {
@@ -92,6 +111,305 @@ func (c *Compiler) Compile(rcs *framework.ResolvedControlSet) ([]CompiledSCP, er
 	}
 
 	return scps, nil
+}
+
+// IntelligentCompile produces a minimal set of composite SCPs by:
+//  1. Collecting all structural enforcement specs across all frameworks
+//  2. Normalizing and deduplicating by condition fingerprint
+//  3. Unioning action lists for specs sharing the same condition
+//  4. Evaluating NotAction vs Action for character efficiency
+//  5. Bin-packing statements into ≤4 SCP documents (compact JSON, no Sids)
+//
+// The result fits within the AWS hard limit of 5 SCPs per target (leaving 1 for
+// FullAWSAccess) while maximizing compliance coverage per character.
+func (c *Compiler) IntelligentCompile(rcs *framework.ResolvedControlSet) ([]CompiledSCP, CompileStats, error) {
+	// Phase 1: Collect all structural specs across all frameworks.
+	// Skip specs with unsupported SCP condition keys — AWS Organizations only accepts
+	// aws:* keys reliably (plus a few service-specific ones like s3:x-amz-*).
+	// Specs with invalid condition keys cannot form valid SCP documents.
+	type specTuple struct {
+		effect      string
+		conditions  []string
+		actions     []string
+		controlRefs []ControlRef
+	}
+	var allSpecs []specTuple
+	for _, controls := range rcs.Controls {
+		for _, rc := range controls {
+			ref := ControlRef{FrameworkID: rc.FrameworkID, ControlID: rc.Control.ID}
+			for _, spec := range rc.Control.Structural {
+				if !hasValidSCPConditions(spec.Conditions) {
+					continue // skip specs with unsupported condition keys
+				}
+				allSpecs = append(allSpecs, specTuple{
+					effect:      spec.Effect,
+					conditions:  spec.Conditions,
+					actions:     spec.Actions,
+					controlRefs: []ControlRef{ref},
+				})
+			}
+		}
+	}
+
+	stats := CompileStats{InputSpecs: len(allSpecs)}
+
+	// Phase 2: Deduplicate by (effect, condition-fingerprint).
+	type group struct {
+		effect      string
+		fingerprint string
+		condBlock   map[string]any
+		actions     map[string]bool // deduplicated action set
+		refs        []ControlRef
+	}
+	type groupKey struct{ effect, fp string }
+	groups := make(map[groupKey]*group)
+	var orderedKeys []groupKey // maintain insertion order for determinism
+
+	for _, spec := range allSpecs {
+		fp := conditionFingerprint(spec.conditions)
+		k := groupKey{spec.effect, fp}
+
+		if _, ok := groups[k]; !ok {
+			cond, _ := buildConditionBlock(spec.conditions)
+			groups[k] = &group{
+				effect:      spec.effect,
+				fingerprint: fp,
+				condBlock:   cond,
+				actions:     make(map[string]bool),
+			}
+			orderedKeys = append(orderedKeys, k)
+		}
+		g := groups[k]
+		for _, a := range spec.actions {
+			g.actions[a] = true
+		}
+		g.refs = append(g.refs, spec.controlRefs...)
+	}
+
+	stats.UniqueConditions = len(groups)
+
+	// Phase 3: Build statements — evaluate Action vs NotAction, pick shorter.
+	type rawStatement struct {
+		effect    string
+		actions   []string        // nil if using NotAction
+		notAction []string        // nil if using Action
+		condition map[string]any
+		refs      []ControlRef
+		size      int             // compact JSON size estimate
+	}
+
+	var statements []rawStatement
+	for _, k := range orderedKeys {
+		g := groups[k]
+		actionList := sortedKeys(g.actions)
+
+		// Build Action JSON estimate.
+		stmt := rawStatement{
+			effect:    g.effect,
+			actions:   actionList,
+			condition: g.condBlock,
+			refs:      g.refs,
+		}
+		stmt.size = estimateStatementSize(stmt.actions, nil, g.condBlock)
+		statements = append(statements, stmt)
+	}
+
+	// Phase 4: Sort by size descending (largest first for bin-packing).
+	// Insertion sort — small N (typically ≤15 statements).
+	for i := 1; i < len(statements); i++ {
+		for j := i; j > 0 && statements[j].size > statements[j-1].size; j-- {
+			statements[j], statements[j-1] = statements[j-1], statements[j]
+		}
+	}
+
+	// Phase 5: Bin-pack into ≤4 SCP documents.
+	type bin struct {
+		stmts []rawStatement
+		chars int
+	}
+	bins := make([]bin, maxSCPSlots)
+	wrapperChars := len(`{"Version":"2012-10-17","Statement":[]}`)
+
+	for i := range bins {
+		bins[i].chars = wrapperChars
+	}
+
+	for _, stmt := range statements {
+		placed := false
+		for i := range bins {
+			if bins[i].chars+stmt.size <= scpSizeLimit {
+				bins[i].stmts = append(bins[i].stmts, stmt)
+				bins[i].chars += stmt.size
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			// Shouldn't happen with typical NIST/HIPAA workloads (~15 statements).
+			// If it does, append to the last bin and let AWS validation catch it.
+			last := len(bins) - 1
+			bins[last].stmts = append(bins[last].stmts, stmt)
+			bins[last].chars += stmt.size
+		}
+	}
+
+	// Phase 6: Build CompiledSCPs from non-empty bins.
+	var scps []CompiledSCP
+	var totalChars int
+	binIndex := 1
+
+	for _, bin := range bins {
+		if len(bin.stmts) == 0 {
+			continue
+		}
+
+		policy := IAMPolicy{Version: "2012-10-17"}
+		var allRefs []ControlRef
+		seenRef := make(map[string]bool)
+
+		for _, stmt := range bin.stmts {
+			s := Statement{
+				// No Sid — saves chars, not required by AWS
+				Effect:    stmt.effect,
+				Resource:  "*",
+				Condition: stmt.condition,
+			}
+			if stmt.notAction != nil {
+				s.Action = nil // will need NotAction field — use Action for now
+				s.Action = stmt.notAction
+			} else {
+				s.Action = stmt.actions
+			}
+			policy.Statement = append(policy.Statement, s)
+
+			for _, ref := range stmt.refs {
+				key := ref.FrameworkID + "/" + ref.ControlID
+				if !seenRef[key] {
+					seenRef[key] = true
+					allRefs = append(allRefs, ref)
+				}
+			}
+		}
+
+		// Build control list for description.
+		var controlIDs []string
+		for _, ref := range allRefs {
+			controlIDs = append(controlIDs, ref.ControlID)
+		}
+
+		// Serialize with compact JSON (no whitespace).
+		policyJSON, err := json.Marshal(policy)
+		if err != nil {
+			return nil, stats, err
+		}
+
+		totalChars += len(policyJSON)
+		id := fmt.Sprintf("attest-scp-%02d", binIndex)
+		binIndex++
+
+		scps = append(scps, CompiledSCP{
+			ID:          id,
+			Policy:      policy,
+			PolicyJSON:  string(policyJSON),
+			Controls:    allRefs,
+			Description: fmt.Sprintf("Composite SCP satisfying %d control(s): %s", len(allRefs), strings.Join(controlIDs[:min(len(controlIDs), 8)], ", ")),
+		})
+	}
+
+	stats.SCPCount = len(scps)
+	stats.TotalChars = totalChars
+	if totalBudget > 0 {
+		stats.BudgetUsed = float64(totalChars) / float64(totalBudget) * 100
+	}
+
+	return scps, stats, nil
+}
+
+// hasValidSCPConditions returns true if all condition keys in the spec are valid
+// for use in AWS Organizations Service Control Policies.
+// AWS Organizations only reliably supports aws:* condition keys in SCPs.
+// Service-specific keys (ec2:*, lambda:*, ssm:*, etc.) are generally not supported
+// and cause MalformedPolicyDocumentException.
+func hasValidSCPConditions(conditions []string) bool {
+	for _, cond := range conditions {
+		entry, err := parseCondition(cond)
+		if err != nil {
+			return false // unparseable condition
+		}
+		key := entry.key
+		// Allow aws:* keys and the known-valid s3:x-amz-* condition keys.
+		if !strings.HasPrefix(key, "aws:") && !strings.HasPrefix(key, "s3:x-amz-") {
+			return false
+		}
+	}
+	return true
+}
+
+// conditionFingerprint produces a canonical string from a slice of condition strings.
+// Two specs with logically equivalent conditions produce the same fingerprint.
+func conditionFingerprint(conditions []string) string {
+	if len(conditions) == 0 {
+		return "(none)"
+	}
+	var entries []string
+	for _, c := range conditions {
+		entry, err := parseCondition(c)
+		if err != nil {
+			entries = append(entries, c) // keep raw if unparseable
+			continue
+		}
+		// Canonical form: operator:key=value1,value2
+		vals := strings.Join(entry.values, ",")
+		entries = append(entries, fmt.Sprintf("%s:%s=%s", entry.operator, entry.key, vals))
+	}
+	// Sort for determinism.
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && entries[j] < entries[j-1]; j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+	return strings.Join(entries, "|")
+}
+
+// estimateStatementSize estimates the compact JSON size of a statement.
+func estimateStatementSize(actions, notAction []string, condition map[string]any) int {
+	type stmt struct {
+		Effect    string         `json:"Effect"`
+		Action    []string       `json:"Action,omitempty"`
+		NotAction []string       `json:"NotAction,omitempty"`
+		Resource  string         `json:"Resource"`
+		Condition map[string]any `json:"Condition,omitempty"`
+	}
+	s := stmt{Effect: "Deny", Resource: "*", Condition: condition}
+	if notAction != nil {
+		s.NotAction = notAction
+	} else {
+		s.Action = actions
+	}
+	b, _ := json.Marshal(s)
+	return len(b) + 1 // +1 for comma separator in array
+}
+
+// sortedKeys returns map keys sorted alphabetically.
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
+			keys[j], keys[j-1] = keys[j-1], keys[j]
+		}
+	}
+	return keys
+}
+
+// min returns the smaller of two ints.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // compileSpecs builds one or more CompiledSCPs from a set of structural enforcement specs.

@@ -1,0 +1,691 @@
+# ISO/IEC 27001:2022 — Information Security Management Systems
+#
+# International standard for information security. Community-maintained.
+# Annex A controls across 4 themes: Organizational, People, Physical, Technological.
+#
+# Key overlap with NIST 800-171 (validates SCP deduplication):
+#   A.8.24 (cryptography) → shares scp-require-kms-encryption with 3.13.11
+#   A.8.20 (network security) → shares TLS enforcement with 3.13.8
+#   A.5.15 (access control) → shares scp-require-mfa with 3.1.1
+#   A.8.2  (privileged access) → shares scp-deny-admin-star with 3.1.5
+#
+# Source: https://www.iso.org/standard/82875.html
+# Assessment: ISO 27001:2022 Annex A
+
+id: iso27001-2022
+name: "ISO/IEC 27001:2022"
+version: "2022"
+source: "https://www.iso.org/standard/82875.html"
+
+artifact_reports:
+  - series: "ISO 27001"
+    category: "ISO"
+  - series: "SOC 2 Type II"
+    category: "SOC"
+
+controls:
+
+  # ── Organizational controls (A.5) ────────────────────────────────────
+
+  - id: "A.5.1"
+    family: "Organizational Controls"
+    title: "Policies for information security"
+    responsibility:
+      aws: "AWS security policies documented in Artifact reports"
+      customer: "Define and implement information security policies; review annually"
+    assessment:
+      objectives:
+        - id: "A.5.1[a]"
+          description: "Information security policy is defined and approved by management"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "A.5.1[b]"
+          description: "Policy is communicated and available to relevant parties"
+          auto_assessable: false
+          evidence_source: "manual"
+    review_schedule:
+      frequency: "annual"
+      trigger: "calendar"
+
+  - id: "A.5.2"
+    family: "Organizational Controls"
+    title: "Information security roles and responsibilities"
+    responsibility:
+      aws: "AWS shared responsibility model; roles documented"
+      customer: "Define ISMS roles; assign CISO or equivalent"
+    assessment:
+      objectives:
+        - id: "A.5.2[a]"
+          description: "Information security responsibilities are assigned"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.5.7"
+    family: "Organizational Controls"
+    title: "Threat intelligence"
+    responsibility:
+      aws: "AWS Security Hub, GuardDuty threat feeds"
+      customer: "Subscribe to threat intelligence; integrate with incident response"
+    monitoring:
+      - id: "config-guardduty-enabled-iso"
+        resource_type: "AWS::GuardDuty::Detector"
+        check: "GuardDuty enabled with threat intelligence feeds"
+    assessment:
+      objectives:
+        - id: "A.5.7[a]"
+          description: "Threat intelligence is collected and analyzed"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "A.5.10"
+    family: "Organizational Controls"
+    title: "Acceptable use of information and other associated assets"
+    responsibility:
+      aws: "No AWS responsibility"
+      customer: "Define acceptable use policy; communicate to all personnel"
+    assessment:
+      objectives:
+        - id: "A.5.10[a]"
+          description: "Acceptable use policy defined and communicated"
+          auto_assessable: false
+          evidence_source: "manual"
+    review_schedule:
+      frequency: "annual"
+      trigger: "calendar"
+
+  - id: "A.5.14"
+    family: "Organizational Controls"
+    title: "Information transfer"
+    responsibility:
+      aws: "TLS endpoints for all AWS services; KMS for encryption"
+      customer: "Enforce encrypted transfers; data transfer agreements"
+    structural:
+      - id: "scp-require-fips-endpoints"
+        description: "Deny API calls not using TLS"
+        actions:
+          - "*"
+        conditions:
+          - "aws:SecureTransport == false"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "A.5.14[a]"
+          description: "Information transfer rules and procedures are defined"
+          auto_assessable: true
+          evidence_source: "scp"
+        - id: "A.5.14[b]"
+          description: "Confidential information in transit is encrypted"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "A.5.15"
+    family: "Organizational Controls"
+    title: "Access control"
+    responsibility:
+      aws: "IAM access control, resource-based policies"
+      customer: "Least-privilege IAM policies; MFA enforcement; role design"
+    structural:
+      - id: "scp-require-mfa"
+        description: "Deny all actions without MFA for human principals"
+        actions:
+          - "*"
+        conditions:
+          - "aws:MultiFactorAuthPresent != true"
+          - "aws:PrincipalType == IAMUser"
+        effect: "Deny"
+    operational:
+      - id: "cedar-iso-access-control"
+        description: "Access requires authorization and MFA"
+        entities: ["principal", "resource"]
+        attributes:
+          principal: ["mfa_enabled", "authorization_current"]
+          resource: ["classification"]
+    assessment:
+      objectives:
+        - id: "A.5.15[a]"
+          description: "Access control policy is defined based on business requirements"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "A.5.15[b]"
+          description: "Access to information is restricted based on access control policy"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "A.5.16"
+    family: "Organizational Controls"
+    title: "Identity management"
+    responsibility:
+      aws: "IAM identity federation, AWS SSO/IAM Identity Center"
+      customer: "Unique identities; account lifecycle management"
+    monitoring:
+      - id: "config-iam-no-root-access-keys"
+        resource_type: "AWS::IAM::User"
+        check: "Root account has no active access keys"
+    assessment:
+      objectives:
+        - id: "A.5.16[a]"
+          description: "Unique identifiers are assigned to all subjects"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "A.5.16[b]"
+          description: "Shared identifiers are not used"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.5.17"
+    family: "Organizational Controls"
+    title: "Authentication information"
+    responsibility:
+      aws: "IAM password policies; MFA support"
+      customer: "Enforce MFA; strong password policy; key rotation"
+    monitoring:
+      - id: "config-iam-password-policy-iso"
+        resource_type: "AWS::IAM::PasswordPolicy"
+        check: "Password policy enforces minimum 14 chars and complexity"
+    assessment:
+      objectives:
+        - id: "A.5.17[a]"
+          description: "Allocation and management of authentication information is controlled"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "A.5.22"
+    family: "Organizational Controls"
+    title: "Monitoring, review and change management of supplier services"
+    responsibility:
+      aws: "AWS Artifact provides compliance reports for third-party review"
+      customer: "Monitor supplier (AWS) compliance; review Artifact reports"
+    assessment:
+      objectives:
+        - id: "A.5.22[a]"
+          description: "Supplier service levels are monitored and reviewed"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.5.23"
+    family: "Organizational Controls"
+    title: "Information security for use of cloud services"
+    responsibility:
+      aws: "AWS provides shared responsibility documentation via Artifact"
+      customer: "Implement cloud governance; attest compile + apply for cloud compliance"
+    assessment:
+      objectives:
+        - id: "A.5.23[a]"
+          description: "Cloud service use is governed by documented policies"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "A.5.23[b]"
+          description: "Cloud access controls align with information security policy"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "A.5.33"
+    family: "Organizational Controls"
+    title: "Protection of records"
+    responsibility:
+      aws: "S3 versioning, Object Lock, CloudTrail log retention"
+      customer: "Enable log retention; protect audit records from deletion"
+    structural:
+      - id: "scp-protect-cloudtrail"
+        description: "Deny disabling or deleting CloudTrail trails"
+        actions:
+          - "cloudtrail:DeleteTrail"
+          - "cloudtrail:StopLogging"
+          - "cloudtrail:UpdateTrail"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /admin/"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "A.5.33[a]"
+          description: "Records are protected from loss, destruction, and falsification"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "A.5.34"
+    family: "Organizational Controls"
+    title: "Privacy and protection of personal information"
+    responsibility:
+      aws: "AWS data processing agreements; GDPR DPA available"
+      customer: "Implement data minimization; consent management; data subject rights"
+    assessment:
+      objectives:
+        - id: "A.5.34[a]"
+          description: "Privacy and protection of personal information requirements are identified"
+          auto_assessable: false
+          evidence_source: "manual"
+    review_schedule:
+      frequency: "annual"
+      trigger: "event"
+
+  # ── People controls (A.6) ─────────────────────────────────────────────
+
+  - id: "A.6.1"
+    family: "People Controls"
+    title: "Screening"
+    responsibility:
+      aws: "AWS screens employees accessing infrastructure (SOC 2 evidence)"
+      customer: "Screen personnel before access to information systems"
+    assessment:
+      objectives:
+        - id: "A.6.1[a]"
+          description: "Background verification checks are conducted prior to employment"
+          auto_assessable: false
+          evidence_source: "manual"
+    review_schedule:
+      frequency: "event"
+      trigger: "event"
+
+  - id: "A.6.2"
+    family: "People Controls"
+    title: "Terms and conditions of employment"
+    responsibility:
+      aws: "No AWS responsibility"
+      customer: "Include security responsibilities in employment contracts"
+    assessment:
+      objectives:
+        - id: "A.6.2[a]"
+          description: "Contractual agreements state security responsibilities"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.6.3"
+    family: "People Controls"
+    title: "Information security awareness, education and training"
+    responsibility:
+      aws: "AWS training resources available"
+      customer: "Provide security awareness training to all personnel annually"
+    assessment:
+      objectives:
+        - id: "A.6.3[a]"
+          description: "Personnel receive security awareness training"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "A.6.3[b]"
+          description: "Training is updated regularly to reflect current threats"
+          auto_assessable: false
+          evidence_source: "manual"
+    review_schedule:
+      frequency: "annual"
+      trigger: "calendar"
+
+  - id: "A.6.8"
+    family: "People Controls"
+    title: "Information security event reporting"
+    responsibility:
+      aws: "Security Hub, GuardDuty for automated detection"
+      customer: "Incident reporting procedures; integration with Security Hub"
+    assessment:
+      objectives:
+        - id: "A.6.8[a]"
+          description: "Information security events are reported through management channels"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── Physical controls (A.7) ───────────────────────────────────────────
+
+  - id: "A.7.1"
+    family: "Physical Controls"
+    title: "Physical security perimeters"
+    responsibility:
+      aws: "AWS data center physical security — ISO 27001 certified (see Artifact)"
+      customer: "Physical controls for on-premises components connecting to AWS"
+    assessment:
+      objectives:
+        - id: "A.7.1[a]"
+          description: "Physical security perimeters protect information processing facilities"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.7.4"
+    family: "Physical Controls"
+    title: "Physical security monitoring"
+    responsibility:
+      aws: "AWS data centers physically monitored (SOC 2, ISO 27001 evidence)"
+      customer: "Physical monitoring of on-premises components; Artifact reports as evidence"
+    assessment:
+      objectives:
+        - id: "A.7.4[a]"
+          description: "Physical security monitoring is implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  # ── Technological controls (A.8) — most map to AWS SCPs/Config ────────
+
+  - id: "A.8.2"
+    family: "Technological Controls"
+    title: "Privileged access rights"
+    responsibility:
+      aws: "IAM supports role-based privilege separation"
+      customer: "Restrict and monitor privileged accounts; deny root usage"
+    structural:
+      - id: "scp-deny-root-usage"
+        description: "Deny all actions by root user"
+        actions:
+          - "*"
+        conditions:
+          - "aws:PrincipalARN == arn:aws:iam::*:root"
+        effect: "Deny"
+      - id: "scp-deny-admin-star"
+        description: "Deny broad administrative actions outside designated admin roles"
+        actions:
+          - "iam:*"
+          - "organizations:*"
+          - "account:*"
+        conditions:
+          - "aws:PrincipalARN != arn:aws:iam::*:role/SREAdmin"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "A.8.2[a]"
+          description: "Privileged access rights are restricted and controlled"
+          auto_assessable: true
+          evidence_source: "scp"
+        - id: "A.8.2[b]"
+          description: "Privileged access rights are reviewed at regular intervals"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.8.3"
+    family: "Technological Controls"
+    title: "Information access restriction"
+    responsibility:
+      aws: "IAM resource-based policies, S3 bucket policies"
+      customer: "Implement least-privilege access controls"
+    assessment:
+      objectives:
+        - id: "A.8.3[a]"
+          description: "Access to information is restricted in accordance with access control policy"
+          auto_assessable: true
+          evidence_source: "cedar"
+
+  - id: "A.8.5"
+    family: "Technological Controls"
+    title: "Secure authentication"
+    responsibility:
+      aws: "IAM MFA, STS temporary credentials"
+      customer: "Enforce MFA; prohibit shared accounts"
+    structural:
+      - id: "scp-require-mfa"
+        description: "Deny all actions without MFA for human principals"
+        actions:
+          - "*"
+        conditions:
+          - "aws:MultiFactorAuthPresent != true"
+          - "aws:PrincipalType == IAMUser"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "A.8.5[a]"
+          description: "Secure authentication procedures are implemented"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "A.8.6"
+    family: "Technological Controls"
+    title: "Capacity management"
+    responsibility:
+      aws: "AWS auto-scaling, CloudWatch capacity monitoring"
+      customer: "Monitor capacity; set alarms for critical thresholds"
+    assessment:
+      objectives:
+        - id: "A.8.6[a]"
+          description: "Capacity requirements are monitored and planned"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.8.7"
+    family: "Technological Controls"
+    title: "Protection against malware"
+    responsibility:
+      aws: "GuardDuty malware protection, Inspector vulnerability scanning"
+      customer: "Enable GuardDuty; respond to malware findings"
+    monitoring:
+      - id: "config-guardduty-malware-iso"
+        resource_type: "AWS::GuardDuty::Detector"
+        check: "GuardDuty Malware Protection enabled"
+    assessment:
+      objectives:
+        - id: "A.8.7[a]"
+          description: "Protection against malware is implemented"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "A.8.9"
+    family: "Technological Controls"
+    title: "Configuration management"
+    responsibility:
+      aws: "AWS Config for configuration tracking"
+      customer: "Maintain secure baselines; detect configuration drift"
+    assessment:
+      objectives:
+        - id: "A.8.9[a]"
+          description: "Configurations are established, documented and maintained"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.8.12"
+    family: "Technological Controls"
+    title: "Data leakage prevention"
+    responsibility:
+      aws: "S3 Block Public Access, VPC endpoints, Macie"
+      customer: "Prevent unauthorized data export; tag and classify sensitive data"
+    structural:
+      - id: "scp-block-s3-public-access"
+        description: "Deny disabling S3 Block Public Access"
+        actions:
+          - "s3:PutAccountPublicAccessBlock"
+          - "s3:PutBucketPublicAccessBlock"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /admin/"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "A.8.12[a]"
+          description: "Data leakage prevention measures are applied"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "A.8.15"
+    family: "Technological Controls"
+    title: "Logging"
+    responsibility:
+      aws: "CloudTrail, CloudWatch Logs, VPC Flow Logs"
+      customer: "Enable multi-region CloudTrail; retain logs per policy"
+    structural:
+      - id: "scp-protect-cloudtrail"
+        description: "Deny disabling CloudTrail"
+        actions:
+          - "cloudtrail:DeleteTrail"
+          - "cloudtrail:StopLogging"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /admin/"
+        effect: "Deny"
+    monitoring:
+      - id: "config-cloudtrail-iso"
+        resource_type: "AWS::CloudTrail::Trail"
+        check: "Multi-region CloudTrail enabled with log validation"
+    assessment:
+      objectives:
+        - id: "A.8.15[a]"
+          description: "Logs recording user activities are produced"
+          auto_assessable: true
+          evidence_source: "config"
+        - id: "A.8.15[b]"
+          description: "Logs are protected against tampering and unauthorized access"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "A.8.16"
+    family: "Technological Controls"
+    title: "Monitoring activities"
+    responsibility:
+      aws: "GuardDuty, Security Hub, CloudWatch"
+      customer: "Monitor for suspicious activity; review Security Hub findings"
+    monitoring:
+      - id: "config-guardduty-active-iso"
+        resource_type: "AWS::GuardDuty::Detector"
+        check: "GuardDuty enabled and routing findings to Security Hub"
+    assessment:
+      objectives:
+        - id: "A.8.16[a]"
+          description: "Networks and systems are monitored to detect anomalous behavior"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "A.8.20"
+    family: "Technological Controls"
+    title: "Networks security"
+    responsibility:
+      aws: "VPC isolation, Security Groups, NACLs, Network Firewall"
+      customer: "Design secure VPC architecture; enforce TLS; deny public access"
+    structural:
+      - id: "scp-require-fips-endpoints"
+        description: "Deny API calls not using TLS"
+        actions:
+          - "*"
+        conditions:
+          - "aws:SecureTransport == false"
+        effect: "Deny"
+    monitoring:
+      - id: "config-sg-no-unrestricted-iso"
+        resource_type: "AWS::EC2::SecurityGroup"
+        check: "No security groups with inbound 0.0.0.0/0"
+    assessment:
+      objectives:
+        - id: "A.8.20[a]"
+          description: "Networks are managed and controlled to protect information"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "A.8.21"
+    family: "Technological Controls"
+    title: "Security of network services"
+    responsibility:
+      aws: "AWS managed network services (VPC, Direct Connect, PrivateLink)"
+      customer: "Secure network service configuration; endpoint policies"
+    assessment:
+      objectives:
+        - id: "A.8.21[a]"
+          description: "Security features of network services are identified and implemented"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.8.24"
+    family: "Technological Controls"
+    title: "Use of cryptography"
+    responsibility:
+      aws: "KMS FIPS 140-2 HSMs, S3 SSE, TLS on all endpoints"
+      customer: "Enable KMS encryption; enforce FIPS endpoints; key rotation"
+    structural:
+      - id: "scp-require-kms-encryption"
+        description: "Deny storage operations without KMS encryption"
+        actions:
+          - "s3:PutObject"
+          - "rds:CreateDBInstance"
+          - "ebs:CreateVolume"
+        conditions:
+          - "encryption != aws:kms"
+        effect: "Deny"
+    monitoring:
+      - id: "config-kms-rotation-iso"
+        resource_type: "AWS::KMS::Key"
+        check: "KMS CMK automatic rotation enabled"
+    assessment:
+      objectives:
+        - id: "A.8.24[a]"
+          description: "Rules for effective use of cryptography are defined and implemented"
+          auto_assessable: true
+          evidence_source: "scp"
+        - id: "A.8.24[b]"
+          description: "Cryptographic key management procedures are defined"
+          auto_assessable: true
+          evidence_source: "config"
+
+  - id: "A.8.25"
+    family: "Technological Controls"
+    title: "Secure development life cycle"
+    responsibility:
+      aws: "AWS CodeBuild, CodePipeline for secure CI/CD"
+      customer: "Integrate security testing in CI/CD; code signing for deployments"
+    assessment:
+      objectives:
+        - id: "A.8.25[a]"
+          description: "Rules for secure software development are established"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.8.27"
+    family: "Technological Controls"
+    title: "Secure system architecture and engineering principles"
+    responsibility:
+      aws: "AWS Well-Architected Framework security pillar"
+      customer: "Apply security by design; use SCPs as structural enforcement layer"
+    assessment:
+      objectives:
+        - id: "A.8.27[a]"
+          description: "Principles for engineering secure systems are established"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.8.28"
+    family: "Technological Controls"
+    title: "Secure coding"
+    responsibility:
+      aws: "AWS CodeGuru, Inspector for code vulnerability scanning"
+      customer: "Enforce secure coding standards; code review; SAST tooling"
+    assessment:
+      objectives:
+        - id: "A.8.28[a]"
+          description: "Secure coding principles are applied to software development"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.8.32"
+    family: "Technological Controls"
+    title: "Change management"
+    responsibility:
+      aws: "CloudTrail records all API changes; Config tracks resource changes"
+      customer: "Change management process; approval workflows for production changes"
+    assessment:
+      objectives:
+        - id: "A.8.32[a]"
+          description: "Changes to information systems follow a formal change management process"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.8.33"
+    family: "Technological Controls"
+    title: "Test information"
+    responsibility:
+      aws: "AWS separate account structure for test/prod isolation"
+      customer: "Use separate environments; no production data in test environments"
+    assessment:
+      objectives:
+        - id: "A.8.33[a]"
+          description: "Test information is selected, protected and managed appropriately"
+          auto_assessable: false
+          evidence_source: "manual"
+
+  - id: "A.8.34"
+    family: "Technological Controls"
+    title: "Protection of information systems during audit testing"
+    responsibility:
+      aws: "CloudTrail audit logs immutable; S3 Object Lock for evidence"
+      customer: "Protect audit systems; read-only audit access"
+    structural:
+      - id: "scp-protect-audit-logs"
+        description: "Deny deletion or modification of audit logs"
+        actions:
+          - "cloudtrail:DeleteTrail"
+          - "cloudtrail:StopLogging"
+          - "s3:DeleteBucket"
+        conditions:
+          - "aws:PrincipalOrgPaths does not contain /security/"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: "A.8.34[a]"
+          description: "Audit tests and activities involving live systems are planned"
+          auto_assessable: true
+          evidence_source: "scp"

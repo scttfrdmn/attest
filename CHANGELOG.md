@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-15
+
+### Added
+
+- `attest compile --scp-strategy merged` — intelligent SCP compilation:
+  deduplicates structural enforcement specs by condition fingerprint across
+  all active frameworks, unions action lists for specs sharing conditions, and
+  bin-packs statements into ≤4 SCP documents using compact JSON (no whitespace,
+  no Sids). NIST 800-171 R2 + HIPAA + ISO 27001 → 1 SCP, 2,780 chars, 13.6%
+  of the 20,480-char budget. Adding ISO 27001 to an org with NIST+HIPAA cost
+  zero additional chars — all conditions already deduplicated.
+  Filters specs with non-`aws:` condition keys (not supported by AWS Organizations).
+  Reports: "N specs → M unique conditions → K SCP documents, X% of budget used."
+- `attest preflight [--region]` — validates prerequisites before `attest apply`:
+  organization feature set (ALL), SCP policy type on root, SCP quota check
+  (current attached vs. compiled count), IAM access. Shows solution when quota
+  would be exceeded: "run 'attest compile --scp-strategy merged'."
+- `attest apply` quota warning: `DeployPlan.QuotaWarning` field; when compiled
+  SCP count would exceed the 5-per-target limit, a warning is printed before
+  prompting for approval.
+- `attest scan --verify [--region]` — direct AWS API spot-checks with $0 ongoing
+  cost (no Config required): CloudTrail multi-region trail status,
+  attest SCPs deployed to org, IAM password policy active.
+- ISO 27001:2022 framework (`frameworks/iso27001-2022/framework.yaml`) — 30
+  controls across Organizational (A.5), People (A.6), Physical (A.7), and
+  Technological (A.8) themes. Validates SCP deduplication: A.5.15 shares
+  scp-require-mfa with NIST 800-171 §3.1.1; A.8.24 shares encryption
+  conditions with §3.13.11; A.8.20 shares TLS enforcement.
+- `CompileStats` type in `internal/compiler/scp` with `InputSpecs`,
+  `UniqueConditions`, `TotalChars`, `BudgetUsed`, `SCPCount` fields.
+- `TotalBudget` exported constant (20,480 chars = 4 SCPs × 5,120 chars).
+- `DeployPlan.CurrentCount` — number of SCPs currently attached to target.
+- `deployer.countAttachedSCPs()` — queries total SCP count at a target.
+- CloudTrail SDK dependency (`github.com/aws/aws-sdk-go-v2/service/cloudtrail`).
+
+### Notes
+
+- SCP per-target limit is a **hard limit of 5** (AWS Organizations). Not
+  adjustable. `--scp-strategy merged` is the solution — produces ≤4 composite
+  SCPs fitting within the limit alongside the FullAWSAccess default policy.
+- The zero-cost architecture is now documented: attest scan uses direct API
+  calls (free), SCPs are free, Cedar runs as Lambda (~$0). No Config or
+  Security Hub required for compliance monitoring.
+
+### In provabl/ark (companion release)
+
+- `NewServiceWithIAM()` — training service with IAM client for attest tagging
+- `writeAttestTags()` — writes `attest:*` tags to researcher IAM roles on
+  training completion (cui-fundamentals → attest:cui-training=true, etc.)
+- `moduleTagMap` — maps Ark module IDs to attest:* tag keys
+- `extractRoleName()` — parses role name from IAM role ARN
+
 ## [0.6.0] - 2026-04-15
 
 ### Added

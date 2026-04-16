@@ -18,6 +18,8 @@ github.com/aws/aws-sdk-go-v2/service/artifact v1.15.5 h1:O0EfVyIAJEXEMk12e7Y6jKn
 github.com/aws/aws-sdk-go-v2/service/artifact v1.15.5/go.mod h1:/j5RjRuEyc60zYm+dyfIUWaYbBJoDoIXOcA509YMh2c=
 github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.4 h1:W6tKfa/s37faUnwJ71pGqsBO7/wfUX1L7tVprupQGo4=
 github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.4/go.mod h1:BZ+9thH0QOTDUwE8KAv/ZwUzsNC7CSMJXj/wtnZMs5k=
+github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.55.9 h1:ndjU1c3H1BYJy7fG0Y6Nh/sgD2M/KN+PZaqyCK/Fdfs=
+github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.55.9/go.mod h1:aH6yXmBYSr1k8uycfqxH5pv4T5N3x2cfFPvrlhyWjAU=
 github.com/aws/aws-sdk-go-v2/service/configservice v1.62.1 h1:0kqK/rGcsuDGDyLLBjLSH95zC3k8lIkW0nksCYEU72g=
 github.com/aws/aws-sdk-go-v2/service/configservice v1.62.1/go.mod h1:9dXB7G3BUakIT/aCgH8si8fCl//iWvR8wpkWuVKY22A=
 github.com/aws/aws-sdk-go-v2/service/iam v1.53.7 h1:n9YLiWtX3+6pTLZWvRJmtq5JIB9NA/KFelyCg5fOlTU=
