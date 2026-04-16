@@ -147,12 +147,21 @@ func (d *Deployer) Plan(ctx context.Context, scpDir string) (*DeployPlan, error)
 	return plan, nil
 }
 
+// ApplyResult summarizes what was deployed and what failed.
+type ApplyResult struct {
+	Deployed []string
+	Failed   []string // "id: reason"
+}
+
 // Apply executes a deployment plan, creating, updating, and attaching SCPs.
-func (d *Deployer) Apply(ctx context.Context, plan *DeployPlan, scpDir string, progressFn func(string)) error {
+// Continues on individual SCP failures — reports all failures at the end.
+func (d *Deployer) Apply(ctx context.Context, plan *DeployPlan, scpDir string, progressFn func(string)) (*ApplyResult, error) {
 	compiled, err := loadCompiledSCPs(scpDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
+
+	result := &ApplyResult{}
 
 	// Create new SCPs.
 	for _, scp := range plan.ToCreate {
@@ -165,7 +174,9 @@ func (d *Deployer) Apply(ctx context.Context, plan *DeployPlan, scpDir string, p
 			Type:        types.PolicyTypeServiceControlPolicy,
 		})
 		if err != nil {
-			return fmt.Errorf("creating SCP %s: %w", scp.AttestID, err)
+			progressFn(fmt.Sprintf("  ✗ Failed: %s (%v)", scp.AttestID, err))
+			result.Failed = append(result.Failed, fmt.Sprintf("%s: %v", scp.AttestID, err))
+			continue
 		}
 		policyID := aws.ToString(out.Policy.PolicySummary.Id)
 		progressFn(fmt.Sprintf("  Attaching SCP: %s → %s", scp.AttestID, plan.RootID))
@@ -173,8 +184,11 @@ func (d *Deployer) Apply(ctx context.Context, plan *DeployPlan, scpDir string, p
 			PolicyId: aws.String(policyID),
 			TargetId: aws.String(plan.RootID),
 		}); err != nil {
-			return fmt.Errorf("attaching SCP %s to root: %w", scp.AttestID, err)
+			progressFn(fmt.Sprintf("  ✗ Attach failed: %s (%v)", scp.AttestID, err))
+			result.Failed = append(result.Failed, fmt.Sprintf("%s (attach): %v", scp.AttestID, err))
+			continue
 		}
+		result.Deployed = append(result.Deployed, scp.AttestID)
 	}
 
 	// Update existing SCPs.
@@ -185,8 +199,10 @@ func (d *Deployer) Apply(ctx context.Context, plan *DeployPlan, scpDir string, p
 			PolicyId: aws.String(scp.OrgID),
 			Content:  aws.String(content),
 		}); err != nil {
-			return fmt.Errorf("updating SCP %s: %w", scp.AttestID, err)
+			result.Failed = append(result.Failed, fmt.Sprintf("%s (update): %v", scp.AttestID, err))
+			continue
 		}
+		result.Deployed = append(result.Deployed, scp.AttestID)
 	}
 
 	// Attach unattached SCPs.
@@ -196,11 +212,13 @@ func (d *Deployer) Apply(ctx context.Context, plan *DeployPlan, scpDir string, p
 			PolicyId: aws.String(scp.OrgID),
 			TargetId: aws.String(plan.RootID),
 		}); err != nil {
-			return fmt.Errorf("attaching SCP %s to root: %w", scp.AttestID, err)
+				result.Failed = append(result.Failed, fmt.Sprintf("%s (attach): %v", scp.AttestID, err))
+			continue
 		}
+		result.Deployed = append(result.Deployed, scp.AttestID)
 	}
 
-	return nil
+	return result, nil
 }
 
 // --- helpers ---

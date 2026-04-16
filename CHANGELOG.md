@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-15
+
+### Added
+
+- `attest frameworks add <id>` now actually writes to `.attest/sre.yaml`. Previously
+  a stub — now loads the framework, checks for duplicates, appends, and persists.
+- Multi-framework posture: `CrosswalkEntry.FrameworkID` field added to schema.
+  `buildCrosswalk()` now produces one entry per control per framework (enables
+  per-framework SSP generation). `Crosswalk.Frameworks []string` added alongside
+  the legacy `Framework string` field.
+- `attest generate ssp --framework <id>` generates an SSP for a specific active
+  framework. Without `--framework`, generates one SSP per active framework.
+  `filterCrosswalkByFramework()` helper for per-framework crosswalk filtering.
+- `attest apply --approve` deployed 26 SCPs to live org `o-pygqyjjoym` (root r-fr7j).
+  Discovered and fixed two real-world deployment issues:
+  - SCP `Sid` field must be alphanumeric — compiler now generates PascalCase Sids
+    (e.g., `scp-require-mfa` → `ScpRequireMfa`) and deduplicates them.
+  - AWS default quota: 5 SCPs per target. Attest compiles 26+; quota increase required.
+  `Apply()` now continues on individual SCP failures and reports all at end.
+- `attest ai ask <question>` — live Bedrock ConverseStream via Claude Haiku 4.5.
+  Grounded in compiled crosswalk and SRE state. Verified against real org.
+- `attest ai ingest <file>` — Claude Sonnet 4.6 maps document content to framework
+  controls with evidence citations. Creates draft attestation records for covered
+  controls. Tested against Meridian Research University IS Policy (28 controls found).
+- `attest ai onboard --mode greenfield|legacy|checkpoint` — Claude Sonnet 4.6
+  produces prioritized action plan. Greenfield mode identifies admin control gaps
+  blocking Cedar policy enforcement. Tested live.
+- `internal/ai/analyst.go` — Bedrock client, `selectModel()` routing, `Ask()`,
+  `IngestDocument()`, `Onboard()` with streaming via `ConverseStreamEventStream`.
+  Model IDs: Opus (`us.anthropic.claude-opus-4-6-v1`), Sonnet
+  (`us.anthropic.claude-sonnet-4-6`), Haiku (`us.anthropic.claude-haiku-4-5-20251001-v1:0`).
+- `docs/quickstart.md` — getting-started guide with prerequisites, step-by-step
+  pipeline, and quota notes.
+- `frameworks/CONTRIBUTING.md` — framework authoring guide with full schema reference,
+  condition string syntax table, and testing workflow.
+- SCP compiler: `sanitizeSid()` converts hyphenated IDs to PascalCase alphanumeric
+  (AWS SCP requirement). `mergeSpecs()` deduplicates Sids with index suffix.
+- Deploy: `ApplyResult` type; `Apply()` returns `(*ApplyResult, error)` — continues
+  on individual failures, reports all at end.
+
+### Fixed
+
+- `attest generate ssp` / `poam` / `assess` / `oscal` now use `loadGenerateContext()`
+  shared helper instead of duplicating SRE + crosswalk loading.
+- SCP compiler test `TestApplyError` updated for new `Apply()` signature.
+
+### Issues filed
+
+- #64 `attest preflight` — check AWS prerequisites and quotas before apply
+- #65 SCP merging — compile to ≤5 composite SCPs to fit default quota
+- #66 Step-by-step tutorials tied to Meridian Research University demo scenarios
+
 ## [0.5.0] - 2026-04-15
 
 ### Added

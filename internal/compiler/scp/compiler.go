@@ -124,10 +124,18 @@ func compileSpecs(key string, specs []schema.StructuralEnforcement, refs []Contr
 // mergeSpecs combines multiple structural enforcement specs into one IAM policy.
 func mergeSpecs(specs []schema.StructuralEnforcement) (*IAMPolicy, error) {
 	policy := &IAMPolicy{Version: "2012-10-17"}
+	seenSids := make(map[string]bool)
 
-	for _, spec := range specs {
+	for i, spec := range specs {
+		sid := sanitizeSid(spec.ID)
+		// Deduplicate Sids — append index suffix if already seen.
+		if seenSids[sid] {
+			sid = fmt.Sprintf("%s%02d", sid, i)
+		}
+		seenSids[sid] = true
+
 		stmt := Statement{
-			Sid:      spec.ID,
+			Sid:      sid,
 			Effect:   spec.Effect,
 			Action:   spec.Actions,
 			Resource: "*",
@@ -279,6 +287,31 @@ func parseCondition(s string) (*conditionEntry, error) {
 	}
 
 	return nil, fmt.Errorf("unrecognized condition format: %q", s)
+}
+
+// sanitizeSid converts an SCP ID to an AWS-valid Sid (alphanumeric only, max 100 chars).
+// "scp-require-mfa" → "ScpRequireMfa"
+func sanitizeSid(id string) string {
+	parts := strings.Split(id, "-")
+	var b strings.Builder
+	for _, p := range parts {
+		if len(p) > 0 {
+			b.WriteString(strings.ToUpper(p[:1]))
+			b.WriteString(p[1:])
+		}
+	}
+	result := b.String()
+	// Keep only alphanumeric characters.
+	var clean strings.Builder
+	for _, r := range result {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			clean.WriteRune(r)
+		}
+	}
+	if clean.Len() > 100 {
+		return clean.String()[:100]
+	}
+	return clean.String()
 }
 
 // sanitizeID replaces characters invalid in filenames with hyphens.

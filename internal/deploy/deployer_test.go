@@ -204,7 +204,7 @@ func TestApplyCreatesAndAttaches(t *testing.T) {
 		RootID:   "r-test",
 		ToCreate: []PlannedSCP{{AttestID: "attest-scp-require-mfa", Action: "create"}},
 	}
-	if err := d.Apply(context.Background(), plan, dir, func(s string) {}); err != nil {
+	if _, err := d.Apply(context.Background(), plan, dir, func(s string) {}); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	if mock.createCount != 1 {
@@ -310,7 +310,8 @@ func TestApplyError(t *testing.T) {
 		RootID:   "r-test",
 		ToCreate: []PlannedSCP{{AttestID: "attest-scp-x"}},
 	}
-	if err := d.Apply(context.Background(), plan, dir, func(s string) {}); err == nil {
-		t.Error("expected error when create fails")
+	result, _ := d.Apply(context.Background(), plan, dir, func(s string) {})
+	if result == nil || len(result.Failed) == 0 {
+		t.Error("expected failed result when create fails")
 	}
 }

@@ -171,15 +171,17 @@ type AssessmentObjective struct {
 // Crosswalk is the auditable mapping from framework controls to deployed
 // policy artifacts. This is the core output of `attest compile`.
 type Crosswalk struct {
-	SRE        string          `yaml:"sre" json:"sre"`
-	Framework  string          `yaml:"framework" json:"framework"`
-	GeneratedAt time.Time      `yaml:"generated_at" json:"generated_at"`
-	Entries    []CrosswalkEntry `yaml:"entries" json:"entries"`
+	SRE         string           `yaml:"sre" json:"sre"`
+	Framework   string           `yaml:"framework" json:"framework"`     // kept for backward compatibility
+	Frameworks  []string         `yaml:"frameworks,omitempty" json:"frameworks,omitempty"` // all active frameworks
+	GeneratedAt time.Time        `yaml:"generated_at" json:"generated_at"`
+	Entries     []CrosswalkEntry `yaml:"entries" json:"entries"`
 }
 
 // CrosswalkEntry maps one control to its enforcement artifacts.
 type CrosswalkEntry struct {
 	ControlID       string   `yaml:"control_id" json:"control_id"`
+	FrameworkID     string   `yaml:"framework_id,omitempty" json:"framework_id,omitempty"` // which framework this control belongs to
 	SCPs            []string `yaml:"scps,omitempty" json:"scps,omitempty"`
 	CedarPolicies   []string `yaml:"cedar_policies,omitempty" json:"cedar_policies,omitempty"`
 	ConfigRules     []string `yaml:"config_rules,omitempty" json:"config_rules,omitempty"`

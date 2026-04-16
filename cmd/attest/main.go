@@ -13,6 +13,7 @@ import (
 
 	cedar "github.com/cedar-policy/cedar-go"
 
+	"github.com/provabl/attest/internal/ai"
 	"github.com/provabl/attest/internal/artifact"
 	"github.com/provabl/attest/internal/attestation"
 	compilerce "github.com/provabl/attest/internal/compiler/cedar"
@@ -452,22 +453,67 @@ func frameworksCmd() *cobra.Command {
 				return nil
 			},
 		},
-		&cobra.Command{
-			Use:   "add [framework-id]",
-			Short: "Activate a framework for this SRE",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Printf("Activating framework: %s\n", args[0])
-				fmt.Println("  Loading framework definition...")
-				fmt.Println("  Validating Artifact agreement requirements...")
-				fmt.Println("  Computing control overlap with existing frameworks...")
-				fmt.Printf("  Framework %s activated. Run 'attest compile' to generate policies.\n", args[0])
-				return nil
-			},
-		},
+		frameworkAddCmd(),
 	)
 	return cmd
 }
+
+func frameworkAddCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "add [framework-id]",
+		Short: "Activate a framework for this SRE",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fwID := args[0]
+			fwDir, _ := cmd.Flags().GetString("frameworks")
+
+				// Verify framework exists.
+				loader := framework.NewLoader(fwDir)
+				fw, err := loader.Load(fwID)
+				if err != nil {
+					return fmt.Errorf("framework %q not found in %s: %w", fwID, fwDir, err)
+				}
+
+				// Load SRE config.
+				sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml"))
+				if err != nil {
+					return fmt.Errorf("reading .attest/sre.yaml: %w (run 'attest init' first)", err)
+				}
+				var sre schema.SRE
+				if err := yaml.Unmarshal(sreData, &sre); err != nil {
+					return fmt.Errorf("parsing sre.yaml: %w", err)
+				}
+
+				// Check for duplicate.
+				for _, ref := range sre.Frameworks {
+					if ref.ID == fwID {
+						fmt.Printf("Framework %s is already active.\n", fwID)
+						return nil
+					}
+				}
+
+				// Append and save.
+				sre.Frameworks = append(sre.Frameworks, schema.FrameworkRef{
+					ID:      fwID,
+					Version: fw.Version,
+				})
+				out, err := yaml.Marshal(sre)
+				if err != nil {
+					return err
+				}
+				if err := os.WriteFile(filepath.Join(".attest", "sre.yaml"), out, 0644); err != nil {
+					return fmt.Errorf("writing sre.yaml: %w", err)
+				}
+
+				fmt.Printf("Framework activated: %s v%s (%d controls)\n", fw.Name, fw.Version, len(fw.Controls))
+				fmt.Println("Run 'attest compile' to generate policy artifacts.")
+				return nil
+			},
+	}
+	cmd.Flags().String("frameworks", "frameworks", "Path to frameworks directory")
+	return cmd
+}
+
 
 func compileCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -611,16 +657,14 @@ func buildCrosswalk(sre *schema.SRE, frameworks []*schema.Framework, scps []comp
 		SRE:         sre.OrgID,
 		GeneratedAt: time.Now(),
 	}
-	if len(frameworks) > 0 {
-		crosswalk.Framework = frameworks[0].ID
-		if len(frameworks) > 1 {
-			names := make([]string, len(frameworks))
-			for i, fw := range frameworks {
-				names[i] = fw.ID
-			}
-			crosswalk.Framework = strings.Join(names, "+")
-		}
+
+	// Populate both Framework (legacy) and Frameworks (new list).
+	fwIDs := make([]string, len(frameworks))
+	for i, fw := range frameworks {
+		fwIDs[i] = fw.ID
 	}
+	crosswalk.Frameworks = fwIDs
+	crosswalk.Framework = strings.Join(fwIDs, "+") // backward compat
 
 	// Index SCPs and Cedar policies by control ref.
 	scpsByControl := make(map[string][]string)
@@ -636,19 +680,15 @@ func buildCrosswalk(sre *schema.SRE, frameworks []*schema.Framework, scps []comp
 		}
 	}
 
-	// Build an entry for every control across all frameworks.
-	seen := make(map[string]bool)
+	// Build one entry per control per framework (enables per-framework SSP generation).
 	for _, fw := range frameworks {
 		for _, ctrl := range fw.Controls {
-			if seen[ctrl.ID] {
-				continue
+			entry := schema.CrosswalkEntry{
+				ControlID:   ctrl.ID,
+				FrameworkID: fw.ID,
+				SCPs:        scpsByControl[ctrl.ID],
+				CedarPolicies: cedarByControl[ctrl.ID],
 			}
-			seen[ctrl.ID] = true
-
-			entry := schema.CrosswalkEntry{ControlID: ctrl.ID}
-			entry.SCPs = scpsByControl[ctrl.ID]
-			entry.CedarPolicies = cedarByControl[ctrl.ID]
-
 			switch {
 			case len(entry.SCPs) > 0 && len(entry.CedarPolicies) > 0:
 				entry.Status = "enforced"
@@ -659,7 +699,6 @@ func buildCrosswalk(sre *schema.SRE, frameworks []*schema.Framework, scps []comp
 			default:
 				entry.Status = "gap"
 			}
-
 			crosswalk.Entries = append(crosswalk.Entries, entry)
 		}
 	}
@@ -711,17 +750,24 @@ Use --approve to skip interactive confirmation.`,
 			}
 
 			fmt.Println("Applying...")
-			if err := deployer.Apply(ctx, plan, scpDir, func(msg string) {
+			result, err := deployer.Apply(ctx, plan, scpDir, func(msg string) {
 				fmt.Println(msg)
-			}); err != nil {
+			})
+			if err != nil {
 				return fmt.Errorf("applying: %w", err)
 			}
 			st, _ := store.NewStore(".attest")
 			_ = st.Commit(fmt.Sprintf("apply: deployed %d SCP(s) to %s",
-				len(plan.ToCreate)+len(plan.ToUpdate)+len(plan.ToAttach), plan.RootID))
+				len(result.Deployed), plan.RootID))
 
-			fmt.Printf("\nDeployed %d SCP(s) to %s.\nRun 'attest scan' to verify posture.\n",
-				len(plan.ToCreate)+len(plan.ToUpdate)+len(plan.ToAttach), plan.RootID)
+			fmt.Printf("\nDeployed %d SCP(s) to %s.\n", len(result.Deployed), plan.RootID)
+			if len(result.Failed) > 0 {
+				fmt.Printf("  ✗ %d SCP(s) failed (invalid condition keys — fix framework YAML):\n", len(result.Failed))
+				for _, f := range result.Failed {
+					fmt.Printf("    - %s\n", f)
+				}
+			}
+			fmt.Println("Run 'attest scan' to verify posture.")
 			return nil
 		},
 	}
@@ -845,13 +891,18 @@ func generateSSPCmd() *cobra.Command {
 		Short: "Generate System Security Plan",
 		Long: `Generates an SSP from the compiled crosswalk. Every fact in the SSP is
 derived from the crosswalk manifest — no hand-written content.
-Run 'attest compile' first.`,
+Run 'attest compile' first.
+
+Use --framework to generate an SSP for a specific active framework.
+Without --framework, generates one SSP for each active framework.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fwDir, _ := cmd.Flags().GetString("frameworks")
-			return runGenerate(fwDir, "ssp")
+			fwFilter, _ := cmd.Flags().GetString("framework")
+			return runGenerateSSP(fwDir, fwFilter)
 		},
 	}
 	cmd.Flags().String("frameworks", "frameworks", "Path to frameworks directory")
+	cmd.Flags().String("framework", "", "Generate SSP for a specific framework ID only")
 	return cmd
 }
 
@@ -891,53 +942,122 @@ func generateOSCALCmd() *cobra.Command {
 }
 
 // runGenerate is the shared document generation logic.
-func runGenerate(fwDir, docType string) error {
-	// Load SRE config.
+// loadGenerateContext loads the SRE config and compiled crosswalk, returning
+// the SRE model, crosswalk, and framework IDs active in the crosswalk.
+func loadGenerateContext() (*schema.SRE, *schema.Crosswalk, error) {
 	sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml"))
 	if err != nil {
-		return fmt.Errorf("reading .attest/sre.yaml: %w (run 'attest init' first)", err)
+		return nil, nil, fmt.Errorf("reading .attest/sre.yaml: %w (run 'attest init' first)", err)
 	}
 	var sre schema.SRE
 	if err := yaml.Unmarshal(sreData, &sre); err != nil {
-		return fmt.Errorf("parsing sre.yaml: %w", err)
+		return nil, nil, fmt.Errorf("parsing sre.yaml: %w", err)
 	}
-
-	// Load crosswalk.
 	cwData, err := os.ReadFile(filepath.Join(".attest", "compiled", "crosswalk.yaml"))
 	if err != nil {
-		return fmt.Errorf("reading crosswalk: %w (run 'attest compile' first)", err)
+		return nil, nil, fmt.Errorf("reading crosswalk: %w (run 'attest compile' first)", err)
 	}
 	var crosswalk schema.Crosswalk
 	if err := yaml.Unmarshal(cwData, &crosswalk); err != nil {
-		return fmt.Errorf("parsing crosswalk: %w", err)
+		return nil, nil, fmt.Errorf("parsing crosswalk: %w", err)
+	}
+	return &sre, &crosswalk, nil
+}
+
+// runGenerateSSP generates SSP(s). If fwFilter is set, generates only for that framework.
+// Otherwise generates one SSP per active framework in the crosswalk.
+func runGenerateSSP(fwDir, fwFilter string) error {
+	sre, crosswalk, err := loadGenerateContext()
+	if err != nil {
+		return err
+	}
+	docsDir := filepath.Join(".attest", "documents")
+	if err := os.MkdirAll(docsDir, 0750); err != nil {
+		return err
+	}
+	loader := framework.NewLoader(fwDir)
+
+	// Determine which frameworks to generate SSPs for.
+	fwIDs := crosswalk.Frameworks
+	if len(fwIDs) == 0 {
+		// Backward compat: parse from composite Framework string.
+		fwIDs = strings.Split(crosswalk.Framework, "+")
+	}
+	if fwFilter != "" {
+		fwIDs = []string{fwFilter}
 	}
 
-	// Determine framework from crosswalk.
-	fwID := strings.SplitN(crosswalk.Framework, "+", 2)[0]
+	for _, fwID := range fwIDs {
+		fw, err := loader.Load(fwID)
+		if err != nil {
+			fmt.Printf("  Warning: could not load framework %s: %v\n", fwID, err)
+			continue
+		}
+		// Filter crosswalk entries to this framework only.
+		filtered := filterCrosswalkByFramework(crosswalk, fwID)
+		if err := generateSSP(sre, fw, filtered, docsDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// filterCrosswalkByFramework returns a crosswalk containing only entries for fwID.
+// Falls back to all entries if none have FrameworkID set (old crosswalk format).
+func filterCrosswalkByFramework(cw *schema.Crosswalk, fwID string) *schema.Crosswalk {
+	filtered := &schema.Crosswalk{
+		SRE:         cw.SRE,
+		Framework:   fwID,
+		Frameworks:  []string{fwID},
+		GeneratedAt: cw.GeneratedAt,
+	}
+	for _, e := range cw.Entries {
+		if e.FrameworkID == "" || e.FrameworkID == fwID {
+			filtered.Entries = append(filtered.Entries, e)
+		}
+	}
+	// If no entries matched (old format without FrameworkID), use all.
+	if len(filtered.Entries) == 0 {
+		filtered.Entries = cw.Entries
+	}
+	return filtered
+}
+
+func runGenerate(fwDir, docType string) error {
+	sre, crosswalk, err := loadGenerateContext()
+	if err != nil {
+		return err
+	}
+
+	// Determine framework from crosswalk (use first for non-SSP docs).
+	fwIDs := crosswalk.Frameworks
+	if len(fwIDs) == 0 {
+		fwIDs = strings.Split(crosswalk.Framework, "+")
+	}
+	fwID := fwIDs[0]
+
 	loader := framework.NewLoader(fwDir)
 	fw, err := loader.Load(fwID)
 	if err != nil {
 		return fmt.Errorf("loading framework %s: %w", fwID, err)
 	}
 
-	// Ensure output directory exists.
 	docsDir := filepath.Join(".attest", "documents")
 	if err := os.MkdirAll(docsDir, 0750); err != nil {
 		return err
 	}
 
 	switch docType {
-	case "ssp":
-		return generateSSP(&sre, fw, &crosswalk, docsDir)
 	case "poam":
-		return generatePOAM(&sre, fw, &crosswalk, docsDir)
+		return generatePOAM(sre, fw, crosswalk, docsDir)
 	case "assess":
-		return generateAssessment(&sre, fw, &crosswalk, docsDir)
+		return generateAssessment(sre, fw, crosswalk, docsDir)
 	case "oscal":
-		if err := generateSSP(&sre, fw, &crosswalk, docsDir); err != nil {
+		filtered := filterCrosswalkByFramework(crosswalk, fwID)
+		if err := generateSSP(sre, fw, filtered, docsDir); err != nil {
 			return err
 		}
-		return generateOSCAL(&sre, fw, &crosswalk, docsDir)
+		return generateOSCAL(sre, fw, filtered, docsDir)
 	}
 	return nil
 }
@@ -1731,64 +1851,220 @@ func aiCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ai",
 		Short: "AI-powered compliance capabilities (Bedrock + Claude)",
-		Long: `AI capabilities grounded in system truth. The AI never generates
-compliance facts — it reasons over facts the deterministic system has
-already validated. Every claim cites a specific artifact.`,
+		Long: `AI capabilities grounded in system truth. The AI reasons over facts
+the deterministic system has validated. Every claim cites a specific artifact.
+
+Requires AWS credentials with Bedrock access (us-east-1 or us-west-2).
+Optional: ATTEST_GUARDRAIL_ARN env var for Bedrock Guardrail enforcement.`,
 	}
-	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "ask [question]",
-			Short: "Ask the compliance analyst a question",
-			Args:  cobra.MinimumNArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Println("Querying compliance state...")
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "audit-sim",
-			Short: "Simulate a compliance assessment",
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Println("Running audit simulation...")
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "translate [natural-language]",
-			Short: "Translate natural language to a Cedar policy",
-			Args:  cobra.MinimumNArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Println("Translating to Cedar policy...")
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "analyze",
-			Short: "Detect anomalies in Cedar decision log",
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Println("Analyzing decision log...")
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "impact [framework-path]",
-			Short: "Analyze framework change impact",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Printf("Analyzing framework change: %s\n", args[0])
-				return nil
-			},
-		},
-		&cobra.Command{
-			Use:   "remediate [control-id]",
-			Short: "Generate remediation artifacts for a control gap",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				fmt.Printf("Generating remediation for %s...\n", args[0])
-				return nil
-			},
-		},
+
+	cmd.AddCommand(aiAskCmd(), aiIngestCmd(), aiOnboardCmd(),
+		// Remaining capabilities — stubs for v0.7.0 (tool use / Opus agent)
+		aiStubCmd("audit-sim", "Simulate a compliance assessor evaluation (v0.7.0)"),
+		aiStubCmd("translate", "Translate natural language to a Cedar policy (v0.7.0)"),
+		aiStubCmd("analyze", "Detect anomalies in Cedar decision log (v0.7.0)"),
+		aiStubCmd("impact", "Analyze framework change impact from a PDF (v0.7.0)"),
+		aiStubCmd("remediate", "Generate remediation artifacts for a control gap (v0.7.0)"),
 	)
+	return cmd
+}
+
+func aiStubCmd(use, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Printf("%s — coming in v0.7.0 (requires Opus agent with tool use)\n", use)
+			return nil
+		},
+	}
+}
+
+func aiAskCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "ask [question]",
+		Short: "Ask the compliance analyst a question",
+		Long: `Answers questions about your compliance posture grounded in the compiled
+crosswalk and SRE state. No hallucination — every claim cites an artifact.
+
+Examples:
+  attest ai ask "What is my CMMC posture?"
+  attest ai ask "Which controls are gaps?"
+  attest ai ask "Am I HIPAA compliant?"`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			region, _ := cmd.Flags().GetString("region")
+
+			analyst, err := ai.NewAnalyst(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to Bedrock: %w", err)
+			}
+
+			question := strings.Join(args, " ")
+			fmt.Printf("Asking: %s\n\n", question)
+
+			answer, err := analyst.Ask(ctx, question)
+			if err != nil {
+				return fmt.Errorf("AI query failed: %w\nEnsure Bedrock access is enabled in region %s", err, region)
+			}
+			fmt.Println(answer)
+			return nil
+		},
+	}
+	cmd.Flags().String("region", "us-east-1", "AWS region for Bedrock")
+	return cmd
+}
+
+func aiIngestCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "ingest <file>",
+		Short: "Map an existing document to framework controls",
+		Long: `Reads a compliance document (policy, procedure, training record, etc.)
+and identifies which framework controls it satisfies. Creates draft attestation
+records for covered controls.
+
+Example:
+  attest ai ingest existing-policies/information-security-policy.md
+  attest ai ingest --dir existing-policies/   # ingest all docs in directory`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			region, _ := cmd.Flags().GetString("region")
+			dir, _ := cmd.Flags().GetString("dir")
+
+			// Load active frameworks.
+			sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml"))
+			if err != nil {
+				return fmt.Errorf("reading .attest/sre.yaml: %w", err)
+			}
+			var sre schema.SRE
+			if err := yaml.Unmarshal(sreData, &sre); err != nil {
+				return err
+			}
+			var fwIDs []string
+			for _, f := range sre.Frameworks {
+				fwIDs = append(fwIDs, f.ID)
+			}
+			if len(fwIDs) == 0 {
+				return fmt.Errorf("no active frameworks — run 'attest frameworks add' first")
+			}
+
+			analyst, err := ai.NewAnalyst(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to Bedrock: %w", err)
+			}
+
+			// Collect files to ingest.
+			var files []string
+			if dir != "" {
+				entries, err := os.ReadDir(dir)
+				if err != nil {
+					return fmt.Errorf("reading %s: %w", dir, err)
+				}
+				for _, e := range entries {
+					if !e.IsDir() {
+						files = append(files, filepath.Join(dir, e.Name()))
+					}
+				}
+			} else if len(args) > 0 {
+				files = args
+			} else {
+				return fmt.Errorf("specify a file or --dir")
+			}
+
+			totalCovered, totalDrafts := 0, 0
+			for _, f := range files {
+				fmt.Printf("\nAnalyzing: %s\n", filepath.Base(f))
+				findings, err := analyst.IngestDocument(ctx, f, fwIDs)
+				if err != nil {
+					fmt.Printf("  Warning: %v\n", err)
+					continue
+				}
+
+				fmt.Printf("  %-12s %-12s %s\n", "Control", "Status", "Evidence")
+				fmt.Printf("  %s\n", strings.Repeat("─", 60))
+				for _, finding := range findings {
+					status := finding.Status
+					evid := finding.Evidence
+					if len(evid) > 50 {
+						evid = evid[:47] + "..."
+					}
+					fmt.Printf("  %-12s %-12s %s\n", finding.ControlID, status, evid)
+					if finding.Status == "covered" {
+						totalCovered++
+					}
+					if finding.DraftAtt != nil {
+						// Write draft attestation.
+						draftDir := filepath.Join(".attest", "attestations", "drafts")
+						_ = os.MkdirAll(draftDir, 0750)
+						data, _ := yaml.Marshal(finding.DraftAtt)
+						_ = os.WriteFile(filepath.Join(draftDir, finding.DraftAtt.ID+".yaml"), data, 0644)
+						totalDrafts++
+					}
+				}
+			}
+
+			fmt.Printf("\n%d controls covered | %d attestation drafts created in .attest/attestations/drafts/\n", totalCovered, totalDrafts)
+			if totalDrafts > 0 {
+				fmt.Println("Review drafts, then: attest attest create --control <id> --affirmed-by <name> --expires <date>")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().String("region", "us-east-1", "AWS region for Bedrock")
+	cmd.Flags().String("dir", "", "Ingest all documents in a directory")
+	return cmd
+}
+
+func aiOnboardCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "onboard",
+		Short: "Guided compliance onboarding for greenfield or legacy orgs",
+		Long: `Produces a prioritized action plan based on current posture.
+
+Modes:
+  --mode greenfield   Starting from scratch — prioritizes admin controls whose
+                      Cedar policies have unmet dependencies
+  --mode legacy       You have existing docs — analyzes what you have and identifies gaps
+  --mode checkpoint   Ongoing — reviews expiring attestations and upcoming obligations`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			region, _ := cmd.Flags().GetString("region")
+			modeStr, _ := cmd.Flags().GetString("mode")
+			docsDir, _ := cmd.Flags().GetString("docs")
+
+			analyst, err := ai.NewAnalyst(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to Bedrock: %w", err)
+			}
+
+			mode := ai.OnboardMode(modeStr)
+			fmt.Printf("Running %s onboarding analysis...\n\n", mode)
+
+			plan, err := analyst.Onboard(ctx, mode, docsDir)
+			if err != nil {
+				return fmt.Errorf("onboarding analysis failed: %w", err)
+			}
+
+			fmt.Println(plan.Summary)
+			if len(plan.PriorityItems) > 0 {
+				fmt.Printf("\nPriority actions:\n")
+				for i, item := range plan.PriorityItems {
+					fmt.Printf("\n%d. [%s] %s — %s\n", i+1, item.Priority, item.ControlID, item.Title)
+					if item.Reason != "" {
+						fmt.Printf("   Why: %s\n", item.Reason)
+					}
+					if item.NextStep != "" {
+						fmt.Printf("   Next: %s\n", item.NextStep)
+					}
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().String("region", "us-east-1", "AWS region for Bedrock")
+	cmd.Flags().String("mode", "greenfield", "Onboarding mode: greenfield, legacy, checkpoint")
+	cmd.Flags().String("docs", "", "Path to existing policies directory (for legacy mode)")
 	return cmd
 }
 
