@@ -26,10 +26,20 @@ Before you start, you need:
 
 ### AWS quota note
 
-AWS limits SCPs to **5 per target** (root, OU, or account) by default. Attest compiles
-26 SCPs for NIST 800-171 alone. Before running `attest apply` in production, request a
-quota increase via AWS Support (target: 20-50 per target). Run `attest preflight` to
-check your quota before applying.
+AWS limits SCPs to **5 per target** (root, OU, or account). This limit is a hard limit —
+it cannot be increased. Attest handles this with its intelligent compiler:
+
+```bash
+# Individual strategy (default) — one SCP per control spec; useful for inspection
+attest compile
+
+# Merged strategy — deduplicates conditions across all frameworks, bin-packs into ≤4 SCPs
+attest compile --scp-strategy merged
+```
+
+For production deployment, **always use `--scp-strategy merged`**. NIST 800-171 +
+HIPAA + ISO 27001 combined produce a single composite SCP at ~14% of the 20,480 char
+budget. Run `attest preflight` to verify quota and permissions before applying.
 
 ---
 
@@ -105,13 +115,14 @@ attest init --classification-scheme uc-protection-levels
 
 ## Step 3 — Compile
 
-Generate the SCP JSON, Cedar policies, and crosswalk manifest:
+Generate SCP JSON, Cedar policies, and crosswalk manifest.
+
+For inspection (one SCP per control spec):
 
 ```bash
 attest compile
 ```
 
-Output:
 ```
 Compiled artifacts written to .attest/compiled
   26 SCP(s)
@@ -119,9 +130,24 @@ Compiled artifacts written to .attest/compiled
   Crosswalk: .attest/compiled/crosswalk.yaml
 ```
 
+For production deployment (deduplicates across frameworks, fits within the 5-SCP limit):
+
+```bash
+attest compile --scp-strategy merged
+```
+
+```
+  26 structural specs → 15 unique condition groups → 1 SCP document
+  SCP budget: 2,780 / 20,480 chars used (13.6%)
+Compiled artifacts written to .attest/compiled
+  1 SCP(s) (merged)
+  7 Cedar policy/policies + schema
+  Crosswalk: .attest/compiled/crosswalk.yaml
+```
+
 Inspect what was generated:
 ```bash
-ls .attest/compiled/scps/       # 26 SCP JSON files
+ls .attest/compiled/scps/       # 1–4 composite SCP JSON files (merged strategy)
 cat .attest/compiled/crosswalk.yaml | head -20
 ```
 
@@ -151,6 +177,12 @@ Preview what will happen:
 AWS_PROFILE=your-profile attest apply --dry-run --region us-east-1
 ```
 
+Before deploying, create a manual checkpoint (recommended until v0.8.0):
+
+```bash
+git -C .attest tag -a "before-apply-$(date +%Y%m%d)" -m "Pre-apply checkpoint"
+```
+
 Deploy to your organization:
 
 ```bash
@@ -158,6 +190,13 @@ AWS_PROFILE=your-profile attest apply --approve --region us-east-1
 ```
 
 This creates and attaches SCPs to the org root. Every account inherits them immediately.
+
+> **State and rollback**: `attest apply` records the deployed artifact state in
+> `.attest/.git` but does not yet auto-tag each deployment. There is no `attest rollback`
+> command in v0.7.x. To undo a deployment, detach and delete the attest SCPs manually
+> via the AWS CLI or console. See [Rollback and State Management](operations/rollback.md)
+> for step-by-step instructions. Automatic checkpointing (#69) and `attest rollback`
+> (#70) are planned for v0.8.0.
 
 ---
 
@@ -243,6 +282,7 @@ The `demo/` directory contains a realistic walkthrough for Meridian Research Uni
 
 ## Next steps
 
+- [Rollback and State Management](operations/rollback.md) — how to undo an apply today; v0.8.0 roadmap
 - [Framework authoring guide](../frameworks/CONTRIBUTING.md) — contribute a new framework
-- [Architecture docs](../docs/architecture/) — multi-framework, principal attributes, ITAR
+- [Architecture docs](architecture/) — multi-framework, principal attributes, ITAR
 - [GitHub Issues](https://github.com/provabl/attest/issues) — report bugs, request features

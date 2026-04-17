@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docs/operations/rollback.md` — documents current rollback approach: manual
+  checkpoint creation via `git -C .attest tag`, step-by-step SCP detach/delete
+  via AWS CLI, re-applying a previous compiled state from a checkpoint, Terraform
+  destroy path. Notes v0.8.0 roadmap items: auto-tagging (#69) and `attest rollback`
+  command (#70).
+
+### Changed
+
+- `docs/quickstart.md` — corrects SCP quota section (5-per-target is a hard limit,
+  not a default; solution is `--scp-strategy merged`). Adds pre-apply checkpoint
+  reminder, rollback caveat in Step 5, merged-strategy compile example with budget
+  output, and link to `docs/operations/rollback.md`.
+
 ## [0.7.0] - 2026-04-15
 
 ### Added
