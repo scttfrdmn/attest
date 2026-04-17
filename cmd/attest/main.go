@@ -41,7 +41,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.8.0"
+var version = "0.8.1"
 
 func main() {
 	root := &cobra.Command{
@@ -167,7 +167,7 @@ to activate compliance frameworks and 'attest compile' to generate policies.`,
 			if err != nil {
 				return fmt.Errorf("marshaling SRE config: %w", err)
 			}
-			if err := os.WriteFile(filepath.Join(".attest", "sre.yaml"), out, 0644); err != nil {
+			if err := os.WriteFile(filepath.Join(".attest", "sre.yaml"), out, 0640); err != nil {
 				return fmt.Errorf("writing sre.yaml: %w", err)
 			}
 
@@ -365,7 +365,7 @@ posture is derived from the compiled crosswalk (run 'attest compile' first).`,
 				snapshot := schema.PostureSnapshot{Timestamp: posture.ComputedAt, Posture: *posture}
 				if data, err := yaml.Marshal(snapshot); err == nil {
 					fname := fmt.Sprintf("posture-%s.yaml", posture.ComputedAt.Format("2006-01-02T150405"))
-					_ = os.WriteFile(filepath.Join(".attest", "history", fname), data, 0644)
+					_ = os.WriteFile(filepath.Join(".attest", "history", fname), data, 0640)
 				}
 			}
 
@@ -586,7 +586,7 @@ func frameworkAddCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if err := os.WriteFile(filepath.Join(".attest", "sre.yaml"), out, 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(".attest", "sre.yaml"), out, 0640); err != nil {
 					return fmt.Errorf("writing sre.yaml: %w", err)
 				}
 
@@ -712,19 +712,19 @@ the raw policy artifacts (coming in v0.5.0).`,
 
 			for _, s := range scps {
 				path := filepath.Join(scpsDir, s.ID+".json")
-				if err := os.WriteFile(path, []byte(s.PolicyJSON), 0644); err != nil {
+				if err := os.WriteFile(path, []byte(s.PolicyJSON), 0640); err != nil {
 					return fmt.Errorf("writing SCP %s: %w", s.ID, err)
 				}
 			}
 
 			for _, p := range cedarPolicies {
 				path := filepath.Join(compiledDir, "cedar", p.ID+".cedar")
-				if err := os.WriteFile(path, []byte(p.PolicyText), 0644); err != nil {
+				if err := os.WriteFile(path, []byte(p.PolicyText), 0640); err != nil {
 					return fmt.Errorf("writing Cedar policy %s: %w", p.ID, err)
 				}
 			}
 
-			if err := os.WriteFile(filepath.Join(compiledDir, "cedar", "schema.cedarschema"), []byte(cedarSchema), 0644); err != nil {
+			if err := os.WriteFile(filepath.Join(compiledDir, "cedar", "schema.cedarschema"), []byte(cedarSchema), 0640); err != nil {
 				return fmt.Errorf("writing Cedar schema: %w", err)
 			}
 
@@ -732,7 +732,7 @@ the raw policy artifacts (coming in v0.5.0).`,
 			if err != nil {
 				return err
 			}
-			if err := os.WriteFile(filepath.Join(compiledDir, "crosswalk.yaml"), crosswalkBytes, 0644); err != nil {
+			if err := os.WriteFile(filepath.Join(compiledDir, "crosswalk.yaml"), crosswalkBytes, 0640); err != nil {
 				return fmt.Errorf("writing crosswalk: %w", err)
 			}
 
@@ -1423,7 +1423,7 @@ func generateSSP(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Crossw
 		return fmt.Errorf("rendering SSP: %w", err)
 	}
 	mdPath := filepath.Join(docsDir, "ssp-"+fw.ID+".md")
-	if err := os.WriteFile(mdPath, []byte(md), 0644); err != nil {
+	if err := os.WriteFile(mdPath, []byte(md), 0640); err != nil {
 		return err
 	}
 	fmt.Printf("  SSP written to %s\n", mdPath)
@@ -1439,7 +1439,7 @@ func generatePOAM(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Cross
 		return fmt.Errorf("generating POA&M: %w", err)
 	}
 	mdPath := filepath.Join(docsDir, "poam.md")
-	if err := os.WriteFile(mdPath, []byte(doc.Render()), 0644); err != nil {
+	if err := os.WriteFile(mdPath, []byte(doc.Render()), 0640); err != nil {
 		return err
 	}
 	fmt.Printf("  POA&M written to %s\n", mdPath)
@@ -1455,7 +1455,7 @@ func generateAssessment(sre *schema.SRE, fw *schema.Framework, crosswalk *schema
 		return fmt.Errorf("generating assessment: %w", err)
 	}
 	mdPath := filepath.Join(docsDir, "assessment.md")
-	if err := os.WriteFile(mdPath, []byte(doc.Render()), 0644); err != nil {
+	if err := os.WriteFile(mdPath, []byte(doc.Render()), 0640); err != nil {
 		return err
 	}
 	fmt.Printf("  Assessment written to %s\n", mdPath)
@@ -1478,7 +1478,7 @@ func generateOSCAL(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Cros
 		return fmt.Errorf("exporting SSP to OSCAL: %w", err)
 	}
 	sspPath := filepath.Join(docsDir, "ssp-"+fw.ID+".oscal.json")
-	if err := os.WriteFile(sspPath, sspJSON, 0644); err != nil {
+	if err := os.WriteFile(sspPath, sspJSON, 0640); err != nil {
 		return err
 	}
 	fmt.Printf("  SSP: %s\n", sspPath)
@@ -1495,7 +1495,7 @@ func generateOSCAL(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Cros
 		return fmt.Errorf("exporting assessment to OSCAL: %w", err)
 	}
 	assPath := filepath.Join(docsDir, "assessment-results.oscal.json")
-	if err := os.WriteFile(assPath, assJSON, 0644); err != nil {
+	if err := os.WriteFile(assPath, assJSON, 0640); err != nil {
 		return err
 	}
 	fmt.Printf("  Assessment Results: %s\n", assPath)
@@ -1719,6 +1719,9 @@ ATTEST_DASHBOARD_TOKEN environment variable as a bearer token.`,
 				if authToken == "" {
 					return fmt.Errorf("--auth requires ATTEST_DASHBOARD_TOKEN env var to be set")
 				}
+				if len(authToken) < 16 {
+					return fmt.Errorf("ATTEST_DASHBOARD_TOKEN must be at least 16 characters")
+				}
 			}
 
 			fmt.Printf("Starting attest dashboard on http://localhost%s\n", addr)
@@ -1729,7 +1732,7 @@ ATTEST_DASHBOARD_TOKEN environment variable as a bearer token.`,
 			return nil
 		},
 	}
-	cmd.Flags().String("addr", ":8080", "Listen address (default :8080)")
+	cmd.Flags().String("addr", "127.0.0.1:8080", "Listen address (default 127.0.0.1:8080 — localhost only)")
 	cmd.Flags().Bool("auth", false, "Require ATTEST_DASHBOARD_TOKEN bearer token")
 	return cmd
 }
@@ -2553,7 +2556,7 @@ Example:
 						draftDir := filepath.Join(".attest", "attestations", "drafts")
 						_ = os.MkdirAll(draftDir, 0750)
 						data, _ := yaml.Marshal(finding.DraftAtt)
-						_ = os.WriteFile(filepath.Join(draftDir, finding.DraftAtt.ID+".yaml"), data, 0644)
+						_ = os.WriteFile(filepath.Join(draftDir, finding.DraftAtt.ID+".yaml"), data, 0640)
 						totalDrafts++
 					}
 				}
@@ -2860,7 +2863,22 @@ Example:
 				if ext == "" {
 					ext = ".txt"
 				}
-				outPath := filepath.Join(outDir, fmt.Sprintf("remediate-%s%s", controlID, ext))
+				// Sanitize controlID to prevent path traversal.
+				// Allow only alphanumeric, dot, and dash (valid control ID chars).
+				safeID := strings.Map(func(r rune) rune {
+					if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+						(r >= '0' && r <= '9') || r == '.' || r == '-' {
+						return r
+					}
+					return '_'
+				}, controlID)
+				outPath := filepath.Join(outDir, fmt.Sprintf("remediate-%s%s", safeID, ext))
+				// Verify final path stays within outDir.
+				absOut, _ := filepath.Abs(outDir)
+				absPath, _ := filepath.Abs(outPath)
+				if !strings.HasPrefix(absPath, absOut+string(filepath.Separator)) {
+					return fmt.Errorf("path traversal detected in control ID")
+				}
 				if err := os.WriteFile(outPath, []byte(artifact.Content), 0640); err == nil {
 					fmt.Printf("\nWritten to: %s\n", outPath)
 				}

@@ -3,12 +3,45 @@ package evaluator
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
 	cttypes "github.com/aws/aws-sdk-go-v2/service/cloudtrail/types"
 )
+
+const (
+	maxEventFieldLen = 512 // max length for any CloudTrail-derived field
+)
+
+// safeEventFieldRE allows only characters valid in AWS resource identifiers.
+// This prevents log injection, Cedar injection, and control-flow surprises.
+var safeEventFieldRE = regexp.MustCompile(`^[a-zA-Z0-9._/:@\-]+$`)
+
+// sanitizeEventField truncates and strips unsafe characters from CloudTrail
+// event fields before they are used in Cedar evaluation or log writes.
+func sanitizeEventField(s string) string {
+	if len(s) > maxEventFieldLen {
+		s = s[:maxEventFieldLen]
+	}
+	if safeEventFieldRE.MatchString(s) {
+		return s
+	}
+	// Replace any character outside the safe set with underscore.
+	result := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '.' || c == '_' ||
+			c == '/' || c == ':' || c == '@' || c == '-' {
+			result[i] = c
+		} else {
+			result[i] = '_'
+		}
+	}
+	return string(result)
+}
 
 // cloudTrailPoller polls CloudTrail for recent management events and
 // translates them into AuthzRequests for Cedar evaluation.
@@ -49,10 +82,10 @@ func translateEvent(ev cttypes.Event) *AuthzRequest {
 		return nil
 	}
 
-	// Build principal from username.
+	// Build principal from username — sanitize before use.
 	principalARN := "arn:aws:iam::unknown:user/unknown"
 	if ev.Username != nil {
-		principalARN = "arn:aws:iam::unknown:user/" + *ev.Username
+		principalARN = "arn:aws:iam::unknown:user/" + sanitizeEventField(*ev.Username)
 	}
 
 	// Extract account from CloudTrail record details.
@@ -65,17 +98,17 @@ func translateEvent(ev cttypes.Event) *AuthzRequest {
 					accountID = acct
 				}
 				if arn, ok := userIdentity["arn"].(string); ok && arn != "" {
-					principalARN = arn
+					principalARN = sanitizeEventField(arn)
 				}
 			}
 		}
 	}
 
-	// Use resource name as resource identifier.
+	// Use resource name as resource identifier — sanitize before use.
 	resourceARN := "*"
 	for _, r := range ev.Resources {
 		if r.ResourceName != nil {
-			resourceARN = aws.ToString(r.ResourceName)
+			resourceARN = sanitizeEventField(aws.ToString(r.ResourceName))
 			break
 		}
 	}
@@ -86,7 +119,7 @@ func translateEvent(ev cttypes.Event) *AuthzRequest {
 	}
 
 	return &AuthzRequest{
-		Action:       aws.ToString(ev.EventName),
+		Action:       sanitizeEventField(aws.ToString(ev.EventName)),
 		PrincipalARN: principalARN,
 		ResourceARN:  resourceARN,
 		AccountID:    accountID,

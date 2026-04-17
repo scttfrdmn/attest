@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -32,16 +33,21 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
+// maxSSEConnections is the per-server limit on concurrent SSE subscribers.
+// Prevents resource exhaustion from connection flooding.
+const maxSSEConnections = 50
+
 //go:embed templates
 var templateFS embed.FS
 
 // Server is the attest web dashboard.
 type Server struct {
-	addr    string
-	mux     *http.ServeMux
-	eval    *evaluator.Evaluator
-	storeDir string
-	authToken string // empty = no auth
+	addr        string
+	mux         *http.ServeMux
+	eval        *evaluator.Evaluator
+	storeDir    string
+	authToken   string  // empty = no auth (local use only)
+	sseConns    int64   // active SSE connection count (atomic)
 }
 
 // NewServer creates a dashboard server.
@@ -70,11 +76,18 @@ func (s *Server) registerRoutes() {
 
 // Start launches the dashboard server.
 func (s *Server) Start(ctx context.Context) error {
-	srv := &http.Server{
-		Addr:    s.addr,
-		Handler: s.authMiddleware(s.mux),
+	if s.authToken == "" {
+		fmt.Println("  WARNING: Dashboard is running WITHOUT authentication.")
+		fmt.Println("           Only run without auth on trusted localhost networks.")
+		fmt.Println("           Use --auth with ATTEST_DASHBOARD_TOKEN for production use.")
 	}
-	fmt.Printf("  Dashboard: http://%s\n", strings.TrimPrefix(s.addr, ":"))
+	srv := &http.Server{
+		Addr:              s.addr,
+		Handler:           s.authMiddleware(s.mux),
+		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+	fmt.Printf("  Dashboard: http://localhost%s\n", strings.TrimPrefix(s.addr, ":"))
 	go func() {
 		<-ctx.Done()
 		_ = srv.Shutdown(context.Background())
@@ -165,6 +178,14 @@ func (s *Server) handleFrameworks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOperationsSSE(w http.ResponseWriter, r *http.Request) {
+	// Rate limit: reject if too many concurrent SSE connections.
+	current := atomic.AddInt64(&s.sseConns, 1)
+	defer atomic.AddInt64(&s.sseConns, -1)
+	if current > maxSSEConnections {
+		http.Error(w, "Too many SSE connections", http.StatusTooManyRequests)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -241,7 +262,11 @@ func (s *Server) handleIncidents(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
-	flusher, _ := w.(http.Flusher)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "SSE not supported", http.StatusInternalServerError)
+		return
+	}
 
 	steps := []string{
 		"Loading framework definitions...",
@@ -252,9 +277,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, step := range steps {
 		fmt.Fprintf(w, "data: %s\n\n", step)
-		if flusher != nil {
-			flusher.Flush()
-		}
+		flusher.Flush()
 		time.Sleep(200 * time.Millisecond)
 	}
 }

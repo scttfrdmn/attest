@@ -23,8 +23,30 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// safeRefRE allows only git-safe ref characters: alphanumeric, dash, underscore, dot, slash.
+// This prevents command injection, path traversal (no ..), and shell metacharacters.
+var safeRefRE = regexp.MustCompile(`^[a-zA-Z0-9._/-]+$`)
+
+// validateRef returns an error if ref contains unsafe characters.
+func validateRef(ref string) error {
+	if ref == "" {
+		return fmt.Errorf("ref must not be empty")
+	}
+	if len(ref) > 255 {
+		return fmt.Errorf("ref too long (max 255 chars)")
+	}
+	if strings.Contains(ref, "..") {
+		return fmt.Errorf("ref must not contain '..' (path traversal)")
+	}
+	if !safeRefRE.MatchString(ref) {
+		return fmt.Errorf("ref %q contains unsafe characters (allowed: alphanumeric, - _ . /)", ref)
+	}
+	return nil
+}
 
 // Store manages the .attest/ directory and its git lifecycle.
 type Store struct {
@@ -91,6 +113,9 @@ func (s *Store) Tag(name, message string) error {
 	if s.noCommit {
 		return nil
 	}
+	if err := validateRef(name); err != nil {
+		return fmt.Errorf("invalid tag name: %w", err)
+	}
 	if err := s.git("tag", "-a", name, "-m", message); err != nil {
 		return fmt.Errorf("git tag %s: %w", name, err)
 	}
@@ -134,6 +159,9 @@ func (s *Store) ListTags() ([]string, error) {
 func (s *Store) Checkout(ref string) error {
 	if s.noCommit {
 		return nil
+	}
+	if err := validateRef(ref); err != nil {
+		return fmt.Errorf("invalid ref: %w", err)
 	}
 	if err := s.git("checkout", ref, "--", "."); err != nil {
 		return fmt.Errorf("git checkout %s: %w", ref, err)

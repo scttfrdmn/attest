@@ -57,7 +57,7 @@ func (m *Manager) Create(ctx context.Context, w *schema.Waiver) error {
 	}
 
 	path := filepath.Join(m.storePath, w.ID+".yaml")
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0640); err != nil {
 		return fmt.Errorf("writing waiver %s: %w", w.ID, err)
 	}
 	return nil
@@ -159,7 +159,7 @@ func (m *Manager) Expire(ctx context.Context, waiverID string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, updated, 0644)
+	return os.WriteFile(path, updated, 0640)
 }
 
 // computeStatus returns the current status of a waiver based on time.

@@ -56,7 +56,7 @@ func (m *Manager) Create(ctx context.Context, a *schema.Attestation) error {
 	}
 
 	path := filepath.Join(m.storePath, a.ID+".yaml")
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0640)
 }
 
 // List returns all attestations sorted by expiry date.
@@ -148,7 +148,7 @@ func (m *Manager) Expire(ctx context.Context, attestationID string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, updated, 0644)
+	return os.WriteFile(path, updated, 0640)
 }
 
 func computeStatus(a schema.Attestation, now time.Time) string {

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-04-17
+
+### Security
+
+- **CRITICAL fixed**: `store.Checkout()` and `store.Tag()` now validate the ref/tag
+  name against a safe character allowlist (`[a-zA-Z0-9._/-]+`, no `..`). Prevents
+  path traversal and git ref injection via the `attest rollback --to` flag.
+- **HIGH fixed**: `aiRemediateCmd` sanitizes `controlID` (strips non-alphanumeric
+  characters, uses `filepath.Abs` comparison to prevent path traversal in `--out`
+  directory writes).
+- **HIGH fixed**: `handleOperationsSSE` enforces a `maxSSEConnections=50` limit via
+  atomic counter, preventing goroutine/file-descriptor exhaustion from connection floods.
+- **HIGH fixed**: CloudTrail event fields (`EventName`, `Username`, `ResourceName`,
+  extracted ARN) are now sanitized by `sanitizeEventField()` before use in Cedar
+  evaluation or log writes. Prevents log injection and Cedar evaluation manipulation.
+- **HIGH fixed**: `attest serve` binds to `127.0.0.1:8080` by default (localhost only).
+  Prints prominent warnings when running without auth. Minimum token length enforced
+  (16 chars) when `--auth` is used.
+- **MEDIUM fixed**: All `.attest/` files now written with `0640` (was `0644`).
+  Applies to: `cmd/attest`, `internal/waiver`, `internal/iac`, `internal/attestation`.
+- **MEDIUM fixed**: Removed unused HTMX CDN script tag from dashboard HTML.
+  Frontend uses vanilla JS only — no external CDN supply chain dependency.
+- **MEDIUM fixed**: Framework YAML `validate()` now enforces size limits: ID ≤128 chars,
+  title ≤512 chars, controls ≤10,000 per framework, control ID ≤64 chars.
+- **MEDIUM fixed**: `http.Server` now sets `ReadHeaderTimeout` and `MaxHeaderBytes`
+  to prevent slowloris and header-size attacks on the dashboard.
+- **INFO fixed**: `handleGenerate` flusher type assertion is now checked; returns 500
+  if SSE is not supported instead of silently failing.
+
 ## [0.8.0] - 2026-04-17
 
 ### Added

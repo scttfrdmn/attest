@@ -103,7 +103,7 @@ resource "aws_organizations_policy_attachment" "%s" {
 	}
 
 	mainTF := filepath.Join(g.outputDir, "main.tf")
-	if err := os.WriteFile(mainTF, []byte(b.String()), 0644); err != nil {
+	if err := os.WriteFile(mainTF, []byte(b.String()), 0640); err != nil {
 		return fmt.Errorf("writing main.tf: %w", err)
 	}
 
@@ -120,7 +120,7 @@ resource "aws_organizations_policy_attachment" "%s" {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(tfSCPDir, e.Name()), data, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tfSCPDir, e.Name()), data, 0640); err != nil {
 			return err
 		}
 	}

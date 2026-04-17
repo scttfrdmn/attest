@@ -105,16 +105,35 @@ func deduplicationKey(ctrl schema.Control) string {
 	return ctrl.Family + "/" + ctrl.ID
 }
 
+const (
+	maxFrameworkIDLen = 128
+	maxControlIDLen   = 64
+	maxControlTitleLen = 512
+	maxControls        = 10_000
+)
+
 func validate(fw *schema.Framework) error {
 	if fw.ID == "" {
 		return fmt.Errorf("framework ID is required")
 	}
+	if len(fw.ID) > maxFrameworkIDLen {
+		return fmt.Errorf("framework ID too long (max %d chars)", maxFrameworkIDLen)
+	}
 	if len(fw.Controls) == 0 {
 		return fmt.Errorf("framework must define at least one control")
+	}
+	if len(fw.Controls) > maxControls {
+		return fmt.Errorf("framework has too many controls (%d, max %d)", len(fw.Controls), maxControls)
 	}
 	for _, ctrl := range fw.Controls {
 		if ctrl.ID == "" {
 			return fmt.Errorf("control ID is required")
+		}
+		if len(ctrl.ID) > maxControlIDLen {
+			return fmt.Errorf("control ID %q too long (max %d)", ctrl.ID, maxControlIDLen)
+		}
+		if len(ctrl.Title) > maxControlTitleLen {
+			return fmt.Errorf("control %s title too long (max %d chars)", ctrl.ID, maxControlTitleLen)
 		}
 	}
 	return nil
