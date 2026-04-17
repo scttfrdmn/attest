@@ -95,6 +95,18 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/generate", s.handleGenerate)
 }
 
+// securityHeaders adds standard HTTP security headers to every response.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Start launches the dashboard server.
 func (s *Server) Start(ctx context.Context) error {
 	if s.authToken == "" {
@@ -104,7 +116,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	srv := &http.Server{
 		Addr:              s.addr,
-		Handler:           s.authMiddleware(s.mux),
+		Handler:           securityHeaders(s.authMiddleware(s.mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}

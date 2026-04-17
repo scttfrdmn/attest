@@ -352,6 +352,76 @@ Return JSON: {summary, priority_items}.`
 	return plan, nil
 }
 
+// --- GenerateAdminPolicy ---
+
+// GenerateAdminPolicy generates a human-readable institutional policy or procedure
+// document for a specific compliance control gap. Distinct from Remediate() which
+// generates technical artifacts (Cedar policies, SCPs, Terraform) — this generates
+// the administrative documentation auditors require (training plans, IR procedures,
+// risk assessment templates, etc.).
+//
+// Uses Sonnet 4.6 for structured prose generation.
+func (a *Analyst) GenerateAdminPolicy(ctx context.Context, controlID, policyType string) (*RemediationArtifact, error) {
+	postureSummary := a.loadPostureSummary()
+
+	typeHint := policyType
+	if typeHint == "" {
+		typeHint = "procedure"
+	}
+
+	systemPrompt := a.buildSystemPrompt() + `
+
+Your task is to generate a complete institutional policy or administrative procedure
+document for the specified compliance control. This document will be used by:
+- Compliance officers as an attestation artifact
+- Auditors as evidence that the control is operationally implemented
+- Staff as a reference for how to perform required actions
+
+Document requirements:
+- Be specific to an AWS research environment context (not generic boilerplate)
+- Include: purpose, scope, responsibilities, procedures, review schedule
+- Reference the specific NIST control ID and assessment objectives
+- Format: markdown, ready for institutional policy repository
+- Length: comprehensive enough to satisfy an auditor (typically 2-5 pages)
+
+Artifact type: ` + typeHint + `
+
+Return JSON: {
+  "control_id": "<id>",
+  "title": "<document title>",
+  "type": "procedure-draft",
+  "content": "<complete markdown document>",
+  "explanation": "<why this document satisfies the control>"
+}`
+
+	userMsg := fmt.Sprintf("Current posture:\n%s\n\nGenerate an institutional %s document for control gap: %s",
+		postureSummary, typeHint, controlID)
+
+	input := &bedrockruntime.ConverseStreamInput{
+		ModelId: aws.String(selectModel(CapabilityRemediation)),
+		Messages: []types.Message{
+			{Role: types.ConversationRoleUser,
+				Content: []types.ContentBlock{&types.ContentBlockMemberText{Value: userMsg}}},
+		},
+		System: []types.SystemContentBlock{
+			&types.SystemContentBlockMemberText{Value: systemPrompt},
+		},
+	}
+	raw, err := a.streamConverse(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	var artifact RemediationArtifact
+	if err := json.Unmarshal([]byte(extractJSON(raw)), &artifact); err != nil {
+		return &RemediationArtifact{
+			ControlID: controlID,
+			Type:      "procedure-draft",
+			Content:   raw,
+		}, nil
+	}
+	return &artifact, nil
+}
+
 // --- AuditSim ---
 
 // AuditSimResult is the output of an assessor simulation.

@@ -13,11 +13,13 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	oidclib "github.com/coreos/go-oidc/v3/oidc"
@@ -39,7 +41,8 @@ const (
 const sessionCookieName = "attest_session"
 
 // sessionMaxAge is how long a session cookie lasts.
-const sessionMaxAge = 8 * time.Hour
+// 4 hours — reduced from 8h; appropriate for an administrative security tool.
+const sessionMaxAge = 4 * time.Hour
 
 // User is an authenticated dashboard user.
 type User struct {
@@ -55,7 +58,7 @@ type User struct {
 type OIDCConfig struct {
 	IssuerURL    string // e.g., "https://sso.university.edu"
 	ClientID     string // from ATTEST_OIDC_CLIENT_ID
-	ClientSecret string // from ATTEST_OIDC_CLIENT_SECRET
+	ClientSecret string // from ATTEST_OIDC_CLIENT_SECRET; never log this value
 	RedirectURL  string // e.g., "http://localhost:8080/callback"
 	// RoleClaim is the OIDC claim name that maps to a dashboard role.
 	// Defaults to "attest_role". Common alternatives: "groups", "roles".
@@ -71,8 +74,11 @@ type OIDCHandler struct {
 	provider *oidclib.Provider
 	oauth2   oauth2.Config
 	verifier *oidclib.IDTokenVerifier
-	// sessions is an in-memory session store: token → User
-	// For production, replace with Redis or a signed cookie.
+	// mu protects sessions from concurrent access (multiple HTTP goroutines).
+	mu       sync.RWMutex
+	// sessions is an in-memory session store: token → User.
+	// Sessions are lost on restart. For HA deployments, replace with a
+	// signed cookie (JWT) or external store (Redis).
 	sessions map[string]*User
 }
 
@@ -81,11 +87,6 @@ func NewOIDCHandler(ctx context.Context, cfg *OIDCConfig) (*OIDCHandler, error) 
 	provider, err := oidclib.NewProvider(ctx, cfg.IssuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("discovering OIDC provider at %s: %w", cfg.IssuerURL, err)
-	}
-
-	roleClaim := cfg.RoleClaim
-	if roleClaim == "" {
-		roleClaim = "attest_role"
 	}
 
 	h := &OIDCHandler{
@@ -127,9 +128,14 @@ func (h *OIDCHandler) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
+		h.mu.RLock()
 		user, ok := h.sessions[cookie.Value]
+		h.mu.RUnlock()
+
 		if !ok || user == nil || time.Now().After(user.ExpiresAt) {
+			h.mu.Lock()
 			delete(h.sessions, cookie.Value)
+			h.mu.Unlock()
 			http.Redirect(w, r, "/login?redirect="+r.URL.Path, http.StatusFound)
 			return
 		}
@@ -156,9 +162,12 @@ func (h *OIDCHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OIDCHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
-	// Validate state.
+	// Validate state — use constant-time comparison to prevent timing oracle.
 	stateCookie, err := r.Cookie("oidc_state")
-	if err != nil || r.URL.Query().Get("state") != stateCookie.Value {
+	if err != nil || subtle.ConstantTimeCompare(
+		[]byte(r.URL.Query().Get("state")),
+		[]byte(stateCookie.Value),
+	) != 1 {
 		http.Error(w, "invalid state", http.StatusBadRequest)
 		return
 	}
@@ -206,25 +215,37 @@ func (h *OIDCHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session creation failed", http.StatusInternalServerError)
 		return
 	}
+
+	h.mu.Lock()
 	h.sessions[sessionToken] = user
+	h.mu.Unlock()
+
+	// Set session cookie. Secure flag is true when not on localhost.
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    sessionToken,
 		MaxAge:   int(sessionMaxAge.Seconds()),
 		HttpOnly: true,
+		Secure:   !isLocalAddr(h.oauth2.RedirectURL),
 		SameSite: http.SameSiteLaxMode,
 	})
 
+	// Validate redirect — only accept relative paths to prevent open redirect.
 	redirect := "/"
-	if r.URL.Query().Get("redirect") != "" {
-		redirect = r.URL.Query().Get("redirect")
+	if raw := r.URL.Query().Get("redirect"); raw != "" &&
+		strings.HasPrefix(raw, "/") &&
+		!strings.Contains(raw, "://") &&
+		!strings.HasPrefix(raw, "//") {
+		redirect = raw
 	}
 	http.Redirect(w, r, redirect, http.StatusFound)
 }
 
 func (h *OIDCHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		h.mu.Lock()
 		delete(h.sessions, cookie.Value)
+		h.mu.Unlock()
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, MaxAge: -1})
 	http.Redirect(w, r, "/login", http.StatusFound)
@@ -242,7 +263,6 @@ func (h *OIDCHandler) resolveRole(claims map[string]any) Role {
 		if role, ok := h.cfg.RoleMapping[v]; ok {
 			return role
 		}
-		// Try direct match as a Role value.
 		switch Role(v) {
 		case RoleAdmin, RoleComplianceOfficer, RoleSecurityEngineer, RolePIResearcher, RoleAuditor:
 			return Role(v)
@@ -264,6 +284,14 @@ func (h *OIDCHandler) resolveRole(claims map[string]any) Role {
 	return RoleAuditor
 }
 
+// isLocalAddr reports whether an address string refers to a loopback/localhost
+// endpoint. Used to decide whether session cookies should be Secure-only.
+func isLocalAddr(addr string) bool {
+	return strings.Contains(addr, "localhost") ||
+		strings.Contains(addr, "127.0.0.1") ||
+		strings.Contains(addr, "::1")
+}
+
 // --- context helpers ---
 
 // userContextKey is the context key for the authenticated user.
@@ -275,7 +303,6 @@ func WithUser(ctx context.Context, u *User) context.Context {
 }
 
 // UserFromContext extracts the authenticated user from the request context.
-// Returns an error if no user is present (unauthenticated request).
 func UserFromContext(ctx context.Context) (*User, error) {
 	u, ok := ctx.Value(userContextKey{}).(*User)
 	if !ok || u == nil {
@@ -286,8 +313,10 @@ func UserFromContext(ctx context.Context) (*User, error) {
 
 // --- utility helpers ---
 
+// randomState generates a cryptographically random 256-bit (32-byte) state token,
+// base64url-encoded. Used for OIDC state parameter and session tokens.
 func randomState() (string, error) {
-	b := make([]byte, 16)
+	b := make([]byte, 32) // 256 bits — was 16 (128 bits); increased per NIST recommendation
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
@@ -301,7 +330,7 @@ func stringClaim(claims map[string]any, key string) string {
 	return ""
 }
 
-// SerializeUser serializes a User to JSON (for session storage).
+// SerializeUser serializes a User to JSON (for logging/debugging — never log tokens).
 func SerializeUser(u *User) (string, error) {
 	b, err := json.Marshal(u)
 	return string(b), err

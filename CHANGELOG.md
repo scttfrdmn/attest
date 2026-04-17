@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-04-17
+
+### Security
+
+- **CRITICAL fixed**: Open redirect in OIDC callback — `redirect` query param now
+  validated to be a relative path only (must start with `/`, must not contain `://`
+  or `//`). Prevents post-authentication redirect to attacker-controlled sites.
+- **CRITICAL fixed**: `attest provision --email` now validated with `net/mail.ParseAddress()`
+  before being sent to the AWS Organizations API. Also enforces AWS 64-char limit.
+- **HIGH fixed**: OIDC session store race condition — `OIDCHandler.sessions` map now
+  protected by `sync.RWMutex`; all reads, writes, and deletes are lock-guarded.
+- **HIGH fixed**: Session cookie now sets `Secure: true` when the redirect URL is not
+  localhost/127.x, preventing transmission over plain HTTP in production.
+- **HIGH fixed**: OIDC state comparison now uses `crypto/subtle.ConstantTimeCompare`
+  instead of string `!=`, eliminating the timing oracle.
+- **HIGH fixed**: OIDC redirect URI defaults to `https://` for non-localhost addresses;
+  previously hardcoded `http://` was rejected by institutional OIDC providers.
+- **HIGH fixed**: Path traversal in `attest ai ingest` and `attest ai analyze` — file
+  paths are now resolved with `filepath.Abs`, `os.Stat`, and `IsRegular()` before
+  being passed to the AI analyst. Non-regular files (directories, symlinks) rejected.
+- **MEDIUM fixed**: HTTP security headers added to all dashboard responses via new
+  `securityHeaders` middleware: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Content-Security-Policy: default-src 'self'`, `Referrer-Policy: strict-origin-when-cross-origin`.
+- **MEDIUM fixed**: OIDC state token entropy increased from 128-bit (16 bytes) to
+  256-bit (32 bytes), matching NIST recommendations for cryptographic nonces.
+- **MEDIUM fixed**: `attest provision --name` now validated: max 50 chars (AWS limit),
+  alphanumeric/spaces/hyphens/periods only.
+- **MEDIUM fixed**: LDAP `LDAPSource` prints a warning to stderr when using anonymous
+  bind (`BindDN == ""`), making the security risk visible to operators.
+- **LOW fixed**: `provisioner.Execute()` sanitizes account-creation errors that mention
+  "email" to prevent information leakage about existing account email addresses.
+- **LOW fixed**: `provisioner.findOU()` now detects and errors on duplicate OU names
+  under the same parent, preventing ambiguous account placement.
+- **MEDIUM fixed**: Session cookie TTL reduced from 8h to 4h (appropriate for an
+  administrative security interface).
+
+### Added
+
+- `attest ai generate-policy <control-id>` — generates institutional policy and procedure
+  documents (training plans, IR procedures, risk assessment templates) for administrative
+  control gaps. Uses Claude Sonnet 4.6 with a policy-drafting system prompt. Distinct from
+  `attest ai remediate` which targets technical artifacts.
+- `internal/auth/auth_test.go` — 8 tests covering open redirect, session concurrency
+  (race detector), entropy, uniqueness, localhost detection, and static token middleware.
+- `internal/dashboard/server_test.go` — `TestSecurityHeaders` verifying all 4 new
+  security headers are present on every response.
+- `.github/workflows/ci.yml` — `go test -race` step added to catch concurrency bugs in CI.
+
 ## [0.9.0] - 2026-04-17
 
 ### Added

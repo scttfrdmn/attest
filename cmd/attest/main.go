@@ -13,6 +13,9 @@ import (
 
 	cedar "github.com/cedar-policy/cedar-go"
 
+	"net/mail"
+	"regexp"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
@@ -44,7 +47,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.9.0"
+var version = "0.9.1"
 
 func main() {
 	root := &cobra.Command{
@@ -1775,7 +1778,12 @@ Default (no flags): no auth, localhost only — for local development.`,
 					return fmt.Errorf("--oidc-client-id or ATTEST_OIDC_CLIENT_ID is required with --oidc-issuer")
 				}
 				if oidcRedirect == "" {
-					scheme := "http"
+					// Default HTTPS unless addr is explicitly localhost — institutional
+					// OIDC providers reject plain HTTP redirect URIs.
+					scheme := "https"
+					if strings.HasPrefix(addr, "127.") || strings.Contains(addr, "localhost") {
+						scheme = "http"
+					}
 					oidcRedirect = fmt.Sprintf("%s://localhost%s/callback", scheme, addr)
 				}
 				cfg := &auth.OIDCConfig{
@@ -2079,8 +2087,22 @@ Create it first: aws organizations create-organizational-unit --parent-id <root>
 			if name == "" {
 				return fmt.Errorf("--name is required")
 			}
+			// AWS Organizations: account name max 50 chars, alphanumeric/spaces/hyphens/periods.
+			if len(name) > 50 {
+				return fmt.Errorf("--name must be ≤ 50 characters (AWS Organizations limit)")
+			}
+			if !regexp.MustCompile(`^[a-zA-Z0-9 \-\.]+$`).MatchString(name) {
+				return fmt.Errorf("--name may only contain letters, numbers, spaces, hyphens, and periods")
+			}
 			if email == "" {
 				return fmt.Errorf("--email is required (must be unique in your AWS Organization)")
+			}
+			// Validate email format before sending to AWS.
+			if _, err := mail.ParseAddress(email); err != nil {
+				return fmt.Errorf("--email is not a valid email address: %w", err)
+			}
+			if len(email) > 64 {
+				return fmt.Errorf("--email must be ≤ 64 characters (AWS Organizations limit)")
 			}
 			if len(dataClasses) == 0 {
 				return fmt.Errorf("--data-class is required (e.g., --data-class CUI)")
@@ -2626,7 +2648,8 @@ Optional: ATTEST_GUARDRAIL_ARN env var for Bedrock Guardrail enforcement.`,
 	}
 
 	cmd.AddCommand(aiAskCmd(), aiIngestCmd(), aiOnboardCmd(),
-		aiAuditSimCmd(), aiTranslateCmd(), aiAnalyzeCmd(), aiImpactCmd(), aiRemediateCmd())
+		aiAuditSimCmd(), aiTranslateCmd(), aiAnalyzeCmd(), aiImpactCmd(),
+		aiRemediateCmd(), aiGeneratePolicyCmd())
 	return cmd
 }
 
@@ -2724,6 +2747,22 @@ Example:
 
 			totalCovered, totalDrafts := 0, 0
 			for _, f := range files {
+				// Validate file path — prevent path traversal and non-regular files.
+				absF, err := filepath.Abs(f)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "  Skipping %s: invalid path (%v)\n", f, err)
+					continue
+				}
+				info, err := os.Stat(absF)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "  Skipping %s: cannot access (%v)\n", f, err)
+					continue
+				}
+				if !info.Mode().IsRegular() {
+					fmt.Fprintf(os.Stderr, "  Skipping %s: not a regular file\n", f)
+					continue
+				}
+				f = absF
 				fmt.Printf("\nAnalyzing: %s\n", filepath.Base(f))
 				findings, err := analyst.IngestDocument(ctx, f, fwIDs)
 				if err != nil {
@@ -2941,6 +2980,19 @@ to identify unusual patterns: DENY bursts, off-hours access, repeated violations
 			ctx := context.Background()
 			region, _ := cmd.Flags().GetString("region")
 			logPath, _ := cmd.Flags().GetString("log")
+			// Validate log file path to prevent path traversal.
+			absLog, err := filepath.Abs(logPath)
+			if err != nil {
+				return fmt.Errorf("invalid log path: %w", err)
+			}
+			info, err := os.Stat(absLog)
+			if err != nil {
+				return fmt.Errorf("cannot access log file %s: %w", logPath, err)
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("%s is not a regular file", logPath)
+			}
+			logPath = absLog
 			analyst, err := ai.NewAnalyst(ctx, region)
 			if err != nil {
 				return fmt.Errorf("connecting to Bedrock: %w", err)
@@ -3080,5 +3132,70 @@ Example:
 	}
 	cmd.Flags().String("region", "us-east-1", "AWS region for Bedrock")
 	cmd.Flags().String("out", "", "Directory to write the artifact (optional)")
+	return cmd
+}
+
+func aiGeneratePolicyCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "generate-policy <control-id>",
+		Short: "Draft an institutional policy or procedure for a control gap",
+		Long: `Generates a complete institutional policy or procedure document for a
+specific compliance control gap. Unlike 'attest ai remediate' which targets
+technical artifacts (Cedar policies, SCPs), this generates the administrative
+documentation auditors require: training plans, incident response procedures,
+risk assessment templates, access control policies, etc.
+
+The output is a markdown document ready for an institutional policy repository.
+
+Examples:
+  attest ai generate-policy 3.2.2    # CUI handling training plan
+  attest ai generate-policy 3.6.1    # Incident response procedure
+  attest ai generate-policy 3.11.1   # Risk assessment template`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			region, _ := cmd.Flags().GetString("region")
+			policyType, _ := cmd.Flags().GetString("type")
+			outDir, _ := cmd.Flags().GetString("out")
+			analyst, err := ai.NewAnalyst(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to Bedrock: %w", err)
+			}
+			controlID := args[0]
+			fmt.Printf("Generating %s document for control %s...\n\n", policyType, controlID)
+			artifact, err := analyst.GenerateAdminPolicy(ctx, controlID, policyType)
+			if err != nil {
+				return fmt.Errorf("policy generation failed: %w", err)
+			}
+			fmt.Printf("Title: %s\n\n", artifact.Title)
+			fmt.Println(artifact.Content)
+			if artifact.Explanation != "" {
+				fmt.Printf("\nAudit note: %s\n", artifact.Explanation)
+			}
+			// Write to output directory if specified.
+			if outDir != "" {
+				safeID := strings.Map(func(r rune) rune {
+					if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+						(r >= '0' && r <= '9') || r == '.' || r == '-' {
+						return r
+					}
+					return '_'
+				}, controlID)
+				outPath := filepath.Join(outDir, fmt.Sprintf("policy-%s.md", safeID))
+				absOut, _ := filepath.Abs(outDir)
+				absPath, _ := filepath.Abs(outPath)
+				if !strings.HasPrefix(absPath, absOut+string(filepath.Separator)) {
+					return fmt.Errorf("path traversal detected in control ID")
+				}
+				if err := os.WriteFile(outPath, []byte(artifact.Content), 0640); err == nil {
+					fmt.Printf("\nWritten to: %s\n", outPath)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().String("region", "us-east-1", "AWS region for Bedrock")
+	cmd.Flags().String("type", "procedure", "Document type: procedure, policy, training-plan, template")
+	cmd.Flags().String("out", "", "Directory to write the document (optional)")
 	return cmd
 }

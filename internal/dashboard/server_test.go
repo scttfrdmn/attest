@@ -143,6 +143,34 @@ func TestSSEConnectionCounterDecrement(t *testing.T) {
 	}
 }
 
+// TestSecurityHeaders verifies all required security headers are set.
+func TestSecurityHeaders(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	wrapped := securityHeaders(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	required := map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+		"Referrer-Policy":        "strict-origin-when-cross-origin",
+	}
+	for header, want := range required {
+		got := rr.Header().Get(header)
+		if got != want {
+			t.Errorf("header %s = %q, want %q", header, got, want)
+		}
+	}
+	// CSP must be present (exact value may vary)
+	if csp := rr.Header().Get("Content-Security-Policy"); csp == "" {
+		t.Error("Content-Security-Policy header is missing")
+	}
+}
+
 // TestHandlePostureContentType verifies JSON content type on API endpoints.
 func TestHandlePostureContentType(t *testing.T) {
 	s := &Server{storeDir: t.TempDir()} // no crosswalk → returns error JSON

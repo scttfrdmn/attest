@@ -184,6 +184,11 @@ func (p *Provisioner) Execute(ctx context.Context, plan *Plan) (*schema.Environm
 		Email:       aws.String(plan.AccountEmail),
 	})
 	if err != nil {
+		// Sanitize error to prevent email enumeration — don't expose whether
+		// an email already exists in the organization.
+		if strings.Contains(err.Error(), "email") || strings.Contains(err.Error(), "Email") {
+			return nil, fmt.Errorf("account creation failed (check email format and uniqueness)")
+		}
 		return nil, fmt.Errorf("creating account: %w", err)
 	}
 	requestID := aws.ToString(createOut.CreateAccountStatus.Id)
@@ -292,8 +297,10 @@ func targetOU(dataClasses []string) string {
 }
 
 // findOU searches for an OU by name under parentID. Returns "" if not found.
+// Returns an error if multiple OUs with the same name are found (ambiguous).
 func (p *Provisioner) findOU(ctx context.Context, parentID, name string) (string, error) {
 	var nextToken *string
+	var matches []string
 	for {
 		out, err := p.orgSvc.ListOrganizationalUnitsForParent(ctx,
 			&organizations.ListOrganizationalUnitsForParentInput{
@@ -305,13 +312,20 @@ func (p *Provisioner) findOU(ctx context.Context, parentID, name string) (string
 		}
 		for _, ou := range out.OrganizationalUnits {
 			if aws.ToString(ou.Name) == name {
-				return aws.ToString(ou.Id), nil
+				matches = append(matches, aws.ToString(ou.Id))
 			}
 		}
 		if out.NextToken == nil {
 			break
 		}
 		nextToken = out.NextToken
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("ambiguous: %d OUs named %q found under %s — rename duplicates or contact your AWS admin",
+			len(matches), name, parentID)
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
 	}
 	return "", nil
 }

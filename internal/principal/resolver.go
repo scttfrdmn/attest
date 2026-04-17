@@ -18,6 +18,7 @@ package principal
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -219,6 +220,10 @@ func (l *LDAPSource) Resolve(ctx context.Context, principalARN string, attrs *sc
 		if err := conn.Bind(l.BindDN, l.BindPass); err != nil {
 			return nil // bind failed — log but don't block evaluation
 		}
+	} else {
+		// Anonymous bind: warn that this may return limited data and exposes
+		// the directory to unauthenticated queries. Use BindDN/BindPass in production.
+		fmt.Fprintf(os.Stderr, "warning: LDAP source %s using anonymous bind — configure BindDN/BindPass for production\n", l.URL)
 	}
 
 	// Search for user by cn matching the IAM role name.
