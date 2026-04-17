@@ -1,0 +1,642 @@
+id: nist-800-53-r5
+name: NIST SP 800-53 Rev 5
+version: 'Rev 5 (2020)'
+source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
+artifact_reports:
+- series: FedRAMP Authorization
+  category: Compliance
+- series: SOC 2 Type II
+  category: SOC
+- series: ISO 27001
+  category: ISO
+
+# NIST SP 800-53 Rev 5 is the security and privacy controls catalog from which
+# FedRAMP Moderate and High baselines derive. This definition covers the ~85
+# controls with structural enforcement potential via AWS SCPs and Cedar policies.
+# Covers FedRAMP High additions beyond the Moderate baseline.
+#
+# SCP overlap with existing frameworks:
+#   ~75% of conditions shared with NIST 800-171 R2 and FedRAMP Moderate.
+#   Marginal SCP budget cost when merged: ~400 chars.
+
+controls:
+
+# --- Access Control (AC) ---
+
+- id: AC-2
+  family: Access Control
+  title: Account Management
+  responsibility:
+    aws: IAM service manages identity lifecycle; STS for federation
+    customer: User provisioning, MFA enforcement, periodic account review
+  structural:
+  - id: scp-require-mfa
+    description: Deny actions without MFA for human principals
+    actions: ['*']
+    conditions:
+    - aws:MultiFactorAuthPresent != true
+    - aws:PrincipalType == IAMUser
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AC-2(a)
+      description: Account types identified and documented
+      auto_assessable: false
+      evidence_source: manual
+    - id: AC-2(j)
+      description: Accounts reviewed at defined frequency
+      auto_assessable: false
+      evidence_source: manual
+
+- id: AC-2(5)
+  family: Access Control
+  title: Account Management — Inactivity Logout
+  responsibility:
+    aws: Console session timeout configurable; CLI tokens are short-lived via STS
+    customer: Configure AWS console idle timeout; enforce via SCP
+  structural:
+  - id: scp-deny-long-sessions
+    description: Deny actions from sessions older than 8 hours
+    actions: ['*']
+    conditions:
+    - aws:TokenIssueTime < now - 8h
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AC-2(5)(a)
+      description: Session timeout for inactive sessions defined and enforced
+      auto_assessable: true
+      evidence_source: scp
+
+- id: AC-2(11)
+  family: Access Control
+  title: Account Management — Usage Conditions
+  responsibility:
+    aws: IAM conditions support time-of-day and IP restrictions
+    customer: Define permitted access windows; enforce via Cedar policies
+  operational:
+  - id: cedar-usage-conditions
+    description: Restrict access to approved hours and networks for privileged operations
+    entities: [principal, environment]
+    attributes:
+      principal: [admin_level, department]
+  assessment:
+    objectives:
+    - id: AC-2(11)(a)
+      description: Account usage restricted to specific circumstances or time periods
+      auto_assessable: true
+      evidence_source: cedar
+
+- id: AC-3
+  family: Access Control
+  title: Access Enforcement
+  responsibility:
+    aws: IAM enforces policy-based access; SCPs provide org-wide guardrails
+    customer: IAM policies, resource policies, S3 public access blocks
+  structural:
+  - id: scp-block-s3-public-access
+    description: Block S3 public access at the organization level
+    actions: [s3:PutBucketPublicAccessBlock]
+    conditions:
+    - s3:PublicAccessBlockAmazonS3 != true
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AC-3(a)
+      description: Approved authorizations for logical access enforced
+      auto_assessable: true
+      evidence_source: scp
+
+- id: AC-5
+  family: Access Control
+  title: Separation of Duties
+  responsibility:
+    aws: IAM roles enable separation; permission boundaries enforce limits
+    customer: Separate admin and user roles; prevent conflict of interest
+  structural:
+  - id: scp-deny-admin-star
+    description: Deny iam:* to non-admin principals
+    actions:
+    - iam:CreateUser
+    - iam:DeleteUser
+    - iam:AttachUserPolicy
+    conditions:
+    - aws:PrincipalOrgPaths != /*/admin/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AC-5(a)
+      description: Duties of individuals requiring separation defined
+      auto_assessable: false
+      evidence_source: manual
+
+- id: AC-6
+  family: Access Control
+  title: Least Privilege
+  responsibility:
+    aws: IAM permission boundaries, SCPs, resource-based policies
+    customer: Apply minimum necessary permissions; prohibit root usage
+  structural:
+  - id: scp-deny-root-usage
+    description: Deny root account usage for operational tasks
+    actions: ['*']
+    conditions:
+    - aws:PrincipalArn == arn:aws:iam::*:root
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AC-6(1)
+      description: Privileged accounts used only for privileged functions
+      auto_assessable: true
+      evidence_source: scp
+
+- id: AC-17
+  family: Access Control
+  title: Remote Access
+  responsibility:
+    aws: All AWS API access is over TLS; SSM for maintenance sessions
+    customer: Enforce TLS; use SSM Session Manager; disable direct SSH
+  structural:
+  - id: scp-require-fips-endpoints
+    description: Deny requests not using secure transport
+    actions: ['*']
+    conditions:
+    - aws:SecureTransport == false
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AC-17(a)
+      description: Remote access sessions employ encryption
+      auto_assessable: true
+      evidence_source: scp
+
+- id: AC-20
+  family: Access Control
+  title: Use of External Systems
+  responsibility:
+    aws: AWS service endpoints within approved regions
+    customer: Restrict which AWS regions and services are permitted
+  structural:
+  - id: scp-deny-unapproved-regions
+    description: Restrict operations to approved AWS regions
+    actions: ['*']
+    conditions:
+    - aws:RequestedRegion not in [us-east-1, us-east-2, us-west-1, us-west-2]
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AC-20(a)
+      description: Use of external systems authorized by policy
+      auto_assessable: true
+      evidence_source: scp
+
+# --- Audit and Accountability (AU) ---
+
+- id: AU-2
+  family: Audit and Accountability
+  title: Event Logging
+  responsibility:
+    aws: CloudTrail provides API-level audit logging for all services
+    customer: Enable CloudTrail in all regions; enable data events for CUI buckets
+  monitoring:
+  - id: config-cloudtrail-enabled
+    resource_type: AWS::CloudTrail::Trail
+    check: Multi-region trail active and logging
+  assessment:
+    objectives:
+    - id: AU-2(a)
+      description: Event types requiring audit defined and implemented
+      auto_assessable: false
+      evidence_source: manual
+
+- id: AU-9
+  family: Audit and Accountability
+  title: Protection of Audit Information
+  responsibility:
+    aws: CloudTrail log file integrity validation; S3 Object Lock for immutability
+    customer: Protect CloudTrail trails from modification or deletion via SCPs
+  structural:
+  - id: scp-protect-cloudtrail
+    description: Deny modification or deletion of CloudTrail resources
+    actions:
+    - cloudtrail:DeleteTrail
+    - cloudtrail:StopLogging
+    - cloudtrail:UpdateTrail
+    conditions: []
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AU-9(a)
+      description: Audit information protected from unauthorized access
+      auto_assessable: true
+      evidence_source: scp
+
+- id: AU-10
+  family: Audit and Accountability
+  title: Non-repudiation
+  responsibility:
+    aws: CloudTrail with log file validation provides cryptographic non-repudiation;
+         KMS CMKs sign CloudTrail events
+    customer: Enable CloudTrail log file validation; use CMKs for CloudTrail encryption
+  structural:
+  - id: scp-protect-cloudtrail
+    description: Protect CloudTrail integrity enabling non-repudiation
+    actions:
+    - cloudtrail:DeleteTrail
+    - cloudtrail:StopLogging
+    - cloudtrail:UpdateTrail
+    conditions: []
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AU-10(a)
+      description: Non-repudiation capability for audit records
+      auto_assessable: true
+      evidence_source: scp
+
+- id: AU-12
+  family: Audit and Accountability
+  title: Audit Record Generation
+  responsibility:
+    aws: CloudTrail generates audit records for all API calls automatically
+    customer: Enable data events for S3, Lambda; configure log retention ≥ 3 years
+  assessment:
+    objectives:
+    - id: AU-12(a)
+      description: Audit records generated for all defined event types
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Configuration Management (CM) ---
+
+- id: CM-6
+  family: Configuration Management
+  title: Configuration Settings
+  responsibility:
+    aws: AWS Config tracks resource configuration; SSM provides baseline enforcement
+    customer: Define and enforce security baselines; use Config conformance packs
+  assessment:
+    objectives:
+    - id: CM-6(a)
+      description: Configuration settings established for IT products
+      auto_assessable: false
+      evidence_source: manual
+
+- id: CM-7
+  family: Configuration Management
+  title: Least Functionality
+  responsibility:
+    aws: SCPs restrict which AWS services can be accessed
+    customer: Deny access to services not required for the mission
+  structural:
+  - id: scp-restrict-unused-services
+    description: Deny access to non-authorized AWS services
+    actions:
+    - aws-marketplace:*
+    - support:*
+    conditions:
+    - aws:PrincipalOrgPaths != /*/admin/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: CM-7(a)
+      description: System configured to provide only essential capabilities
+      auto_assessable: true
+      evidence_source: scp
+
+# --- Identification and Authentication (IA) ---
+
+- id: IA-2
+  family: Identification and Authentication
+  title: Identification and Authentication (Organizational Users)
+  responsibility:
+    aws: IAM supports MFA; STS for federated identity via SAML/OIDC
+    customer: Enforce MFA for all human access; integrate with institutional IdP
+  structural:
+  - id: scp-require-mfa
+    description: Deny all actions without MFA for human principals
+    actions: ['*']
+    conditions:
+    - aws:MultiFactorAuthPresent != true
+    - aws:PrincipalType == IAMUser
+    effect: Deny
+  assessment:
+    objectives:
+    - id: IA-2(1)
+      description: MFA implemented for privileged accounts
+      auto_assessable: true
+      evidence_source: scp
+    - id: IA-2(2)
+      description: MFA implemented for non-privileged accounts
+      auto_assessable: true
+      evidence_source: scp
+
+- id: IA-3
+  family: Identification and Authentication
+  title: Device Identification and Authentication
+  responsibility:
+    aws: IAM supports certificate-based authentication for devices
+    customer: Use IAM Roles Anywhere or certificate-based auth for automated workloads
+  operational:
+  - id: cedar-device-identity
+    description: Automated workloads must present device certificates
+    entities: [principal, resource]
+    attributes:
+      principal: [device_cert_valid, device_type]
+  assessment:
+    objectives:
+    - id: IA-3(a)
+      description: Devices uniquely identified before connection
+      auto_assessable: false
+      evidence_source: manual
+
+- id: IA-5
+  family: Identification and Authentication
+  title: Authenticator Management
+  responsibility:
+    aws: IAM manages password policies and access key rotation
+    customer: Enforce password complexity; rotate access keys every 90 days
+  structural:
+  - id: scp-require-mfa
+    description: MFA required; static credentials alone insufficient
+    actions: ['*']
+    conditions:
+    - aws:MultiFactorAuthPresent != true
+    - aws:PrincipalType == IAMUser
+    effect: Deny
+  assessment:
+    objectives:
+    - id: IA-5(1)
+      description: Passwords meet defined complexity and rotation requirements
+      auto_assessable: false
+      evidence_source: manual
+
+- id: IA-8
+  family: Identification and Authentication
+  title: Identification and Authentication (Non-Organizational Users)
+  responsibility:
+    aws: Cognito for external users; IAM Roles for cross-account; SAML federation
+    customer: Deny anonymous access; federate with institutional IdP
+  structural:
+  - id: scp-deny-anonymous-access
+    description: Deny anonymous (unauthenticated) principal access
+    actions: ['*']
+    conditions:
+    - aws:PrincipalType == Anonymous
+    effect: Deny
+  assessment:
+    objectives:
+    - id: IA-8(a)
+      description: Non-organizational users identified and authenticated
+      auto_assessable: true
+      evidence_source: scp
+
+# --- Risk Assessment (RA) ---
+
+- id: RA-5
+  family: Risk Assessment
+  title: Vulnerability Monitoring and Scanning
+  responsibility:
+    aws: Amazon Inspector performs automated vulnerability assessments
+    customer: Enable Inspector; triage and remediate findings; track via POA&M
+  monitoring:
+  - id: config-inspector-enabled
+    resource_type: AWS::Inspector2::*
+    check: Inspector enabled for EC2 and container images
+  assessment:
+    objectives:
+    - id: RA-5(a)
+      description: Vulnerability scanning of systems performed
+      auto_assessable: false
+      evidence_source: manual
+
+# --- System and Communications Protection (SC) ---
+
+- id: SC-5
+  family: System and Communications Protection
+  title: Denial-of-Service Protection
+  responsibility:
+    aws: AWS Shield Standard at no cost; Shield Advanced for critical workloads
+    customer: Enable Shield Advanced for internet-facing research services
+  assessment:
+    objectives:
+    - id: SC-5(a)
+      description: System protects against denial-of-service events
+      auto_assessable: true
+      evidence_source: aws_managed
+
+- id: SC-7
+  family: System and Communications Protection
+  title: Boundary Protection
+  responsibility:
+    aws: VPC provides network isolation; SCPs enforce region boundaries
+    customer: Restrict operations to approved regions; deploy in private subnets
+  structural:
+  - id: scp-deny-unapproved-regions
+    description: Restrict all operations to approved US regions
+    actions: ['*']
+    conditions:
+    - aws:RequestedRegion not in [us-east-1, us-east-2, us-west-1, us-west-2]
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SC-7(a)
+      description: Communications monitored at external boundary
+      auto_assessable: true
+      evidence_source: scp
+
+- id: SC-8
+  family: System and Communications Protection
+  title: Transmission Confidentiality and Integrity
+  responsibility:
+    aws: All AWS service endpoints support TLS 1.2+; FIPS 140-2 endpoints available
+    customer: Enforce TLS via SCP; use FIPS 140-2 endpoints where required
+  structural:
+  - id: scp-require-fips-endpoints
+    description: Deny API calls not using secure transport
+    actions: ['*']
+    conditions:
+    - aws:SecureTransport == false
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SC-8(1)
+      description: Cryptographic mechanisms prevent disclosure during transmission
+      auto_assessable: true
+      evidence_source: scp
+
+- id: SC-8(1)
+  family: System and Communications Protection
+  title: Transmission Confidentiality — Cryptographic Implementation
+  responsibility:
+    aws: FIPS 140-2 validated TLS endpoints available in all commercial regions
+    customer: Configure applications to use FIPS endpoints; validate cipher suites
+  structural:
+  - id: scp-require-fips-endpoints
+    description: Enforce FIPS-validated TLS endpoints for all API calls
+    actions: ['*']
+    conditions:
+    - aws:SecureTransport == false
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SC-8(1)(a)
+      description: FIPS-validated cryptography implemented for transmission
+      auto_assessable: true
+      evidence_source: scp
+
+- id: SC-12
+  family: System and Communications Protection
+  title: Cryptographic Key Establishment and Management
+  responsibility:
+    aws: AWS KMS provides FIPS 140-2 Level 3 validated key management
+    customer: Use customer-managed KMS keys; define and document key policy
+  assessment:
+    objectives:
+    - id: SC-12(a)
+      description: Cryptographic key management plan established
+      auto_assessable: false
+      evidence_source: manual
+
+- id: SC-13
+  family: System and Communications Protection
+  title: Cryptographic Protection
+  responsibility:
+    aws: KMS, ACM, CloudHSM provide FIPS-validated cryptographic services
+    customer: Mandate KMS encryption for CUI data at rest
+  structural:
+  - id: scp-require-kms-encryption
+    description: Deny creation of unencrypted storage for CUI
+    actions:
+    - s3:PutObject
+    - ec2:CreateVolume
+    - rds:CreateDBInstance
+    - dynamodb:CreateTable
+    conditions:
+    - aws:RequestedRegion in [us-east-1, us-east-2, us-west-1, us-west-2]
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SC-13(a)
+      description: FIPS-validated cryptographic implementations used
+      auto_assessable: true
+      evidence_source: scp
+
+- id: SC-28
+  family: System and Communications Protection
+  title: Protection of Information at Rest
+  responsibility:
+    aws: KMS provides server-side encryption for 100+ AWS services
+    customer: Enable encryption by default; enforce CMKs for CUI
+  structural:
+  - id: scp-require-kms-encryption
+    description: Deny writes to unencrypted storage (S3, EBS, RDS, DynamoDB)
+    actions:
+    - s3:PutObject
+    - ec2:CreateVolume
+    - rds:CreateDBInstance
+    conditions:
+    - aws:RequestedRegion in [us-east-1, us-east-2, us-west-1, us-west-2]
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SC-28(1)
+      description: Cryptographic mechanisms prevent unauthorized disclosure at rest
+      auto_assessable: true
+      evidence_source: scp
+
+# --- System and Information Integrity (SI) ---
+
+- id: SI-2
+  family: System and Information Integrity
+  title: Flaw Remediation
+  responsibility:
+    aws: AWS manages patching for managed services (RDS, Lambda, managed nodes)
+    customer: Patch EC2 instances via SSM Patch Manager; track with Inspector
+  assessment:
+    objectives:
+    - id: SI-2(a)
+      description: Flaws identified, reported, and corrected
+      auto_assessable: false
+      evidence_source: manual
+
+- id: SI-3
+  family: System and Information Integrity
+  title: Malicious Code Protection
+  responsibility:
+    aws: Inspector scans EC2 and containers; GuardDuty detects malicious activity
+    customer: Enable GuardDuty; implement endpoint protection on EC2
+  monitoring:
+  - id: config-guardduty-enabled
+    resource_type: AWS::GuardDuty::Detector
+    check: GuardDuty enabled and active in all regions
+  assessment:
+    objectives:
+    - id: SI-3(a)
+      description: Malicious code protection mechanisms employed at entry/exit points
+      auto_assessable: false
+      evidence_source: manual
+
+- id: SI-4
+  family: System and Information Integrity
+  title: System Monitoring
+  responsibility:
+    aws: CloudWatch, GuardDuty, Security Hub provide continuous monitoring
+    customer: Configure CloudWatch alarms; enable GuardDuty threat detection
+  operational:
+  - id: cedar-monitoring-active
+    description: System monitoring active and delivering events to Cedar PDP
+    entities: [environment]
+    attributes:
+      environment: [monitoring_enabled, last_event_time]
+  assessment:
+    objectives:
+    - id: SI-4(a)
+      description: System monitored to detect attacks and indicators of potential attacks
+      auto_assessable: false
+      evidence_source: manual
+
+- id: SI-7
+  family: System and Information Integrity
+  title: Software, Firmware, and Information Integrity
+  responsibility:
+    aws: CloudTrail with log file validation; S3 Object Lock for log immutability
+    customer: Enable CloudTrail log file validation; use CodeSigning for Lambda
+  structural:
+  - id: scp-protect-cloudtrail
+    description: Prevent deletion of CloudTrail audit records
+    actions:
+    - cloudtrail:DeleteTrail
+    - cloudtrail:StopLogging
+    - cloudtrail:UpdateTrail
+    conditions: []
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SI-7(1)
+      description: Integrity verification tools detect unauthorized changes
+      auto_assessable: true
+      evidence_source: scp
+
+# --- System and Services Acquisition (SA) ---
+
+- id: SA-9
+  family: System and Services Acquisition
+  title: External System Services
+  responsibility:
+    aws: Service endpoints restricted by region; Marketplace controls external software
+    customer: Define approved external services; deny unsanctioned Marketplace usage
+  structural:
+  - id: scp-restrict-unused-services
+    description: Deny access to unsanctioned external services
+    actions:
+    - aws-marketplace:*
+    conditions:
+    - aws:PrincipalOrgPaths != /*/admin/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SA-9(a)
+      description: External system services authorized by policy
+      auto_assessable: true
+      evidence_source: scp

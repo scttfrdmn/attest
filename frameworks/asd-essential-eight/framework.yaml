@@ -1,0 +1,265 @@
+id: asd-essential-eight
+name: ASD Essential Eight
+version: 'Maturity Level 1 (2023)'
+source: https://www.cyber.gov.au/resources-business-and-government/essential-cyber-security/essential-eight
+artifact_reports: []
+
+# ASD Essential Eight are the Australian Signals Directorate's eight
+# prioritised mitigation strategies for AWS-hosted research services.
+# This definition covers Maturity Level 1 (minimum baseline) with
+# structural enforcement via SCPs. Relevant for ARC/NHMRC-funded labs,
+# Aus-UK research partnerships, and ITAR-controlled collaborations
+# with Australian defence research organisations.
+#
+# Maturity Levels:
+#   ML1: Partially aligned — baseline protections
+#   ML2: Mostly aligned — additional hardening (future assessment objectives)
+#   ML3: Fully aligned — rigorous implementation
+#
+# SCP overlap: MFA, admin restrictions, encryption already covered by
+# NIST 800-171 R2. Marginal SCP cost: ~0 chars for ML1.
+
+controls:
+
+# --- Strategy 1: Application Control ---
+
+- id: E8-1
+  family: Application Control
+  title: Application control implemented on workstations and servers
+  responsibility:
+    aws: AWS Lambda code signing enforces application control; Container image signing
+         prevents unauthorized container execution
+    customer: Enable Lambda code signing; use verified container registries; restrict
+              unapproved software deployment
+  structural:
+  - id: scp-deny-unsigned-lambda
+    description: Deny deployment of Lambda functions without code signing configuration
+    actions:
+    - lambda:CreateFunction
+    - lambda:UpdateFunctionCode
+    conditions:
+    - lambda:CodeSigningConfigArn == ''
+    effect: Deny
+  assessment:
+    objectives:
+    - id: E8-1.ML1.a
+      description: Application control implemented to prevent execution of unapproved/malicious programs
+      auto_assessable: false
+      evidence_source: manual
+    - id: E8-1.ML1.b
+      description: Application control applied to user profiles and temporary folders
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Strategy 2: Patch Applications ---
+
+- id: E8-2
+  family: Patch Applications
+  title: Applications patched within 2 weeks; extreme risk within 48 hours
+  responsibility:
+    aws: Amazon Inspector identifies application vulnerabilities; SSM Patch Manager
+         automates patching for EC2-hosted applications
+    customer: Configure Inspector; patch critical vulnerabilities within 48 hours;
+              all others within 2 weeks; use Patch Manager baselines
+  monitoring:
+  - id: config-inspector-findings
+    resource_type: AWS::Inspector2::*
+    check: Inspector enabled; critical findings remediated within 48h
+  assessment:
+    objectives:
+    - id: E8-2.ML1.a
+      description: Patches for extreme risk vulnerabilities applied within 48 hours
+      auto_assessable: false
+      evidence_source: manual
+    - id: E8-2.ML1.b
+      description: Patches for other vulnerabilities applied within 2 weeks
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Strategy 3: Configure Microsoft Office Macro Settings ---
+
+- id: E8-3
+  family: Macro Settings
+  title: Microsoft Office macro settings configured
+  responsibility:
+    aws: "Not directly applicable to AWS IaaS; relevant for researcher workstations accessing cloud storage."
+    customer: "This control applies to endpoint devices, not AWS services directly. Mark AWS-side as covered by data handling policies."
+  assessment:
+    objectives:
+    - id: E8-3.ML1.a
+      description: Microsoft Office macro settings configured to block unsigned macros
+      auto_assessable: false
+      evidence_source: manual
+    - id: E8-3.ML1.b
+      description: Office macro antivirus scanning enabled
+      auto_assessable: true
+      evidence_source: aws_managed
+
+# --- Strategy 4: User Application Hardening ---
+
+- id: E8-4
+  family: User Application Hardening
+  title: Web browsers and PDF software hardened; Flash/Java/ads blocked
+  responsibility:
+    aws: "Browser security policies apply to researcher workstations, not AWS services. AWS-side: S3 bucket policies prevent malicious file hosting."
+    customer: "Block Flash, Java plugins on workstations; use ad/script blockers; restrict S3 content hosting to approved content types."
+  structural:
+  - id: scp-block-s3-public-access
+    description: Block S3 public access to prevent malicious content hosting
+    actions: [s3:PutBucketPublicAccessBlock]
+    conditions:
+    - s3:PublicAccessBlockAmazonS3 != true
+    effect: Deny
+  assessment:
+    objectives:
+    - id: E8-4.ML1.a
+      description: Web browser hardened; Flash and Java plugins disabled
+      auto_assessable: false
+      evidence_source: manual
+    - id: E8-4.ML1.b
+      description: PDF software configured to block internet access
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Strategy 5: Restrict Administrative Privileges ---
+
+- id: E8-5
+  family: Administrative Privileges
+  title: Admin privileges restricted; only used for admin tasks; no email/web browsing from admin accounts
+  responsibility:
+    aws: IAM enforces separation between admin and standard roles; SCPs deny wildcard
+         permissions to non-admin principals
+    customer: Admin accounts must not be used for standard research work; separate
+              admin and researcher IAM roles
+  structural:
+  - id: scp-deny-root-usage
+    description: Deny root account for non-admin operations
+    actions: ['*']
+    conditions:
+    - aws:PrincipalArn == arn:aws:iam::*:root
+    effect: Deny
+  - id: scp-deny-admin-star
+    description: Deny iam:* to non-admin principals — enforces privilege separation
+    actions:
+    - iam:CreateUser
+    - iam:DeleteUser
+    - iam:AttachUserPolicy
+    conditions:
+    - aws:PrincipalOrgPaths != /*/admin/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: E8-5.ML1.a
+      description: Admin privileges limited to users who require them
+      auto_assessable: true
+      evidence_source: scp
+    - id: E8-5.ML1.b
+      description: Admin accounts not used for email or web browsing
+      auto_assessable: false
+      evidence_source: manual
+    - id: E8-5.ML1.c
+      description: Admin accounts created without email addresses
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Strategy 6: Patch Operating Systems ---
+
+- id: E8-6
+  family: Patch Operating Systems
+  title: Operating systems patched within 2 weeks; extreme risk within 48 hours
+  responsibility:
+    aws: AWS manages OS patching for managed services; SSM Patch Manager for EC2
+    customer: Configure SSM Patch Manager baselines; schedule automated patching;
+              monitor compliance dashboard
+  monitoring:
+  - id: config-ssm-patch-compliance
+    resource_type: AWS::SSM::PatchCompliance
+    check: EC2 instances patched within 2 weeks; critical patches within 48h
+  assessment:
+    objectives:
+    - id: E8-6.ML1.a
+      description: Extreme risk OS patches applied within 48 hours
+      auto_assessable: false
+      evidence_source: manual
+    - id: E8-6.ML1.b
+      description: Other OS patches applied within 2 weeks
+      auto_assessable: false
+      evidence_source: manual
+    - id: E8-6.ML1.c
+      description: Unsupported operating systems not used
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Strategy 7: Multi-Factor Authentication ---
+
+- id: E8-7
+  family: Multi-Factor Authentication
+  title: MFA for remote access and privileged actions
+  responsibility:
+    aws: IAM supports MFA for console and API access; STS for federated identity
+    customer: Enforce MFA for all human principals; require phishing-resistant MFA
+              (FIDO2/WebAuthn) for privileged accounts
+  structural:
+  - id: scp-require-mfa
+    description: Deny all actions without MFA for human principals
+    actions: ['*']
+    conditions:
+    - aws:MultiFactorAuthPresent != true
+    - aws:PrincipalType == IAMUser
+    effect: Deny
+  assessment:
+    objectives:
+    - id: E8-7.ML1.a
+      description: MFA required for internet-facing services
+      auto_assessable: true
+      evidence_source: scp
+    - id: E8-7.ML1.b
+      description: MFA required for remote access solutions
+      auto_assessable: true
+      evidence_source: scp
+    - id: E8-7.ML1.c
+      description: MFA required for privileged access to systems
+      auto_assessable: true
+      evidence_source: scp
+
+# --- Strategy 8: Regular Backups ---
+
+- id: E8-8
+  family: Regular Backups
+  title: Backups of data and configuration taken and tested regularly
+  responsibility:
+    aws: AWS Backup provides centralised backup management; S3 versioning and
+         Cross-Region Replication for data durability
+    customer: Define backup policies; test restoration; store backups in separate
+              region; protect backups from ransomware with Object Lock
+  structural:
+  - id: scp-protect-backup-vaults
+    description: Deny deletion of AWS Backup vaults and recovery points
+    actions:
+    - backup:DeleteBackupVault
+    - backup:DeleteRecoveryPoint
+    - backup:UpdateRecoveryPointLifecycle
+    conditions: []
+    effect: Deny
+  monitoring:
+  - id: config-aws-backup-compliance
+    resource_type: AWS::Backup::BackupVault
+    check: Backup vault exists with recent recovery points
+  assessment:
+    objectives:
+    - id: E8-8.ML1.a
+      description: Backups of important data taken at least daily
+      auto_assessable: false
+      evidence_source: manual
+    - id: E8-8.ML1.b
+      description: Backups stored separately (different region or account)
+      auto_assessable: false
+      evidence_source: manual
+    - id: E8-8.ML1.c
+      description: Backups protected from modification and deletion
+      auto_assessable: true
+      evidence_source: scp
+    - id: E8-8.ML1.d
+      description: Restoration from backup tested annually
+      auto_assessable: false
+      evidence_source: manual

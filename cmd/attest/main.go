@@ -15,6 +15,7 @@ import (
 
 	"net/mail"
 	"regexp"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -25,6 +26,8 @@ import (
 	"github.com/provabl/attest/internal/ai"
 	"github.com/provabl/attest/internal/auth"
 	"github.com/provabl/attest/internal/dashboard"
+	"github.com/provabl/attest/internal/document/cmmc"
+	"github.com/provabl/attest/internal/multisre"
 	"github.com/provabl/attest/internal/principal"
 	"github.com/provabl/attest/internal/provision"
 	"github.com/provabl/attest/internal/artifact"
@@ -47,7 +50,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.9.1"
+var version = "0.10.0"
 
 func main() {
 	root := &cobra.Command{
@@ -86,6 +89,7 @@ within it are research environments that inherit the org-level posture.`,
 		aiCmd(),
 		versionCmd(),
 		verifyCmd(),
+		sreCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -379,6 +383,17 @@ posture is derived from the compiled crosswalk (run 'attest compile' first).`,
 				fmt.Println("\nTip: run 'attest compile' first for crosswalk-based posture.")
 			}
 
+			// Run conflict detection when multiple frameworks are active.
+			if len(frameworks) > 1 {
+				conflicts := framework.DetectConflicts(frameworks)
+				if len(conflicts) > 0 {
+					fmt.Print(framework.FormatConflicts(conflicts))
+					if framework.HasBlockingConflicts(conflicts) {
+						fmt.Println("  ✗ Blocking conflicts detected — review resolutions above before deploying.")
+					}
+				}
+			}
+
 			// Optional: direct API verification (free, no Config required).
 			verify, _ := cmd.Flags().GetBool("verify")
 			if verify && region != "" {
@@ -540,7 +555,9 @@ func frameworksCmd() *cobra.Command {
 				fmt.Println("  ferpa               FERPA                             available")
 				fmt.Println("  iso27001-2022        ISO/IEC 27001:2022               available")
 				fmt.Println("  fedramp-moderate     FedRAMP Moderate Baseline        available")
-				fmt.Println("  nist-800-53-r5      NIST SP 800-53 Rev 5 (FedRAMP)   available")
+				fmt.Println("  nist-800-53-r5      NIST SP 800-53 Rev 5 (FedRAMP)    available")
+				fmt.Println("  uk-cyber-essentials UK Cyber Essentials               available")
+				fmt.Println("  asd-essential-eight ASD Essential Eight (Australia)   available")
 				fmt.Println("  itar                ITAR Export Control                available")
 				fmt.Println("  cui                 CUI (32 CFR Part 2002)            available")
 				return nil
@@ -652,6 +669,16 @@ the raw policy artifacts (coming in v0.5.0).`,
 			}
 			if len(frameworks) == 0 {
 				return fmt.Errorf("no frameworks could be loaded from %s", fwDir)
+			}
+
+			// Run conflict detection before compile — warn on contradictions.
+			if len(frameworks) > 1 {
+				if conflicts := framework.DetectConflicts(frameworks); len(conflicts) > 0 {
+					fmt.Print(framework.FormatConflicts(conflicts))
+					if framework.HasBlockingConflicts(conflicts) {
+						return fmt.Errorf("blocking framework conflicts detected — resolve before compiling")
+					}
+				}
 			}
 
 			// Resolve cross-framework controls.
@@ -1265,7 +1292,7 @@ func generateCmd() *cobra.Command {
 		Use:   "generate",
 		Short: "Generate compliance documents from compiled crosswalk",
 	}
-	cmd.AddCommand(generateSSPCmd(), generatePOAMCmd(), generateAssessCmd(), generateOSCALCmd())
+	cmd.AddCommand(generateSSPCmd(), generatePOAMCmd(), generateAssessCmd(), generateOSCALCmd(), generateCMMCBundleCmd())
 	return cmd
 }
 
@@ -1535,6 +1562,76 @@ func generateOSCAL(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Cros
 	}
 	fmt.Printf("  Assessment Results: %s\n", assPath)
 	return nil
+}
+
+func generateCMMCBundleCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cmmc-bundle",
+		Short: "Generate a complete CMMC Level 2 assessment package",
+		Long: `Generates all artifacts required for a CMMC Level 2 C3PAO assessment:
+  - readiness.md       — traffic-light readiness report with evidence index
+  - cmmc-score.md      — per-control self-assessment score (out of 550)
+  - evidence/          — SCP manifest, attestations index, waivers register
+  - crosswalk-cmmc.yaml — control → artifact mapping
+  - cmmc-bundle-DATE.zip — zip archive of the complete package
+
+Run 'attest compile' and 'attest scan' first to ensure the crosswalk is current.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			outputDir, _ := cmd.Flags().GetString("output")
+			assessorOrg, _ := cmd.Flags().GetString("assessor")
+
+			// Load SRE.
+			sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml"))
+			if err != nil {
+				return fmt.Errorf("reading .attest/sre.yaml: %w", err)
+			}
+			var sre schema.SRE
+			if err := yaml.Unmarshal(sreData, &sre); err != nil {
+				return err
+			}
+
+			// Load crosswalk.
+			cwData, err := os.ReadFile(filepath.Join(".attest", "compiled", "crosswalk.yaml"))
+			if err != nil {
+				return fmt.Errorf("run 'attest compile' first to generate the crosswalk: %w", err)
+			}
+			var cw schema.Crosswalk
+			if err := yaml.Unmarshal(cwData, &cw); err != nil {
+				return fmt.Errorf("parsing crosswalk: %w", err)
+			}
+
+			if outputDir == "" {
+				outputDir = fmt.Sprintf("cmmc-bundle-%s", time.Now().UTC().Format("2006-01-02"))
+			}
+
+			fmt.Printf("Generating CMMC Level 2 assessment bundle → %s/\n", outputDir)
+			bundle, err := cmmc.Generate(&cmmc.BundleConfig{
+				StoreDir:    ".attest",
+				OutputDir:   outputDir,
+				OrgID:       sre.OrgID,
+				AssessorOrg: assessorOrg,
+			}, &sre, &cw)
+			if err != nil {
+				return fmt.Errorf("generating bundle: %w", err)
+			}
+
+			pct := 0
+			if bundle.MaxScore > 0 {
+				pct = bundle.Score * 100 / bundle.MaxScore
+			}
+			fmt.Printf("\nBundle complete:\n")
+			fmt.Printf("  Score:    %d / %d (%d%%)\n", bundle.Score, bundle.MaxScore, pct)
+			fmt.Printf("  Location: %s/\n", outputDir)
+			fmt.Printf("  Archive:  %s/cmmc-bundle-%s.zip\n", outputDir, bundle.AssessmentDate)
+			for _, item := range bundle.Items {
+				fmt.Printf("  + %s\n", item.Filename)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().String("output", "", "Output directory (default: cmmc-bundle-YYYY-MM-DD)")
+	cmd.Flags().String("assessor", "", "C3PAO organization name (optional, included in report header)")
+	return cmd
 }
 
 func diffCmd() *cobra.Command {
@@ -2893,6 +2990,250 @@ Example:
 		},
 	}
 	cmd.Flags().String("org", "provabl", "GitHub org that signed the release")
+	return cmd
+}
+
+func sreCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "sre",
+		Short: "Manage multiple AWS Organizations (SREs)",
+		Long: `Register and manage multiple AWS Organizations under one attest configuration.
+Use this when your institution operates several SREs (production, dev, partner networks).
+
+Registry stored in .attest/sres.yaml. Each SRE gets its own .attest/.sre-<id>/ store.`,
+	}
+
+	mgr := multisre.NewManager(".attest")
+
+	addSub := &cobra.Command{
+		Use:   "add",
+		Short: "Register a new SRE (AWS Organization)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, _ := cmd.Flags().GetString("id")
+			orgID, _ := cmd.Flags().GetString("org-id")
+			region, _ := cmd.Flags().GetString("region")
+			profile, _ := cmd.Flags().GetString("profile")
+			fwList, _ := cmd.Flags().GetStringSlice("framework")
+			notes, _ := cmd.Flags().GetString("notes")
+			if id == "" || orgID == "" {
+				return fmt.Errorf("--id and --org-id are required")
+			}
+			entry := multisre.SREEntry{
+				ID: id, OrgID: orgID, Region: region,
+				Profile: profile, Frameworks: fwList, Notes: notes,
+			}
+			if err := mgr.Add(entry); err != nil {
+				return err
+			}
+			fmt.Printf("Registered SRE: %s (%s, region: %s)\n", id, orgID, region)
+			fmt.Printf("  Frameworks: %s\n", strings.Join(fwList, ", "))
+			fmt.Printf("  Store: .attest/.sre-%s/\n", id)
+			fmt.Println("\nNext: run 'attest init' with AWS_PROFILE=" + profile + " to initialize this SRE's store.")
+			return nil
+		},
+	}
+	addSub.Flags().String("id", "", "SRE identifier (required, e.g., production)")
+	addSub.Flags().String("org-id", "", "AWS Organization ID (required, e.g., o-xxxxx)")
+	addSub.Flags().String("region", "us-east-1", "AWS region")
+	addSub.Flags().String("profile", "", "AWS CLI profile")
+	addSub.Flags().StringSlice("framework", nil, "Active framework IDs")
+	addSub.Flags().String("notes", "", "Notes about this SRE")
+
+	listSub := &cobra.Command{
+		Use:   "list",
+		Short: "List all registered SREs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sres, err := mgr.List()
+			if err != nil {
+				return err
+			}
+			if len(sres) == 0 {
+				fmt.Println("No SREs registered. Use 'attest sre add' to register one.")
+				return nil
+			}
+			fmt.Printf("  %-15s  %-20s  %-12s  %s\n", "ID", "Org ID", "Region", "Frameworks")
+			fmt.Println("  " + strings.Repeat("─", 65))
+			for _, s := range sres {
+				fmt.Printf("  %-15s  %-20s  %-12s  %s\n",
+					s.ID, s.OrgID, s.Region, strings.Join(s.Frameworks, ", "))
+			}
+			return nil
+		},
+	}
+
+	removeSub := &cobra.Command{
+		Use:   "remove <id>",
+		Short: "Remove an SRE from the registry",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := mgr.Remove(args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("Removed SRE: %s\n", args[0])
+			fmt.Printf("  Note: .attest/.sre-%s/ was not deleted — remove manually if no longer needed.\n", args[0])
+			return nil
+		},
+	}
+
+	scanSub := &cobra.Command{
+		Use:   "scan",
+		Short: "Scan posture for one or all registered SREs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, _ := cmd.Flags().GetString("id")
+			all, _ := cmd.Flags().GetBool("all")
+
+			if !all && id == "" {
+				return fmt.Errorf("specify --id <sre-id> or --all")
+			}
+
+			sres, err := mgr.List()
+			if err != nil {
+				return err
+			}
+			if len(sres) == 0 {
+				return fmt.Errorf("no SREs registered")
+			}
+
+			// Filter to single SRE if --id specified.
+			if id != "" {
+				filtered := sres[:0]
+				for _, s := range sres {
+					if s.ID == id {
+						filtered = append(filtered, s)
+					}
+				}
+				if len(filtered) == 0 {
+					return fmt.Errorf("SRE %q not found", id)
+				}
+				sres = filtered
+			}
+
+			fmt.Printf("Scanning %d SRE(s)...\n\n", len(sres))
+
+			// Scan by reading compiled crosswalks for each SRE's store.
+			var wg sync.WaitGroup
+			type result struct {
+				id    string
+				score int
+				max   int
+				err   error
+			}
+			results := make([]result, len(sres))
+			for i, entry := range sres {
+				wg.Add(1)
+				go func(i int, entry multisre.SREEntry) {
+					defer wg.Done()
+					storeDir := mgr.StoreDir(entry.ID)
+					cwPath := filepath.Join(storeDir, "compiled", "crosswalk.yaml")
+					data, err := os.ReadFile(cwPath)
+					if err != nil {
+						results[i] = result{id: entry.ID, err: fmt.Errorf("no crosswalk (run attest compile for this SRE)")}
+						return
+					}
+					var cw schema.Crosswalk
+					if err := yaml.Unmarshal(data, &cw); err != nil {
+						results[i] = result{id: entry.ID, err: err}
+						return
+					}
+					score, maxScore := 0, 0
+					for _, e := range cw.Entries {
+						maxScore += 5
+						switch e.Status {
+						case "enforced", "aws_covered":
+							score += 5
+						case "partial":
+							score += 3
+						}
+					}
+					results[i] = result{id: entry.ID, score: score, max: maxScore}
+				}(i, entry)
+			}
+			wg.Wait()
+
+			totalScore, totalMax := 0, 0
+			for _, r := range results {
+				if r.err != nil {
+					fmt.Printf("  %-15s  ✗ %v\n", r.id, r.err)
+					continue
+				}
+				pct := 0
+				if r.max > 0 {
+					pct = r.score * 100 / r.max
+				}
+				fmt.Printf("  %-15s  %d / %d  (%d%%)\n", r.id, r.score, r.max, pct)
+				totalScore += r.score
+				totalMax += r.max
+			}
+			if len(sres) > 1 && totalMax > 0 {
+				fmt.Printf("\n  %-15s  %d / %d  (%d%%)  ← aggregate\n",
+					"TOTAL", totalScore, totalMax, totalScore*100/totalMax)
+			}
+			return nil
+		},
+	}
+	scanSub.Flags().String("id", "", "SRE ID to scan")
+	scanSub.Flags().Bool("all", false, "Scan all registered SREs")
+
+	diffSub := &cobra.Command{
+		Use:   "diff --from <id> --to <id>",
+		Short: "Compare posture between two registered SREs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fromID, _ := cmd.Flags().GetString("from")
+			toID, _ := cmd.Flags().GetString("to")
+			if fromID == "" || toID == "" {
+				return fmt.Errorf("--from and --to are required")
+			}
+			// Load crosswalks for both SREs and diff their statuses.
+			loadCW := func(id string) (map[string]string, error) {
+				data, err := os.ReadFile(filepath.Join(mgr.StoreDir(id), "compiled", "crosswalk.yaml"))
+				if err != nil {
+					return nil, fmt.Errorf("SRE %q: no crosswalk — run attest compile first", id)
+				}
+				var cw schema.Crosswalk
+				if err := yaml.Unmarshal(data, &cw); err != nil {
+					return nil, err
+				}
+				m := make(map[string]string, len(cw.Entries))
+				for _, e := range cw.Entries {
+					m[e.ControlID] = e.Status
+				}
+				return m, nil
+			}
+			from, err := loadCW(fromID)
+			if err != nil {
+				return err
+			}
+			to, err := loadCW(toID)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Posture diff: %s → %s\n\n", fromID, toID)
+			different := 0
+			for id, fromStatus := range from {
+				toStatus := to[id]
+				if fromStatus != toStatus {
+					different++
+					fmt.Printf("  %-12s  %-12s → %s\n", id, fromStatus, toStatus)
+				}
+			}
+			for id, toStatus := range to {
+				if _, exists := from[id]; !exists {
+					different++
+					fmt.Printf("  %-12s  (new)       → %s\n", id, toStatus)
+				}
+			}
+			if different == 0 {
+				fmt.Println("  No differences — posture is identical across both SREs.")
+			} else {
+				fmt.Printf("\n  %d control(s) differ between %s and %s.\n", different, fromID, toID)
+			}
+			return nil
+		},
+	}
+	diffSub.Flags().String("from", "", "Source SRE ID")
+	diffSub.Flags().String("to", "", "Target SRE ID")
+
+	cmd.AddCommand(addSub, listSub, removeSub, scanSub, diffSub)
 	return cmd
 }
 

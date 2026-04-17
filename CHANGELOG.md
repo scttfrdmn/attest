@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-04-17
+
+### Added
+
+- **NIST SP 800-53 Rev 5 framework** (`frameworks/nist-800-53-r5/framework.yaml`) — 31 controls
+  across AC, AU, CM, IA, RA, SC, SI, SA families. Fixes framework defect: CLI listed this
+  framework as available but no YAML existed. Unlocks FedRAMP High and federal agency
+  customers. ~75% of SCP conditions shared with NIST 800-171 R2; marginal budget cost ~400 chars.
+- **UK Cyber Essentials framework** (`frameworks/uk-cyber-essentials/framework.yaml`) — 11 controls
+  across 5 themes (Firewalls, Secure Configuration, Access Control, Malware Protection,
+  Patch Management). For UK research networks and Horizon/UKRI collaborations. Near-zero
+  SCP budget cost when combined with NIST 800-171 R2. Closes #58.
+- **ASD Essential Eight framework** (`frameworks/asd-essential-eight/framework.yaml`) — 8 controls
+  at Maturity Level 1. For ARC/NHMRC-funded labs and Aus-UK research partnerships. Closes #57.
+- **Multi-framework conflict detection** (`internal/framework/conflicts.go`) — `DetectConflicts()`
+  analyses active frameworks and surfaces contradictions, supersessions, and coverage notes.
+  Detected patterns: ITAR vs NIST region conflict (blocking), HIPAA emergency access vs NIST MFA
+  (info), UK CE vs NIST region supersession, NIST vs FERPA encryption supersession, ASD coverage
+  warning. Wired into `attest scan` and `attest compile` (blocks compile on blocking conflicts).
+  Closes #61.
+- **CDK IaC output** (`internal/iac/output.go` — `generateCDK()`) — `attest compile --output cdk`
+  produces `stack.ts` (AWS CDK v2 TypeScript), `cdk.json`, `package.json`, `tsconfig.json` in
+  `.attest/compiled/cdk/`. Replaces the hard error that blocked CDK users. Closes #37.
+- **CMMC Level 2 assessment bundle** (`internal/document/cmmc/bundle.go`) —
+  `attest generate cmmc-bundle [--output <dir>] [--assessor <org>]` produces the complete C3PAO
+  assessment package: `readiness.md` (traffic-light report), `cmmc-score.md` (per-control scoring
+  out of 550), `evidence/` directory (SCP manifest, attestations index, waivers register),
+  `crosswalk-cmmc.yaml`, and a `cmmc-bundle-DATE.zip` archive.
+- **Multi-SRE management** (`internal/multisre/manager.go`) — `attest sre add/list/remove/scan/diff`
+  manages compliance across multiple AWS Organizations from one registry (`.attest/sres.yaml`).
+  `scan --all` runs concurrently. `diff --from <id> --to <id>` compares posture between SREs.
+  Designed for multi-campus research networks and partner institution SREs.
+- `frameworks list` now includes `nist-800-53-r5`, `uk-cyber-essentials`, `asd-essential-eight`.
+
+### Fixed
+
+- Framework defect: `nist-800-53-r5` was listed in CLI as available but no YAML existed.
+  YAML now added; the framework loads correctly via `attest frameworks add nist-800-53-r5`.
+
+### Tests added
+
+- `internal/framework/conflicts_test.go` — 11 tests for `DetectConflicts()`, `HasBlockingConflicts()`,
+  `FormatConflicts()` covering all 6 conflict patterns.
+- `internal/multisre/manager_test.go` — 9 tests for add, list, get, remove, validation,
+  persistence, default region, and aggregate posture.
+- `internal/reporting/incidents_test.go` — 7 tests for create, list, resolve, uniqueness,
+  timing, and persistence.
+- `internal/principal/resolver_test.go` — 5 tests for `roleNameFromARN()`, `extractCN()`,
+  resolver chain, graceful failure, and PrincipalARN propagation.
+- `internal/iac/output_test.go` — 5 tests for Terraform generation, CDK generation,
+  `toCDKResourceID()`, unsupported format, and missing SCP dir.
+
 ## [0.9.1] - 2026-04-17
 
 ### Security
