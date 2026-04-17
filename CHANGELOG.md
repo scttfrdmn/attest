@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-04-17
+
+### Security
+
+- **CRITICAL fixed**: Path traversal in `attest compile --output` — the `--output`
+  flag now validates against an explicit allowlist `{"terraform", "cdk"}`. Previously
+  any string was accepted and used directly in `filepath.Join(compiledDir, iacOutput)`,
+  allowing `--output ../../tmp` to write compiled artifacts outside `.attest/compiled/`.
+- **HIGH fixed**: Missing ID validation in `attest sre diff --from/--to` — both flag
+  values are now validated with `IsValidSREID()` (exported from `multisre` package)
+  before being used in `StoreDir()`. Prevents path traversal via the diff subcommand
+  that bypassed the validation enforced by `Add()`.
+- **HIGH fixed**: OrgID markdown injection in CMMC bundle — `Manager.Add()` now
+  validates `OrgID` against `isValidOrgID()`: must match `o-[a-z0-9]+` pattern,
+  rejecting `]`, `[`, `<`, `>`, quotes, and other HTML/markdown metacharacters that
+  would be injected into generated compliance reports.
+- **HIGH fixed**: Missing runtime path validation in `iac.Generator.Generate()` — now
+  rejects relative `outputDir` values that start with `..` (path traversal). Absolute
+  paths remain valid for programmatic use; CLI callers already validate via allowlist.
+
+### Added
+
+- `multisre.IsValidSREID()` — exported wrapper for the internal ID validator, allowing
+  CLI diff/scan subcommands to validate `--from`/`--to` flags before reaching `StoreDir`.
+- `multisre.isValidOrgID()` — validates AWS Org IDs (`o-[a-z0-9]+`), rejecting
+  markdown metacharacters.
+- 2 new test files covering the new fixes (15+ test cases):
+  - `internal/multisre/orgid_test.go`: OrgID validation and injection rejection
+  - `internal/iac/generator_security_test.go`: outputDir path traversal prevention
+
 ## [0.10.1] - 2026-04-17
 
 ### Security

@@ -50,7 +50,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.10.1"
+var version = "0.10.2"
 
 func main() {
 	root := &cobra.Command{
@@ -772,6 +772,11 @@ the raw policy artifacts (coming in v0.5.0).`,
 			}
 
 			if iacOutput != "" {
+				// Validate output format against strict allowlist to prevent path traversal.
+				// iacOutput is used in filepath.Join — any non-allowlisted value is rejected.
+				if iacOutput != "terraform" && iacOutput != "cdk" {
+					return fmt.Errorf("--output must be 'terraform' or 'cdk', got: %q", iacOutput)
+				}
 				fmt.Printf("  Generating %s IaC output...\n", iacOutput)
 				iacGen := iac.NewGenerator(iac.Format(iacOutput), filepath.Join(compiledDir, iacOutput))
 				if err := iacGen.Generate(compiledDir); err != nil {
@@ -3190,6 +3195,13 @@ Registry stored in .attest/sres.yaml. Each SRE gets its own .attest/.sre-<id>/ s
 			toID, _ := cmd.Flags().GetString("to")
 			if fromID == "" || toID == "" {
 				return fmt.Errorf("--from and --to are required")
+			}
+			// Validate IDs to prevent path traversal via StoreDir().
+			if !multisre.IsValidSREID(fromID) {
+				return fmt.Errorf("invalid --from ID %q: must be alphanumeric, hyphen, or underscore", fromID)
+			}
+			if !multisre.IsValidSREID(toID) {
+				return fmt.Errorf("invalid --to ID %q: must be alphanumeric, hyphen, or underscore", toID)
 			}
 			// Load crosswalks for both SREs and diff their statuses.
 			loadCW := func(id string) (map[string]string, error) {

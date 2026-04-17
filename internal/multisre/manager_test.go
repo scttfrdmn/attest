@@ -22,7 +22,7 @@ func TestManagerAddAndList(t *testing.T) {
 	// Add one SRE.
 	entry := SREEntry{
 		ID:         "production",
-		OrgID:      "o-abc123",
+		OrgID:      "o-abc12345xy",
 		Region:     "us-east-1",
 		Frameworks: []string{"nist-800-171-r2"},
 	}
@@ -40,7 +40,7 @@ func TestManagerAddAndList(t *testing.T) {
 	if sres[0].ID != "production" {
 		t.Errorf("ID = %q, want production", sres[0].ID)
 	}
-	if sres[0].OrgID != "o-abc123" {
+	if sres[0].OrgID != "o-abc12345xy" {
 		t.Errorf("OrgID = %q, want o-abc123", sres[0].OrgID)
 	}
 }
@@ -48,7 +48,7 @@ func TestManagerAddAndList(t *testing.T) {
 func TestManagerAddDuplicate(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager(dir)
-	entry := SREEntry{ID: "prod", OrgID: "o-1"}
+	entry := SREEntry{ID: "prod", OrgID: "o-prodtest"}
 	if err := mgr.Add(entry); err != nil {
 		t.Fatalf("first Add() error: %v", err)
 	}
@@ -60,13 +60,13 @@ func TestManagerAddDuplicate(t *testing.T) {
 func TestManagerGet(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager(dir)
-	_ = mgr.Add(SREEntry{ID: "dev", OrgID: "o-dev"})
+	_ = mgr.Add(SREEntry{ID: "dev", OrgID: "o-devtest01"})
 
 	got, err := mgr.Get("dev")
 	if err != nil {
 		t.Fatalf("Get() error: %v", err)
 	}
-	if got.OrgID != "o-dev" {
+	if got.OrgID != "o-devtest01" {
 		t.Errorf("OrgID = %q, want o-dev", got.OrgID)
 	}
 
@@ -79,8 +79,8 @@ func TestManagerGet(t *testing.T) {
 func TestManagerRemove(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager(dir)
-	_ = mgr.Add(SREEntry{ID: "prod", OrgID: "o-1"})
-	_ = mgr.Add(SREEntry{ID: "dev", OrgID: "o-2"})
+	_ = mgr.Add(SREEntry{ID: "prod", OrgID: "o-prodtest"})
+	_ = mgr.Add(SREEntry{ID: "dev", OrgID: "o-devtest"})
 
 	if err := mgr.Remove("dev"); err != nil {
 		t.Fatalf("Remove() error: %v", err)
@@ -112,7 +112,7 @@ func TestManagerAddValidation(t *testing.T) {
 	mgr := NewManager(dir)
 
 	// Missing ID.
-	if err := mgr.Add(SREEntry{OrgID: "o-1"}); err == nil {
+	if err := mgr.Add(SREEntry{OrgID: "o-prodtest"}); err == nil {
 		t.Error("Add(no ID) should return error")
 	}
 
@@ -125,7 +125,7 @@ func TestManagerAddValidation(t *testing.T) {
 func TestManagerDefaultRegion(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager(dir)
-	_ = mgr.Add(SREEntry{ID: "prod", OrgID: "o-1"}) // no region specified
+	_ = mgr.Add(SREEntry{ID: "prod", OrgID: "o-prodtest"}) // no region specified
 	sres, _ := mgr.List()
 	if sres[0].Region != "us-east-1" {
 		t.Errorf("default region = %q, want us-east-1", sres[0].Region)
@@ -156,7 +156,7 @@ func TestAggregatePosture(t *testing.T) {
 func TestManagerRegistryPersistence(t *testing.T) {
 	dir := t.TempDir()
 	mgr1 := NewManager(dir)
-	_ = mgr1.Add(SREEntry{ID: "prod", OrgID: "o-1", Region: "us-east-1"})
+	_ = mgr1.Add(SREEntry{ID: "prod", OrgID: "o-prodtest", Region: "us-east-1"})
 
 	// Re-open from same directory.
 	mgr2 := NewManager(dir)

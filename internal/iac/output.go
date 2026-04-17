@@ -29,7 +29,18 @@ func NewGenerator(format Format, outputDir string) *Generator {
 }
 
 // Generate writes the IaC modules to the output directory.
+// The outputDir is validated here to prevent path traversal even when called
+// programmatically (not via the CLI, which has its own validation).
 func (g *Generator) Generate(compiledDir string) error {
+	// Defend against relative path traversal in outputDir.
+	// Absolute paths are allowed (programmatic use); only relative paths that
+	// escape via ".." are rejected. CLI callers independently restrict to
+	// "terraform" or "cdk" which are always safe.
+	if !filepath.IsAbs(g.outputDir) {
+		if clean := filepath.Clean(g.outputDir); strings.HasPrefix(clean, "..") {
+			return fmt.Errorf("iac: output directory escapes project: %s", g.outputDir)
+		}
+	}
 	switch g.format {
 	case FormatTerraform:
 		return g.generateTerraform(compiledDir)

@@ -15,8 +15,33 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// validSREIDRunes allows only alphanumeric, hyphen, and underscore in SRE IDs.
-// This prevents path traversal via the StoreDir() method.
+// isValidOrgID validates an AWS Organizations ID.
+// AWS format: o- followed by lowercase alphanumeric chars, min 2 chars after prefix.
+// Also prevents markdown injection when OrgIDs are embedded in generated reports
+// (rejects `]`, `[`, `<`, `>`, quotes, and other HTML/markdown metacharacters).
+func isValidOrgID(id string) bool {
+	if len(id) < 4 || len(id) > 36 {
+		return false
+	}
+	if len(id) < 2 || id[0] != 'o' || id[1] != '-' {
+		return false
+	}
+	for _, r := range id[2:] {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+// IsValidSREID reports whether an SRE ID is safe for use in file paths.
+// Allows only alphanumeric, hyphen, and underscore (max 64 chars).
+// Exported so CLI commands can validate --from/--to flags before reaching StoreDir.
+func IsValidSREID(id string) bool {
+	return isValidSREID(id)
+}
+
+// isValidSREID is the internal implementation.
 func isValidSREID(id string) bool {
 	if id == "" || len(id) > 64 {
 		return false
@@ -111,6 +136,11 @@ func (m *Manager) Add(entry SREEntry) error {
 	}
 	if entry.OrgID == "" {
 		return fmt.Errorf("org_id is required")
+	}
+	// Validate OrgID matches AWS Organizations format: o-[a-z0-9]{10,32}
+	// This also prevents markdown injection when OrgID is embedded in reports.
+	if !isValidOrgID(entry.OrgID) {
+		return fmt.Errorf("invalid org_id %q: must match AWS format o-[a-z0-9]{10,32}", entry.OrgID)
 	}
 	if entry.Region == "" {
 		entry.Region = "us-east-1"
