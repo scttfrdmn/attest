@@ -27,6 +27,7 @@ type deployOrgAPI interface {
 	CreatePolicy(ctx context.Context, params *organizations.CreatePolicyInput, optFns ...func(*organizations.Options)) (*organizations.CreatePolicyOutput, error)
 	UpdatePolicy(ctx context.Context, params *organizations.UpdatePolicyInput, optFns ...func(*organizations.Options)) (*organizations.UpdatePolicyOutput, error)
 	AttachPolicy(ctx context.Context, params *organizations.AttachPolicyInput, optFns ...func(*organizations.Options)) (*organizations.AttachPolicyOutput, error)
+	DetachPolicy(ctx context.Context, params *organizations.DetachPolicyInput, optFns ...func(*organizations.Options)) (*organizations.DetachPolicyOutput, error)
 }
 
 // PlannedSCP describes one SCP operation in a deployment plan.
@@ -340,6 +341,38 @@ func (d *Deployer) countAttachedSCPs(ctx context.Context, targetID string) (int,
 		nextToken = out.NextToken
 	}
 	return count, nil
+}
+
+// DetachAll detaches every attest-managed SCP (name prefix "attest-") from the
+// org root. Used by rollback before re-applying a prior checkpoint state.
+func (d *Deployer) DetachAll(ctx context.Context, rootID string) error {
+	var nextToken *string
+	for {
+		out, err := d.orgSvc.ListPoliciesForTarget(ctx, &organizations.ListPoliciesForTargetInput{
+			TargetId:  aws.String(rootID),
+			Filter:    types.PolicyTypeServiceControlPolicy,
+			NextToken: nextToken,
+		})
+		if err != nil {
+			return fmt.Errorf("listing SCPs at root: %w", err)
+		}
+		for _, p := range out.Policies {
+			if !strings.HasPrefix(aws.ToString(p.Name), "attest-") {
+				continue // leave non-attest SCPs (e.g., FullAWSAccess) alone
+			}
+			if _, err := d.orgSvc.DetachPolicy(ctx, &organizations.DetachPolicyInput{
+				PolicyId: p.Id,
+				TargetId: aws.String(rootID),
+			}); err != nil {
+				return fmt.Errorf("detaching %s: %w", aws.ToString(p.Name), err)
+			}
+		}
+		if out.NextToken == nil {
+			break
+		}
+		nextToken = out.NextToken
+	}
+	return nil
 }
 
 // loadCompiledSCPs reads all .json files from scpDir, returning a map of

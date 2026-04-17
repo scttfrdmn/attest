@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}}</title>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "SF Mono", "Fira Code", monospace; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
+    nav { background: #161b22; border-bottom: 1px solid #30363d; padding: 12px 24px; display: flex; align-items: center; gap: 24px; }
+    nav h1 { color: #58a6ff; font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
+    nav a { color: #8b949e; text-decoration: none; font-size: 13px; cursor: pointer; padding: 4px 8px; border-radius: 4px; }
+    nav a:hover, nav a.active { color: #c9d1d9; background: #21262d; }
+    .container { padding: 24px; max-width: 1200px; margin: 0 auto; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+    .card h2 { font-size: 14px; color: #8b949e; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 16px; }
+    .stat { text-align: center; }
+    .stat .value { font-size: 36px; font-weight: 700; }
+    .stat .label { font-size: 12px; color: #8b949e; margin-top: 4px; }
+    .enforced { color: #3fb950; }
+    .partial   { color: #d29922; }
+    .gap       { color: #f85149; }
+    .score-bar { background: #21262d; border-radius: 4px; height: 8px; overflow: hidden; margin: 8px 0; }
+    .score-fill { height: 100%; background: #1f6feb; border-radius: 4px; transition: width 0.4s; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; color: #8b949e; font-weight: 500; padding: 8px 12px; border-bottom: 1px solid #21262d; }
+    td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
+    tr:hover td { background: #1c2128; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .badge-open    { background: #3d1f1f; color: #f85149; }
+    .badge-active  { background: #1f3d1f; color: #3fb950; }
+    .badge-expiring{ background: #3d2e1f; color: #d29922; }
+    .badge-high    { background: #3d1f1f; color: #f85149; }
+    .badge-critical{ background: #5c1f1f; color: #ff7b72; }
+    .badge-medium  { background: #2d2b1f; color: #d29922; }
+    #ops-feed { height: 320px; overflow-y: auto; background: #0d1117; border: 1px solid #21262d; border-radius: 4px; padding: 12px; font-size: 12px; }
+    .deny-line  { color: #f85149; }
+    .allow-line { color: #3fb950; }
+    .ts         { color: #484f58; margin-right: 8px; }
+    .loading    { color: #484f58; font-style: italic; }
+    #view-posture, #view-ops, #view-waivers, #view-incidents, #view-frameworks { display: none; }
+    #view-posture { display: block; }
+    button.gen-btn { background: #1f6feb; color: #fff; border: none; border-radius: 4px; padding: 8px 16px; font-size: 13px; cursor: pointer; margin-right: 8px; }
+    button.gen-btn:hover { background: #388bfd; }
+    #gen-status { font-size: 12px; color: #8b949e; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <nav>
+    <h1>attest</h1>
+    <a href="#" class="active" onclick="showView('posture', this)">Posture</a>
+    <a href="#" onclick="showView('frameworks', this)">Frameworks</a>
+    <a href="#" onclick="showView('ops', this)">Operations</a>
+    <a href="#" onclick="showView('waivers', this)">Waivers</a>
+    <a href="#" onclick="showView('incidents', this)">Incidents</a>
+  </nav>
+
+  <div class="container">
+
+    <!-- Posture -->
+    <div id="view-posture">
+      <div class="card">
+        <h2>Compliance Posture</h2>
+        <div class="grid-3" id="posture-stats">
+          <div class="stat"><div class="value loading">—</div><div class="label">Enforced</div></div>
+          <div class="stat"><div class="value loading">—</div><div class="label">Partial</div></div>
+          <div class="stat"><div class="value loading">—</div><div class="label">Gaps</div></div>
+        </div>
+        <div id="score-section" style="display:none">
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+            <span>CMMC Score</span><span id="score-text">—</span>
+          </div>
+          <div class="score-bar"><div class="score-fill" id="score-fill" style="width:0%"></div></div>
+        </div>
+        <div style="font-size:11px;color:#484f58;margin-top:8px" id="posture-updated"></div>
+      </div>
+    </div>
+
+    <!-- Frameworks -->
+    <div id="view-frameworks">
+      <div class="card">
+        <h2>Active Frameworks</h2>
+        <div id="fw-list" class="loading">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Operations (Cedar PDP SSE) -->
+    <div id="view-ops">
+      <div class="card">
+        <h2>Cedar PDP — Live Feed</h2>
+        <div id="ops-feed"><span class="loading">Connecting to Cedar PDP stream...</span></div>
+      </div>
+    </div>
+
+    <!-- Waivers -->
+    <div id="view-waivers">
+      <div class="card">
+        <h2>Active Waivers</h2>
+        <div id="waivers-content" class="loading">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Incidents -->
+    <div id="view-incidents">
+      <div class="card">
+        <h2>Incidents</h2>
+        <div id="incidents-content" class="loading">Loading...</div>
+      </div>
+      <div class="card">
+        <h2>Generate Documents</h2>
+        <button class="gen-btn" onclick="generateDoc()">Generate SSP</button>
+        <button class="gen-btn" onclick="generateDoc()">Generate POA&M</button>
+        <button class="gen-btn" onclick="generateDoc()">Generate OSCAL</button>
+        <div id="gen-status"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+  function showView(name, el) {
+    document.querySelectorAll('[id^="view-"]').forEach(v => v.style.display='none');
+    document.getElementById('view-'+name).style.display='block';
+    document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+    el.classList.add('active');
+    if (name === 'posture') loadPosture();
+    if (name === 'frameworks') loadFrameworks();
+    if (name === 'ops') connectOps();
+    if (name === 'waivers') loadWaivers();
+    if (name === 'incidents') loadIncidents();
+    return false;
+  }
+
+  function loadPosture() {
+    fetch('/api/posture').then(r=>r.json()).then(d => {
+      const stats = document.getElementById('posture-stats');
+      stats.innerHTML = `
+        <div class="stat"><div class="value enforced">${d.enforced||0}</div><div class="label">Enforced</div></div>
+        <div class="stat"><div class="value partial">${d.partial||0}</div><div class="label">Partial</div></div>
+        <div class="stat"><div class="value gap">${d.gaps||0}</div><div class="label">Gaps</div></div>`;
+      const pct = d.max_score > 0 ? Math.round(d.score/d.max_score*100) : 0;
+      document.getElementById('score-text').textContent = `${d.score} / ${d.max_score} (${pct}%)`;
+      document.getElementById('score-fill').style.width = pct+'%';
+      document.getElementById('score-section').style.display='block';
+      document.getElementById('posture-updated').textContent = 'Last updated: '+d.last_updated;
+    }).catch(()=>{});
+  }
+
+  function loadFrameworks() {
+    fetch('/api/frameworks').then(r=>r.json()).then(d => {
+      const el = document.getElementById('fw-list');
+      if (!d.frameworks || d.frameworks.length===0) {
+        el.innerHTML='<span class="loading">No active frameworks. Run `attest frameworks add`.</span>';
+        return;
+      }
+      el.innerHTML = '<table><thead><tr><th>Framework</th></tr></thead><tbody>'+
+        d.frameworks.map(f=>`<tr><td>${f}</td></tr>`).join('')+'</tbody></table>';
+    }).catch(()=>{});
+  }
+
+  let opsSource = null;
+  function connectOps() {
+    if (opsSource) return;
+    const feed = document.getElementById('ops-feed');
+    feed.innerHTML = '';
+    opsSource = new EventSource('/api/operations/stream');
+    opsSource.onmessage = (e) => {
+      let data;
+      try { data = JSON.parse(e.data); } catch(_) { return; }
+      const cls = data.effect==='DENY' ? 'deny-line' : 'allow-line';
+      const ts = data.timestamp ? data.timestamp.substring(11,19) : '';
+      feed.innerHTML += `<div class="${cls}"><span class="ts">${ts}</span>${data.effect}  ${data.principal||''}  ${data.action||''}</div>`;
+      feed.scrollTop = feed.scrollHeight;
+    };
+    opsSource.onerror = () => {
+      feed.innerHTML += '<div class="loading">Stream disconnected.</div>';
+    };
+  }
+
+  function loadWaivers() {
+    fetch('/api/waivers').then(r=>r.json()).then(d => {
+      const el = document.getElementById('waivers-content');
+      if (!d.waivers || d.waivers.length===0) {
+        el.innerHTML='<span class="loading">No active waivers.</span>'; return;
+      }
+      el.innerHTML='<table><thead><tr><th>ID</th><th>Control</th><th>Approved By</th><th>Status</th><th>Expires</th></tr></thead><tbody>'+
+        d.waivers.map(w=>`<tr><td>${w.id}</td><td>${w.control_id||''}</td><td>${w.approved_by||''}</td>
+          <td><span class="badge badge-${w.status}">${w.status}</span></td><td>${w.expires_at||''}</td></tr>`).join('')+
+        '</tbody></table>';
+    }).catch(()=>{});
+  }
+
+  function loadIncidents() {
+    fetch('/api/incidents').then(r=>r.json()).then(d => {
+      const el = document.getElementById('incidents-content');
+      if (!d.incidents || d.incidents.length===0) {
+        el.innerHTML='<span class="loading">No incidents recorded.</span>'; return;
+      }
+      el.innerHTML='<table><thead><tr><th>ID</th><th>Severity</th><th>Title</th><th>Status</th><th>Detected</th></tr></thead><tbody>'+
+        d.incidents.map(inc=>`<tr><td>${inc.id}</td>
+          <td><span class="badge badge-${(inc.severity||'').toLowerCase()}">${inc.severity}</span></td>
+          <td>${inc.title}</td>
+          <td><span class="badge badge-${inc.status}">${inc.status}</span></td>
+          <td>${(inc.detected_at||'').substring(0,10)}</td></tr>`).join('')+
+        '</tbody></table>';
+    }).catch(()=>{});
+  }
+
+  function generateDoc() {
+    const status = document.getElementById('gen-status');
+    status.textContent = '';
+    const es = new EventSource('/api/generate');
+    es.onmessage = (e) => { status.textContent = e.data; };
+    es.onerror = () => es.close();
+  }
+
+  // Load posture on start.
+  loadPosture();
+  </script>
+</body>
+</html>

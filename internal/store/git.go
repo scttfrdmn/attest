@@ -110,6 +110,37 @@ func (s *Store) Diff(from, to string) (string, error) {
 	return out, nil
 }
 
+// ListTags returns all annotated tags in the store, sorted most-recent first.
+func (s *Store) ListTags() ([]string, error) {
+	if s.noCommit {
+		return nil, nil
+	}
+	out, err := s.gitOutput("tag", "-l", "--sort=-creatordate")
+	if err != nil {
+		return nil, fmt.Errorf("git tag list: %w", err)
+	}
+	var tags []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			tags = append(tags, line)
+		}
+	}
+	return tags, nil
+}
+
+// Checkout checks out the store to the given tag or ref. Use "main" to return
+// to HEAD. This is used by rollback to restore a prior compiled artifact state.
+func (s *Store) Checkout(ref string) error {
+	if s.noCommit {
+		return nil
+	}
+	if err := s.git("checkout", ref, "--", "."); err != nil {
+		return fmt.Errorf("git checkout %s: %w", ref, err)
+	}
+	return nil
+}
+
 // AcceptProposed moves a proposed artifact from .attest/proposed/
 // into the appropriate compiled subdirectory and commits.
 func (s *Store) AcceptProposed(name string) error {

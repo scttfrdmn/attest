@@ -77,6 +77,10 @@ func (m *mockDeployOrgAPI) AttachPolicy(_ context.Context, _ *organizations.Atta
 	return &organizations.AttachPolicyOutput{}, nil
 }
 
+func (m *mockDeployOrgAPI) DetachPolicy(_ context.Context, _ *organizations.DetachPolicyInput, _ ...func(*organizations.Options)) (*organizations.DetachPolicyOutput, error) {
+	return &organizations.DetachPolicyOutput{}, nil
+}
+
 // writeSCPFixtures writes sample SCP JSON files to a temp directory.
 func writeSCPFixtures(t *testing.T, dir string, scps map[string]any) {
 	t.Helper()

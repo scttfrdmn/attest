@@ -1,26 +1,42 @@
 // Package evaluator implements the Cedar PDP for runtime compliance evaluation.
 // One-shot evaluation is supported via EvaluateWithPolicies. Continuous evaluation
-// via EventBridge is scaffolded (Start method) — full EventBridge integration is v1.0.0.
+// uses a CloudTrail polling loop (Start method). Full EventBridge integration is v1.0.0.
 package evaluator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
 	cedar "github.com/cedar-policy/cedar-go"
 	"github.com/cedar-policy/cedar-go/types"
 
 	"github.com/provabl/attest/pkg/schema"
 )
 
+// DecisionEvent is emitted for every Cedar evaluation in continuous mode.
+// Dashboard subscribers receive these over SSE.
+type DecisionEvent struct {
+	Timestamp time.Time `json:"timestamp"`
+	Action    string    `json:"action"`
+	Principal string    `json:"principal"`
+	Resource  string    `json:"resource"`
+	Effect    string    `json:"effect"`
+	PolicyID  string    `json:"policy_id,omitempty"`
+}
+
 // Evaluator is the Cedar PDP runtime.
 type Evaluator struct {
-	policies []CompiledPolicy
-	stats    *Stats
-	mu       sync.RWMutex
+	policies  []CompiledPolicy
+	stats     *Stats
+	mu        sync.RWMutex
+	broadcast chan DecisionEvent // non-nil when running in continuous mode
 }
 
 // CompiledPolicy is a Cedar policy loaded for evaluation.
@@ -129,10 +145,130 @@ func (e *Evaluator) Evaluate(ctx context.Context, req *AuthzRequest) (*schema.Ce
 	return nil, fmt.Errorf("use EvaluateWithPolicies with a loaded PolicySet")
 }
 
-// Start begins consuming EventBridge events and evaluating them.
-// EventBridge integration is deferred to v1.0.0 — use attest evaluate for one-shot.
-func (e *Evaluator) Start(ctx context.Context) error {
-	return fmt.Errorf("EventBridge continuous evaluation deferred to v1.0.0; use 'attest evaluate' for one-shot evaluation")
+// Subscribe returns a channel that receives DecisionEvents in continuous mode.
+// The channel is closed when the evaluator stops. Only valid after Start is called.
+func (e *Evaluator) Subscribe() <-chan DecisionEvent {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.broadcast == nil {
+		e.broadcast = make(chan DecisionEvent, 64)
+	}
+	return e.broadcast
+}
+
+// Start polls CloudTrail for management events and evaluates each one against
+// the loaded Cedar policies. Decisions are written to .attest/history/cedar-decisions.jsonl
+// and broadcast to any dashboard SSE subscribers.
+//
+// The ctSvc parameter is the CloudTrail client. If nil, Start returns an error.
+// The cedarDir is the path to compiled Cedar policies.
+// The historyDir is where cedar-decisions.jsonl is written.
+// interval is how often to poll (default: 30s).
+func (e *Evaluator) Start(ctx context.Context, ctSvc *cloudtrail.Client, cedarDir, historyDir string, interval time.Duration) error {
+	if ctSvc == nil {
+		return fmt.Errorf("cloudtrail client required for continuous evaluation")
+	}
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+
+	// Load Cedar policies.
+	ps, err := loadPoliciesFromDir(cedarDir)
+	if err != nil {
+		return fmt.Errorf("loading Cedar policies from %s: %w", cedarDir, err)
+	}
+
+	// Open decision log.
+	if err := os.MkdirAll(historyDir, 0750); err != nil {
+		return fmt.Errorf("creating history dir: %w", err)
+	}
+	logFile, err := os.OpenFile(
+		filepath.Join(historyDir, "cedar-decisions.jsonl"),
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640)
+	if err != nil {
+		return fmt.Errorf("opening decision log: %w", err)
+	}
+	defer logFile.Close()
+
+	// Ensure broadcast channel is ready.
+	e.mu.Lock()
+	if e.broadcast == nil {
+		e.broadcast = make(chan DecisionEvent, 64)
+	}
+	bcast := e.broadcast
+	e.mu.Unlock()
+	defer close(bcast)
+
+	poller := newCloudTrailPoller(ctSvc)
+	lastPoll := time.Now().Add(-interval)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case now := <-ticker.C:
+			reqs, err := poller.Poll(ctx, lastPoll, now)
+			lastPoll = now
+			if err != nil {
+				continue // log and retry next tick
+			}
+			for _, req := range reqs {
+				decision, err := e.EvaluateWithPolicies(ctx, ps, req)
+				if err != nil {
+					continue
+				}
+				ev := DecisionEvent{
+					Timestamp: decision.Timestamp,
+					Action:    decision.Action,
+					Principal: decision.Principal,
+					Resource:  decision.Resource,
+					Effect:    decision.Effect,
+					PolicyID:  decision.PolicyID,
+				}
+				// Write to log.
+				if b, err := json.Marshal(ev); err == nil {
+					_, _ = logFile.Write(append(b, '\n'))
+				}
+				// Broadcast (non-blocking).
+				select {
+				case bcast <- ev:
+				default:
+				}
+			}
+		}
+	}
+}
+
+// loadPoliciesFromDir loads all .cedar files from a directory into a PolicySet.
+func loadPoliciesFromDir(dir string) (*cedar.PolicySet, error) {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return cedar.NewPolicySet(), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ps := cedar.NewPolicySet()
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".cedar") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		parsed, err := cedar.NewPolicySetFromBytes(e.Name(), data)
+		if err != nil {
+			return nil, fmt.Errorf("parsing %s: %w", e.Name(), err)
+		}
+		for id, policy := range parsed.Map() {
+			ps.Add(id, policy)
+		}
+	}
+	return ps, nil
 }
 
 // GetStats returns current evaluation statistics (thread-safe).

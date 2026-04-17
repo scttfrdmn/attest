@@ -18,6 +18,7 @@ import (
 	iamSvc "github.com/aws/aws-sdk-go-v2/service/iam"
 
 	"github.com/provabl/attest/internal/ai"
+	"github.com/provabl/attest/internal/dashboard"
 	"github.com/provabl/attest/internal/artifact"
 	"github.com/provabl/attest/internal/attestation"
 	compilerce "github.com/provabl/attest/internal/compiler/cedar"
@@ -38,7 +39,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.4.0-dev"
+var version = "0.8.0-dev"
 
 func main() {
 	root := &cobra.Command{
@@ -58,6 +59,7 @@ within it are research environments that inherit the org-level posture.`,
 		frameworksCmd(),
 		compileCmd(),
 		applyCmd(),
+		rollbackCmd(),
 		preflightCmd(),
 		evaluateCmd(),
 		generateCmd(),
@@ -69,6 +71,7 @@ within it are research environments that inherit the org-level posture.`,
 		simulateCmd(),
 		provisionCmd(),
 		waiverCmd(),
+		incidentCmd(),
 		attestCmd(),
 		calendarCmd(),
 		reportCmd(),
@@ -858,6 +861,15 @@ Use --approve to skip interactive confirmation.`,
 				}
 			}
 
+			// Auto-tag a pre-apply snapshot so rollback has a target.
+			st, _ := store.NewStore(".attest")
+			tagName := fmt.Sprintf("applied-%s", time.Now().UTC().Format("20060102-150405"))
+			if err := st.Tag(tagName, fmt.Sprintf("Pre-apply snapshot: %s", tagName)); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: could not create pre-apply snapshot: %v\n", err)
+			} else {
+				fmt.Printf("  Snapshot: %s\n", tagName)
+			}
+
 			fmt.Println("Applying...")
 			result, err := deployer.Apply(ctx, plan, scpDir, func(msg string) {
 				fmt.Println(msg)
@@ -865,7 +877,6 @@ Use --approve to skip interactive confirmation.`,
 			if err != nil {
 				return fmt.Errorf("applying: %w", err)
 			}
-			st, _ := store.NewStore(".attest")
 			_ = st.Commit(fmt.Sprintf("apply: deployed %d SCP(s) to %s",
 				len(result.Deployed), plan.RootID))
 
@@ -882,6 +893,135 @@ Use --approve to skip interactive confirmation.`,
 	}
 	cmd.Flags().Bool("dry-run", false, "Preview changes without applying")
 	cmd.Flags().Bool("approve", false, "Skip interactive approval")
+	cmd.Flags().String("region", "us-east-1", "AWS region")
+	return cmd
+}
+
+func rollbackCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "rollback",
+		Short: "Undo the last apply or restore to a named snapshot",
+		Long: `Detaches all attest-managed SCPs from the org root, then re-applies
+the compiled artifacts from a prior snapshot (git tag).
+
+Use --list to see available snapshots.
+Use --to <tag> to target a specific snapshot.
+Without --to, rolls back to the most recent applied-* snapshot.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			listOnly, _ := cmd.Flags().GetBool("list")
+			targetTag, _ := cmd.Flags().GetString("to")
+			approve, _ := cmd.Flags().GetBool("approve")
+			region, _ := cmd.Flags().GetString("region")
+
+			st, err := store.NewStore(".attest")
+			if err != nil {
+				return fmt.Errorf("opening policy store: %w", err)
+			}
+
+			if listOnly {
+				tags, err := st.ListTags()
+				if err != nil {
+					return fmt.Errorf("listing snapshots: %w", err)
+				}
+				if len(tags) == 0 {
+					fmt.Println("No snapshots found. Run 'attest apply' to create one.")
+					return nil
+				}
+				fmt.Println("Available snapshots (most recent first):")
+				for _, t := range tags {
+					fmt.Printf("  %s\n", t)
+				}
+				return nil
+			}
+
+			// Find target tag.
+			if targetTag == "" {
+				tags, err := st.ListTags()
+				if err != nil {
+					return fmt.Errorf("listing snapshots: %w", err)
+				}
+				for _, t := range tags {
+					if strings.HasPrefix(t, "applied-") {
+						targetTag = t
+						break
+					}
+				}
+				if targetTag == "" {
+					return fmt.Errorf("no applied-* snapshots found; run 'attest apply' first or specify --to <tag>")
+				}
+			}
+
+			fmt.Printf("Rollback target: %s\n\n", targetTag)
+
+			if !approve {
+				fmt.Printf("This will detach all attest SCPs from the org root and re-apply state from %s.\n", targetTag)
+				fmt.Print("Proceed? [y/N] ")
+				var answer string
+				fmt.Scanln(&answer)
+				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+					fmt.Println("Aborted.")
+					return nil
+				}
+			}
+
+			deployer, err := deploy.NewDeployer(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to AWS: %w", err)
+			}
+
+			// Get root ID.
+			plan, err := deployer.Plan(ctx, filepath.Join(".attest", "compiled", "scps"))
+			if err != nil {
+				return fmt.Errorf("getting org root: %w", err)
+			}
+			rootID := plan.RootID
+
+			// Step 1: Detach all attest SCPs.
+			fmt.Printf("Detaching all attest-managed SCPs from %s...\n", rootID)
+			if err := deployer.DetachAll(ctx, rootID); err != nil {
+				return fmt.Errorf("detaching SCPs: %w", err)
+			}
+			fmt.Println("  Done.")
+
+			// Step 2: Restore compiled artifacts from checkpoint.
+			fmt.Printf("Restoring compiled artifacts from snapshot %s...\n", targetTag)
+			if err := st.Checkout(targetTag); err != nil {
+				return fmt.Errorf("checking out snapshot: %w", err)
+			}
+			defer func() {
+				// Always return store to HEAD when done.
+				_ = st.Checkout("main")
+			}()
+			fmt.Println("  Done.")
+
+			// Step 3: Re-apply from restored state.
+			scpDir := filepath.Join(".attest", "compiled", "scps")
+			fmt.Println("Re-applying checkpoint state...")
+			checkpointPlan, err := deployer.Plan(ctx, scpDir)
+			if err != nil {
+				return fmt.Errorf("planning checkpoint apply: %w", err)
+			}
+			result, err := deployer.Apply(ctx, checkpointPlan, scpDir, func(msg string) {
+				fmt.Println(msg)
+			})
+			if err != nil {
+				return fmt.Errorf("applying checkpoint: %w", err)
+			}
+
+			fmt.Printf("\nRollback complete. Deployed %d SCP(s) from snapshot %s.\n",
+				len(result.Deployed), targetTag)
+			if len(result.Failed) > 0 {
+				for _, f := range result.Failed {
+					fmt.Printf("  ✗ %s\n", f)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().Bool("list", false, "List available snapshots")
+	cmd.Flags().String("to", "", "Snapshot tag to roll back to (default: most recent applied-*)")
+	cmd.Flags().Bool("approve", false, "Skip interactive confirmation")
 	cmd.Flags().String("region", "us-east-1", "AWS region")
 	return cmd
 }
@@ -1503,38 +1643,56 @@ func printDiff(from, to *schema.PostureSnapshot) {
 func watchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "watch",
-		Short: "Continuous Cedar PDP evaluation (polling mode)",
-		Long: `Polls the Cedar evaluation log for new decisions and prints denials.
-Full EventBridge-driven continuous evaluation is v1.0.0.
-Use 'attest evaluate' for one-shot evaluation.`,
+		Short: "Continuous Cedar PDP evaluation (CloudTrail polling)",
+		Long: `Polls CloudTrail for management events and evaluates each one against
+compiled Cedar policies. Prints DENY decisions to the terminal.
+Decisions are also written to .attest/history/cedar-decisions.jsonl.
+
+Full EventBridge-driven continuous evaluation is v1.0.0.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
 			cedarDir, _ := cmd.Flags().GetString("cedar")
-			fmt.Println("Starting Cedar PDP watch (polling mode)...")
+			region, _ := cmd.Flags().GetString("region")
+			intervalSecs, _ := cmd.Flags().GetInt("interval")
+
+			fmt.Println("Starting Cedar PDP watch (CloudTrail polling mode)...")
 			fmt.Printf("  Policies: %s\n", cedarDir)
-			fmt.Println("  Note: Full EventBridge integration coming in v1.0.0.")
+			fmt.Printf("  Poll interval: %ds\n", intervalSecs)
 			fmt.Println("  Press Ctrl+C to stop.")
 			fmt.Println()
 
-			// Load policies once.
-			ps, err := loadCedarPolicies(cedarDir)
+			cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 			if err != nil {
-				return fmt.Errorf("loading Cedar policies: %w", err)
-			}
-			if ps == nil {
-				return fmt.Errorf("no Cedar policies found in %s", cedarDir)
+				return fmt.Errorf("loading AWS config: %w", err)
 			}
 
-			// Simple health-check: print policy count and block.
-			count := 0
-			for range ps.All() {
-				count++
+			eval := evaluator.NewEvaluator(nil)
+			ch := eval.Subscribe()
+
+			// Start polling in background.
+			go func() {
+				ctSvc := cloudtrail.NewFromConfig(cfg)
+				interval := time.Duration(intervalSecs) * time.Second
+				histDir := filepath.Join(".attest", "history")
+				if err := eval.Start(ctx, ctSvc, cedarDir, histDir, interval); err != nil {
+					fmt.Fprintf(os.Stderr, "watch error: %v\n", err)
+				}
+			}()
+
+			fmt.Println("Watching for Cedar decisions (showing DENY)...")
+			for ev := range ch {
+				if ev.Effect == "DENY" {
+					fmt.Printf("  [%s] DENY  %s  %s → %s\n",
+						ev.Timestamp.Format("15:04:05"),
+						ev.Principal, ev.Action, ev.Resource)
+				}
 			}
-			fmt.Printf("  Loaded %d Cedar policy/policies. Ready.\n", count)
-			fmt.Println("  (Polling for denials — EventBridge integration deferred to v1.0.0)")
-			select {} // block until Ctrl+C
+			return nil
 		},
 	}
 	cmd.Flags().String("cedar", filepath.Join(".attest", "compiled", "cedar"), "Compiled Cedar policies directory")
+	cmd.Flags().String("region", "us-east-1", "AWS region")
+	cmd.Flags().Int("interval", 30, "Poll interval in seconds")
 	return cmd
 }
 
@@ -1544,20 +1702,33 @@ func serveCmd() *cobra.Command {
 		Short: "Launch the compliance dashboard",
 		Long: `Starts the web dashboard on the specified address. The dashboard
 provides real-time compliance visibility: posture, frameworks, Cedar PDP
-operations feed, environment status, waivers, incidents, and document generation.
+operations feed, waivers, incidents, and document generation.
 
-Same binary, same data as the CLI — the dashboard is the "always on"
-complement to the CLI's point-in-time commands.`,
+Use --no-auth (default) for local use. Use --auth to require the
+ATTEST_DASHBOARD_TOKEN environment variable as a bearer token.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
 			addr, _ := cmd.Flags().GetString("addr")
-			fmt.Printf("Starting attest dashboard on %s...\n", addr)
-			fmt.Println("  Loading SRE configuration...")
-			fmt.Println("  Connecting to Cedar PDP...")
-			fmt.Println("  Dashboard ready.")
+			authFlag, _ := cmd.Flags().GetBool("auth")
+
+			authToken := ""
+			if authFlag {
+				authToken = os.Getenv("ATTEST_DASHBOARD_TOKEN")
+				if authToken == "" {
+					return fmt.Errorf("--auth requires ATTEST_DASHBOARD_TOKEN env var to be set")
+				}
+			}
+
+			fmt.Printf("Starting attest dashboard on http://localhost%s\n", addr)
+			srv := dashboard.NewServer(addr, ".attest", authToken, nil)
+			if err := srv.Start(ctx); err != nil && err.Error() != "http: Server closed" {
+				return err
+			}
 			return nil
 		},
 	}
-	cmd.Flags().String("addr", ":8443", "Listen address")
+	cmd.Flags().String("addr", ":8080", "Listen address (default :8080)")
+	cmd.Flags().Bool("auth", false, "Require ATTEST_DASHBOARD_TOKEN bearer token")
 	return cmd
 }
 
@@ -1853,6 +2024,84 @@ func parseDuration(s string) time.Duration {
 	default:
 		return 90 * 24 * time.Hour
 	}
+}
+
+func incidentCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "incident",
+		Short: "Manage security and compliance incidents",
+	}
+
+	createSub := &cobra.Command{
+		Use:   "create",
+		Short: "Record a new incident",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			title, _ := cmd.Flags().GetString("title")
+			severity, _ := cmd.Flags().GetString("severity")
+			source, _ := cmd.Flags().GetString("source")
+			notes, _ := cmd.Flags().GetString("notes")
+			controls, _ := cmd.Flags().GetStringSlice("control")
+			if title == "" {
+				return fmt.Errorf("--title is required")
+			}
+			mgr := reporting.NewIncidentManager(filepath.Join(".attest", "history"))
+			inc, err := mgr.Create(title, severity, source, notes, controls)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Created incident %s: %s [%s]\n", inc.ID, inc.Title, inc.Severity)
+			return nil
+		},
+	}
+	createSub.Flags().String("title", "", "Incident title (required)")
+	createSub.Flags().String("severity", "HIGH", "Severity: CRITICAL, HIGH, MEDIUM, LOW")
+	createSub.Flags().String("source", "manual", "Source: guardduty, cedar-denial, manual")
+	createSub.Flags().String("notes", "", "Notes or description")
+	createSub.Flags().StringSlice("control", nil, "Affected control IDs (repeatable)")
+
+	listSub := &cobra.Command{
+		Use:   "list",
+		Short: "List incidents",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mgr := reporting.NewIncidentManager(filepath.Join(".attest", "history"))
+			incidents, err := mgr.List()
+			if err != nil {
+				return err
+			}
+			if len(incidents) == 0 {
+				fmt.Println("No incidents recorded.")
+				return nil
+			}
+			for _, inc := range incidents {
+				resolved := ""
+				if inc.ResolvedAt != nil {
+					resolved = fmt.Sprintf(" → resolved %s", inc.ResolvedAt.Format("2006-01-02"))
+				}
+				fmt.Printf("  [%s] %s  %s  %s%s\n",
+					inc.Severity, inc.ID, inc.Status, inc.Title, resolved)
+			}
+			return nil
+		},
+	}
+
+	resolveSub := &cobra.Command{
+		Use:   "resolve <id>",
+		Short: "Mark an incident as resolved",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			notes, _ := cmd.Flags().GetString("notes")
+			mgr := reporting.NewIncidentManager(filepath.Join(".attest", "history"))
+			if err := mgr.Resolve(args[0], notes); err != nil {
+				return err
+			}
+			fmt.Printf("Incident %s resolved.\n", args[0])
+			return nil
+		},
+	}
+	resolveSub.Flags().String("notes", "", "Resolution notes")
+
+	cmd.AddCommand(createSub, listSub, resolveSub)
+	return cmd
 }
 
 func attestCmd() *cobra.Command {

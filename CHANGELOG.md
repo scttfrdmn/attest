@@ -9,11 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `attest apply` auto-tag: creates a `applied-YYYYMMDD-HHMMSS` git tag in the
+  `.attest/` store before every deployment — pre-deploy snapshot for rollback (#69).
+- `attest rollback [--list] [--to <tag>] [--approve]` — undo the last apply or
+  restore to any named snapshot: detaches all attest-managed SCPs, checks out compiled
+  artifacts from the target tag, and re-applies. Uses `store.ListTags()` and new
+  `store.Checkout()` (#70).
+- `deployer.DetachAll()` — detaches all `attest-*` SCPs from org root while leaving
+  non-attest policies (e.g., FullAWSAccess) untouched.
+- `attest watch [--region] [--interval]` — continuous Cedar PDP evaluation via
+  CloudTrail polling. Polls CloudTrail management events every N seconds (default 30s),
+  evaluates each against compiled Cedar policies, streams DENY decisions to terminal,
+  writes all decisions to `.attest/history/cedar-decisions.jsonl`. EventBridge
+  integration remains v1.0.0 (#32).
+- `attest incident create/list/resolve` — lightweight incident lifecycle management
+  stored in `.attest/history/incidents.yaml`. Mirrors `attest waiver` pattern (#41).
+- `attest serve [--addr] [--auth]` — real web dashboard on Go `net/http` + HTMX + SSE.
+  Posture ring, frameworks, live Cedar PDP feed (SSE), waivers, incidents, and
+  document generation. Static bearer token auth via `ATTEST_DASHBOARD_TOKEN` (#39, #42).
+- Security service integrations (`internal/integrations`): `CollectForControl()` and
+  `CollectAll()` implemented with GuardDuty (active findings via threat→control mapping),
+  IAM Access Analyzer (active overly-permissive-policy findings), and Organizations
+  (deployed SCPs). All free-tier. AWS SDK deps: `guardduty`, `accessanalyzer` (#33).
+- `store.ListTags()` and `store.Checkout()` methods for rollback support.
+- `internal/reporting/incidents.go` — `Incident` type and `IncidentManager` CRUD.
+- `internal/evaluator/cloudtrail.go` — CloudTrail event → `AuthzRequest` translation.
+- `evaluator.DecisionEvent` type and `Subscribe()` channel for dashboard SSE feed.
+- `docs/tutorials/greenfield.md` — step-by-step: blank org to CMMC Assessment Ready,
+  including quota handling, rollback, and dashboard walkthrough (#66).
+- `docs/tutorials/legacy.md` — step-by-step: existing docs to audit-ready SSP in
+  30 minutes using `attest ai ingest` (#66).
 - `docs/operations/rollback.md` — documents current rollback approach: manual
   checkpoint creation via `git -C .attest tag`, step-by-step SCP detach/delete
   via AWS CLI, re-applying a previous compiled state from a checkpoint, Terraform
-  destroy path. Notes v0.8.0 roadmap items: auto-tagging (#69) and `attest rollback`
-  command (#70).
+  destroy path.
 
 ### Changed
 
@@ -21,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not a default; solution is `--scp-strategy merged`). Adds pre-apply checkpoint
   reminder, rollback caveat in Step 5, merged-strategy compile example with budget
   output, and link to `docs/operations/rollback.md`.
+- Bumped version to `0.8.0-dev`.
 
 ## [0.7.0] - 2026-04-15
 
