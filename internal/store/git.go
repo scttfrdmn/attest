@@ -110,11 +110,11 @@ func (s *Store) Commit(message string) error {
 
 // Tag creates an annotated git tag (e.g., "assessment-2025-q1").
 func (s *Store) Tag(name, message string) error {
-	if s.noCommit {
-		return nil
-	}
 	if err := validateRef(name); err != nil {
 		return fmt.Errorf("invalid tag name: %w", err)
+	}
+	if s.noCommit {
+		return nil
 	}
 	if err := s.git("tag", "-a", name, "-m", message); err != nil {
 		return fmt.Errorf("git tag %s: %w", name, err)
@@ -157,11 +157,11 @@ func (s *Store) ListTags() ([]string, error) {
 // Checkout checks out the store to the given tag or ref. Use "main" to return
 // to HEAD. This is used by rollback to restore a prior compiled artifact state.
 func (s *Store) Checkout(ref string) error {
-	if s.noCommit {
-		return nil
-	}
 	if err := validateRef(ref); err != nil {
 		return fmt.Errorf("invalid ref: %w", err)
+	}
+	if s.noCommit {
+		return nil
 	}
 	if err := s.git("checkout", ref, "--", "."); err != nil {
 		return fmt.Errorf("git checkout %s: %w", ref, err)

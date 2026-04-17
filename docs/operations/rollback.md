@@ -1,14 +1,10 @@
 # Rollback and State Management
 
-## Current behavior (v0.7.x)
+## Current behavior (v0.8.x)
 
-`attest apply` deploys SCPs to your AWS Organization and records the deployment in the
-local `.attest/` git store. It does **not** automatically create a tagged checkpoint
-before deploying.
-
-This means there is no single `attest rollback` command today. Rollback is a manual
-operation (described below). Both automatic checkpointing (#69) and a `attest rollback`
-command (#70) are planned for v0.8.0.
+`attest apply` automatically creates a snapshot tag (`applied-YYYYMMDD-HHMMSS`) in the
+`.attest/` git store before every deployment. `attest rollback` undoes the last apply
+or restores to any named snapshot. Both features are available since v0.8.0.
 
 ---
 
@@ -28,9 +24,27 @@ git -C .attest show HEAD
 
 ---
 
+## Automatic snapshots
+
+Every `attest apply` creates a snapshot automatically before deploying:
+
+```
+  Snapshot: applied-20260416-143022
+  Applying...
+```
+
+To list all snapshots:
+
+```bash
+attest rollback --list
+# → applied-20260416-143022
+#   applied-20260415-091533
+#   before-iso27001
+```
+
 ## Creating a manual checkpoint
 
-Before any `attest apply` you want to be able to undo, tag the current state:
+You can also create named checkpoints at any time:
 
 ```bash
 # Tag the current compiled state with a human-readable name
@@ -40,19 +54,45 @@ git -C .attest tag -a "before-iso27001" -m "Before adding ISO 27001 framework"
 git -C .attest tag -a "checkpoint-$(date +%Y%m%d-%H%M)" -m "Pre-apply checkpoint"
 ```
 
-List existing checkpoints:
+### Snapshot naming rules
 
-```bash
-git -C .attest tag -l
+Tag names must match `[a-zA-Z0-9._/-]+`:
+- Allowed: letters, digits, `.` `-` `_` `/`
+- Not allowed: spaces, `..`, `;`, `&`, `|`, `$`, backticks, newlines, or any shell metacharacters
+- Max length: 255 characters
+
+attest auto-generates `applied-YYYYMMDD-HHMMSS` which is always valid.
+
+If you pass an invalid name to `attest rollback --to`, you will see:
 ```
-
-> **Note**: Creating a checkpoint before every apply will be automatic in v0.8.0 (#69).
+Error: invalid ref: ref "my tag;evil" contains unsafe characters
+```
 
 ---
 
+## Rolling back with `attest rollback`
+
+Roll back to the most recent snapshot:
+
+```bash
+AWS_PROFILE=sre attest rollback --approve --region us-east-1
+```
+
+Roll back to a specific snapshot:
+
+```bash
+AWS_PROFILE=sre attest rollback --to before-iso27001 --approve --region us-east-1
+```
+
+This:
+1. Detaches all `attest-*` SCPs from the org root
+2. Checks out compiled artifacts from the target snapshot
+3. Re-applies the checkpoint state
+
 ## Rolling back manually
 
-Rollback means: detach the SCPs attest deployed, then optionally delete them.
+If `attest rollback` is unavailable, rollback means: detach the SCPs attest deployed,
+then optionally delete them.
 
 ### Step 1 — Identify deployed attest SCPs
 
@@ -129,13 +169,9 @@ This is the most auditable rollback path when Terraform state is maintained.
 
 ---
 
-## What's coming in v0.8.0
+## Changelog
 
-| Feature | Issue | Description |
-|---|---|---|
-| Auto-tag before apply | [#69](https://github.com/provabl/attest/issues/69) | Every `attest apply` creates a git tag before deploying |
-| `attest rollback` command | [#70](https://github.com/provabl/attest/issues/70) | One-command rollback to any tagged checkpoint |
-
-Once #69 lands, every apply will produce a tag like `applied-20260415-143200`, and
-`attest rollback applied-20260415-143200` will detach the current SCPs and re-apply
-the state from that checkpoint — no AWS CLI required.
+| Version | Change |
+|---|---|
+| v0.8.0 | `attest apply` auto-creates snapshot; `attest rollback` command added (#69, #70) |
+| v0.8.1 | Snapshot name validation: rejects unsafe characters to prevent git ref injection |

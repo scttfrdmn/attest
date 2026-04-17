@@ -1,12 +1,23 @@
 package framework
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/provabl/attest/pkg/schema"
 )
+
+// makeFrameworkWithControls creates a framework with n controls for limit testing.
+func makeFrameworkWithControls(id string, n int) *schema.Framework {
+	controls := make([]schema.Control, n)
+	for i := range controls {
+		controls[i] = schema.Control{ID: fmt.Sprintf("%d.%d", i/100+1, i%100+1)}
+	}
+	return &schema.Framework{ID: id, Controls: controls}
+}
 
 // writeFramework writes a framework YAML file to a temp directory.
 func writeFramework(t *testing.T, dir, id, content string) string {
@@ -200,6 +211,51 @@ func TestValidate(t *testing.T) {
 			name:    "control missing ID",
 			fw:      &schema.Framework{ID: "test", Controls: []schema.Control{{ID: ""}}},
 			wantErr: true,
+		},
+		// v0.8.1 security fix: size limit validation
+		{
+			name:    "framework ID too long",
+			fw:      &schema.Framework{ID: strings.Repeat("a", 129), Controls: []schema.Control{{ID: "1.1"}}},
+			wantErr: true,
+		},
+		{
+			name:    "framework ID at max length",
+			fw:      &schema.Framework{ID: strings.Repeat("a", 128), Controls: []schema.Control{{ID: "1.1"}}},
+			wantErr: false,
+		},
+		{
+			name:    "control ID too long",
+			fw:      &schema.Framework{ID: "test", Controls: []schema.Control{{ID: strings.Repeat("c", 65)}}},
+			wantErr: true,
+		},
+		{
+			name:    "control ID at max length",
+			fw:      &schema.Framework{ID: "test", Controls: []schema.Control{{ID: strings.Repeat("c", 64)}}},
+			wantErr: false,
+		},
+		{
+			name: "control title too long",
+			fw: &schema.Framework{ID: "test", Controls: []schema.Control{
+				{ID: "1.1", Title: strings.Repeat("t", 513)},
+			}},
+			wantErr: true,
+		},
+		{
+			name: "control title at max length",
+			fw: &schema.Framework{ID: "test", Controls: []schema.Control{
+				{ID: "1.1", Title: strings.Repeat("t", 512)},
+			}},
+			wantErr: false,
+		},
+		{
+			name:    "too many controls (10001)",
+			fw:      makeFrameworkWithControls("test", 10001),
+			wantErr: true,
+		},
+		{
+			name:    "controls at max count (10000)",
+			fw:      makeFrameworkWithControls("test", 10000),
+			wantErr: false,
 		},
 	}
 

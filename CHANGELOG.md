@@ -36,6 +36,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **INFO fixed**: `handleGenerate` flusher type assertion is now checked; returns 500
   if SSE is not supported instead of silently failing.
 
+### Added
+
+- `internal/store/store_test.go` — 3 tests for `validateRef()`, `Tag()`, `Checkout()`
+  covering CRITICAL security fix: injection via path traversal, shell metacharacters,
+  empty refs, and oversized refs.
+- `internal/evaluator/cloudtrail_test.go` — 10 tests for `sanitizeEventField()` and
+  `translateEvent()` covering HIGH security fix: log injection, newlines, semicolons,
+  pipes, backticks, long inputs, and nil EventName.
+- `internal/framework/loader_test.go` — 8 boundary tests for the new MEDIUM security
+  fix: framework ID, control ID, and control title length limits; control count limit.
+- `internal/dashboard/server_test.go` — 7 tests for auth middleware (5 cases), SSE
+  connection limit enforcement (concurrent safety), and API Content-Type headers.
+- `docs/operations/rollback.md` — updated to reflect v0.8.0 delivery (auto-snapshot,
+  `attest rollback` command); added "Snapshot naming rules" section documenting the
+  v0.8.1 ref validation (allowed chars, `..` prohibition, 255-char limit, error message).
+
 ## [0.8.0] - 2026-04-17
 
 ### Added
