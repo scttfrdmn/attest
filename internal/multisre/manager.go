@@ -15,6 +15,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// validSREIDRunes allows only alphanumeric, hyphen, and underscore in SRE IDs.
+// This prevents path traversal via the StoreDir() method.
+func isValidSREID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, r := range id {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
 // SREEntry is a registered AWS Organization in the multi-SRE registry.
 type SREEntry struct {
 	ID         string   `yaml:"id"`         // e.g., "production"
@@ -89,6 +104,11 @@ func (m *Manager) Add(entry SREEntry) error {
 	if entry.ID == "" {
 		return fmt.Errorf("SRE ID is required")
 	}
+	// Validate ID to prevent path traversal via StoreDir().
+	// Only alphanumeric, hyphen, underscore allowed — no ., /, \, or ..'
+	if !isValidSREID(entry.ID) {
+		return fmt.Errorf("invalid SRE ID %q: must be alphanumeric, hyphen, or underscore (max 64 chars)", entry.ID)
+	}
 	if entry.OrgID == "" {
 		return fmt.Errorf("org_id is required")
 	}
@@ -154,6 +174,8 @@ func (m *Manager) List() ([]SREEntry, error) {
 }
 
 // StoreDir returns the per-SRE .attest/ directory path.
+// SAFETY: id must have been validated with isValidSREID() before calling this
+// (enforced by Add()). The ".sre-" prefix prevents collision with reserved names.
 func (m *Manager) StoreDir(id string) string {
 	return filepath.Join(m.storeRoot, ".sre-"+id)
 }
@@ -171,6 +193,9 @@ func (m *Manager) ScanAll(scanFn func(entry SREEntry, storeDir string) (*SREPost
 
 	results := make([]SREPosture, len(reg.SREs))
 	var wg sync.WaitGroup
+	// SAFETY: Each goroutine writes to a distinct index (i) of results[].
+	// The index is passed as an explicit argument — not captured from the loop —
+	// so there is no closure race. Do NOT refactor to capture i from the outer loop.
 	for i, entry := range reg.SREs {
 		wg.Add(1)
 		go func(i int, entry SREEntry) {

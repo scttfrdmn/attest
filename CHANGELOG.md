@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-04-17
+
+### Security
+
+- **CRITICAL fixed**: Path traversal in multi-SRE registry — `SREEntry.ID` now validated
+  by `isValidSREID()` (alphanumeric, hyphen, underscore only; max 64 chars; rejects `..`,
+  `/`, `\`, shell metacharacters). `Manager.Add()` enforces this before `StoreDir()` is
+  ever called. Prevents `attest sre add --id ../../etc` from escaping `.attest/`.
+- **CRITICAL fixed**: Code injection in CDK TypeScript generation — all SCP filenames are
+  validated by `isValidSCPID()` (lowercase alphanumeric, hyphen, underscore only) before
+  being embedded into `stack.ts`. Rejects backticks, template literals, quotes, and other
+  TypeScript metacharacters that could inject arbitrary code into the generated CDK stack.
+- **CRITICAL fixed**: Zip slip in CMMC bundle generator — `createZip()` now resolves
+  absolute paths and verifies every archived file path stays within `srcDir` using
+  `filepath.Abs()` + `strings.HasPrefix()`. Symlinks in the source directory are silently
+  skipped. Zip file created with `0640` (was `os.Create` default, often `0644`).
+- **HIGH fixed**: Symlink traversal in CMMC document generation — `generateSCPManifest()`,
+  `generateAttestationsIndex()`, `generateWaiversRegister()` now check
+  `info.Mode()&os.ModeSymlink != 0` and skip symlinks before calling `os.ReadFile()`.
+- **MEDIUM fixed**: Output directory path traversal in `attest generate cmmc-bundle` —
+  `--output` flag value is now validated: must be relative, must not start with `..`.
+- **MEDIUM fixed**: Framework ID Unicode/homoglyph validation — `validate()` in
+  `internal/framework/loader.go` now enforces `[a-z0-9_-]` character set on IDs, rejecting
+  Unicode lookalikes (Cyrillic "ітар", en-dash, em-dash) that could bypass conflict detection.
+
+### Added
+
+- 3 new security test files (30+ test cases):
+  - `internal/multisre/security_test.go`: `isValidSREID` (17 cases), `Add` rejection,
+    `StoreDir` containment
+  - `internal/iac/security_test.go`: `isValidSCPID` (11 cases), CDK injection rejection
+  - `internal/framework/security_test.go`: Unicode/homoglyph ID validation (10 cases)
+
 ## [0.10.0] - 2026-04-17
 
 ### Added

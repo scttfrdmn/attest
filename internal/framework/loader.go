@@ -119,6 +119,14 @@ func validate(fw *schema.Framework) error {
 	if len(fw.ID) > maxFrameworkIDLen {
 		return fmt.Errorf("framework ID too long (max %d chars)", maxFrameworkIDLen)
 	}
+	// Enforce strict ASCII lowercase + hyphen character set on framework IDs.
+	// This prevents Unicode homoglyph attacks that could bypass conflict detection
+	// (e.g., Cyrillic "ітар" bypassing detection of "itar").
+	for _, r := range fw.ID {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+			return fmt.Errorf("framework ID %q contains invalid character %q (allowed: a-z 0-9 - _)", fw.ID, r)
+		}
+	}
 	if len(fw.Controls) == 0 {
 		return fmt.Errorf("framework must define at least one control")
 	}

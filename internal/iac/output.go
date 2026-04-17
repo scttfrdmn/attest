@@ -145,11 +145,17 @@ func (g *Generator) generateCDK(compiledDir string) error {
 	}
 
 	// Collect SCP file names for stack generation.
+	// Validate each SCP ID before embedding into TypeScript to prevent code injection.
 	var scpFiles []string
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-			scpFiles = append(scpFiles, e.Name())
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
 		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if !isValidSCPID(id) {
+			return fmt.Errorf("SCP ID %q contains characters unsafe for CDK TypeScript generation (allowed: a-z 0-9 - _)", id)
+		}
+		scpFiles = append(scpFiles, e.Name())
 	}
 	if len(scpFiles) == 0 {
 		return fmt.Errorf("no SCP JSON files found in %s", scpDir)
@@ -290,6 +296,22 @@ app.synth();
 	}
 
 	return nil
+}
+
+// isValidSCPID validates that an SCP ID contains only safe characters for use
+// in generated TypeScript identifiers and template strings.
+// Only lowercase alphanumeric and hyphens are allowed — no quotes, backticks,
+// template literals, or TypeScript metacharacters.
+func isValidSCPID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // toCDKResourceID converts a kebab-case SCP ID like "attest-scp-01" to a

@@ -50,7 +50,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.10.0"
+var version = "0.10.1"
 
 func main() {
 	root := &cobra.Command{
@@ -1602,6 +1602,14 @@ Run 'attest compile' and 'attest scan' first to ensure the crosswalk is current.
 
 			if outputDir == "" {
 				outputDir = fmt.Sprintf("cmmc-bundle-%s", time.Now().UTC().Format("2006-01-02"))
+			} else {
+				// Validate output directory: must be relative and must not escape the project.
+				if filepath.IsAbs(outputDir) {
+					return fmt.Errorf("--output must be a relative path, not absolute: %s", outputDir)
+				}
+				if clean := filepath.Clean(outputDir); strings.HasPrefix(clean, "..") {
+					return fmt.Errorf("--output must not escape the project directory: %s", outputDir)
+				}
 			}
 
 			fmt.Printf("Generating CMMC Level 2 assessment bundle → %s/\n", outputDir)

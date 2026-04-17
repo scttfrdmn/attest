@@ -241,11 +241,15 @@ func generateSCPManifest(storeDir string) string {
 		if !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		info, _ := e.Info()
-		size := int64(0)
-		if info != nil {
-			size = info.Size()
+		info, err := e.Info()
+		if err != nil {
+			continue
 		}
+		// Skip symlinks — they could point to sensitive files outside .attest/.
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		size := info.Size()
 		id := strings.TrimSuffix(e.Name(), ".json")
 		sb.WriteString(fmt.Sprintf("| %s | %s | %d chars |\n", id, e.Name(), size))
 	}
@@ -266,6 +270,10 @@ func generateAttestationsIndex(storeDir string) string {
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			continue // skip symlinks
 		}
 		data, err := os.ReadFile(filepath.Join(attDir, e.Name()))
 		if err != nil {
@@ -295,6 +303,10 @@ func generateWaiversRegister(storeDir string) string {
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			continue // skip symlinks
 		}
 		data, err := os.ReadFile(filepath.Join(waiverDir, e.Name()))
 		if err != nil {
@@ -328,9 +340,12 @@ func generateCMMCCrosswalk(crosswalk *schema.Crosswalk) string {
 	return string(data)
 }
 
-// createZip creates a zip archive of all files in srcDir.
+// createZip creates a zip archive of all regular files in srcDir.
+// Zip slip protection: all archive paths are validated to stay within srcDir.
+// File created with 0640 permissions (not world-readable).
 func createZip(srcDir, zipPath string) error {
-	f, err := os.Create(zipPath)
+	// Use OpenFile with explicit permissions — os.Create uses umask (often 0644).
+	f, err := os.OpenFile(zipPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0640)
 	if err != nil {
 		return err
 	}
@@ -339,14 +354,38 @@ func createZip(srcDir, zipPath string) error {
 	w := zip.NewWriter(f)
 	defer w.Close()
 
+	absSrc, err := filepath.Abs(srcDir)
+	if err != nil {
+		return fmt.Errorf("resolving srcDir: %w", err)
+	}
+
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() || filepath.Base(path) == filepath.Base(zipPath) {
-			return err
-		}
-		rel, err := filepath.Rel(srcDir, path)
 		if err != nil {
 			return err
 		}
+		// Skip directories, the zip file itself, and symlinks.
+		if info.IsDir() || filepath.Base(path) == filepath.Base(zipPath) {
+			return nil
+		}
+		// Reject symlinks to prevent symlink-based traversal attacks.
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil // skip silently
+		}
+
+		// Compute relative path and guard against zip slip.
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(absSrc, absPath)
+		if err != nil {
+			return err
+		}
+		// Reject any path that escapes srcDir.
+		if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+			return fmt.Errorf("zip slip detected: path %q escapes bundle directory", rel)
+		}
+
 		fw, err := w.Create(rel)
 		if err != nil {
 			return err
