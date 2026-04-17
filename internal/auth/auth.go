@@ -45,7 +45,20 @@ func Middleware(next http.Handler) http.Handler {
 	})
 }
 
+// userContextKey is the context key for the authenticated user.
+type userContextKey struct{}
+
+// WithUser stores an authenticated user in the request context.
+func WithUser(ctx context.Context, u *User) context.Context {
+	return context.WithValue(ctx, userContextKey{}, u)
+}
+
 // UserFromContext extracts the authenticated user from the request context.
+// Returns an error if no user is present (unauthenticated request).
 func UserFromContext(ctx context.Context) (*User, error) {
-	return nil, fmt.Errorf("not implemented")
+	u, ok := ctx.Value(userContextKey{}).(*User)
+	if !ok || u == nil {
+		return nil, fmt.Errorf("no authenticated user in context")
+	}
+	return u, nil
 }

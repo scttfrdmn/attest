@@ -13,8 +13,10 @@ import (
 
 	cedar "github.com/cedar-policy/cedar-go"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
+	cttypes "github.com/aws/aws-sdk-go-v2/service/cloudtrail/types"
 	iamSvc "github.com/aws/aws-sdk-go-v2/service/iam"
 
 	"github.com/provabl/attest/internal/ai"
@@ -39,7 +41,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.8.0-dev"
+var version = "0.8.0"
 
 func main() {
 	root := &cobra.Command{
@@ -1843,34 +1845,148 @@ Use --output sarif for GitHub Actions annotation integration.`,
 }
 
 func simulateCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "simulate",
-		Short: "Replay CloudTrail events against proposed policies",
-		Long: `Replays a window of real CloudTrail events against a proposed policy
-set and diffs the results. Shows which operations would change from
-ALLOW to DENY (or vice versa) and their impact on production workloads.`,
+		Short: "Diff Cedar decisions: current vs proposed policy changes",
+		Long: `Replays recent CloudTrail events against both the current compiled Cedar
+policies and a proposed policy set. Shows which operations change decision
+(ALLOW→DENY or DENY→ALLOW) so you can validate policy changes before deploying.
+
+Use 'attest ai translate' to generate proposed policies from natural language.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Running policy simulation...")
-			fmt.Println("  Loading proposed policies...")
-			fmt.Println("  Replaying CloudTrail events...")
+			ctx := context.Background()
+			cedarDir, _ := cmd.Flags().GetString("cedar")
+			proposedDir, _ := cmd.Flags().GetString("proposed")
+			region, _ := cmd.Flags().GetString("region")
+			hours, _ := cmd.Flags().GetInt("hours")
+
+			cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+			if err != nil {
+				return fmt.Errorf("loading AWS config: %w", err)
+			}
+
+			// Load current and proposed policy sets.
+			currentPS, err := loadCedarPolicies(cedarDir)
+			if err != nil {
+				return fmt.Errorf("loading current Cedar policies from %s: %w", cedarDir, err)
+			}
+			proposedPS, err := loadCedarPolicies(proposedDir)
+			if err != nil {
+				return fmt.Errorf("loading proposed Cedar policies from %s: %w", proposedDir, err)
+			}
+
+			// Count policies.
+			currentCount, proposedCount := 0, 0
+			for range currentPS.All() { currentCount++ }
+			for range proposedPS.All() { proposedCount++ }
+			fmt.Printf("Simulating: %d current vs %d proposed policies\n", currentCount, proposedCount)
+			fmt.Printf("CloudTrail window: last %d hour(s) (region: %s)\n\n", hours, region)
+
+			// Pull CloudTrail events.
+			ctSvc := cloudtrail.NewFromConfig(cfg)
+			from := time.Now().Add(-time.Duration(hours) * time.Hour)
+			to := time.Now()
+
+			out, err := ctSvc.LookupEvents(ctx, &cloudtrail.LookupEventsInput{
+				StartTime:  &from,
+				EndTime:    &to,
+				MaxResults: aws.Int32(100),
+			})
+			if err != nil {
+				return fmt.Errorf("fetching CloudTrail events: %w", err)
+			}
+			if len(out.Events) == 0 {
+				fmt.Println("No CloudTrail events found in the specified window.")
+				return nil
+			}
+
+			eval := evaluator.NewEvaluator(nil)
+			allowToDeny, denyToAllow, unchanged := 0, 0, 0
+
+			for _, ev := range out.Events {
+				req := translateCloudTrailEvent(ev)
+				if req == nil {
+					continue
+				}
+				cur, err := eval.EvaluateWithPolicies(ctx, currentPS, req)
+				if err != nil { continue }
+				prop, err := eval.EvaluateWithPolicies(ctx, proposedPS, req)
+				if err != nil { continue }
+
+				if cur.Effect == prop.Effect {
+					unchanged++
+					continue
+				}
+				if cur.Effect == "ALLOW" && prop.Effect == "DENY" {
+					allowToDeny++
+					fmt.Printf("  [ALLOW→DENY] %s  %s\n", req.PrincipalARN, req.Action)
+				} else {
+					denyToAllow++
+					fmt.Printf("  [DENY→ALLOW] %s  %s\n", req.PrincipalARN, req.Action)
+				}
+			}
+			fmt.Printf("\nResults: %d ALLOW→DENY, %d DENY→ALLOW, %d unchanged (from %d events)\n",
+				allowToDeny, denyToAllow, unchanged, len(out.Events))
+			if allowToDeny > 0 {
+				fmt.Println("\n⚠ Proposed policies would block operations currently allowed.")
+				fmt.Println("  Review the ALLOW→DENY list above before deploying.")
+			}
+			if denyToAllow > 0 {
+				fmt.Println("\n⚠ Proposed policies would permit operations currently denied.")
+				fmt.Println("  Confirm this is intentional before deploying.")
+			}
 			return nil
 		},
+	}
+	cmd.Flags().String("cedar", filepath.Join(".attest", "compiled", "cedar"), "Current Cedar policies directory")
+	cmd.Flags().String("proposed", filepath.Join(".attest", "proposed"), "Proposed Cedar policies directory")
+	cmd.Flags().String("region", "us-east-1", "AWS region")
+	cmd.Flags().Int("hours", 1, "CloudTrail lookback window in hours")
+	return cmd
+}
+
+// translateCloudTrailEvent is a thin wrapper around the evaluator package's translator.
+// Duplicating the logic here avoids exposing an unexported function cross-package.
+func translateCloudTrailEvent(ev cttypes.Event) *evaluator.AuthzRequest {
+	if ev.EventName == nil {
+		return nil
+	}
+	principal := "arn:aws:iam::unknown:user/unknown"
+	if ev.Username != nil {
+		principal = "arn:aws:iam::unknown:user/" + *ev.Username
+	}
+	resource := "*"
+	for _, r := range ev.Resources {
+		if r.ResourceName != nil {
+			resource = *r.ResourceName
+			break
+		}
+	}
+	return &evaluator.AuthzRequest{
+		Action:       *ev.EventName,
+		PrincipalARN: principal,
+		ResourceARN:  resource,
+		Attributes:   map[string]any{},
+		Timestamp:    time.Now(),
 	}
 }
 
 func provisionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "provision",
-		Short: "Create a new compliant research environment",
+		Short: "Create a new compliant research environment (v0.9.0)",
 		Long: `Creates a new AWS account in the SRE with the correct OU placement,
 tags, and Cedar entity registration based on the requested data
 classifications. Checks prerequisites (BAA signed, training current)
-before provisioning.`,
+before provisioning.
+
+Environment provisioning is planned for v0.9.0. Track progress: #38`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Computing provisioning plan...")
-			fmt.Println("  Checking prerequisites...")
-			fmt.Println("  Determining target OU from data classes...")
-			return nil
+			return fmt.Errorf("environment provisioning is not yet implemented (planned for v0.9.0 — see issue #38)\n" +
+				"  To create a compliant environment manually:\n" +
+				"  1. Create AWS account in your Organization\n" +
+				"  2. Tag: attest:data-class=CUI, attest:owner=<PI>, attest:purpose=<description>\n" +
+				"  3. Run 'attest scan' to include the new environment in posture reporting")
 		},
 	}
 }
@@ -2315,25 +2431,8 @@ Optional: ATTEST_GUARDRAIL_ARN env var for Bedrock Guardrail enforcement.`,
 	}
 
 	cmd.AddCommand(aiAskCmd(), aiIngestCmd(), aiOnboardCmd(),
-		// Remaining capabilities — stubs for v0.7.0 (tool use / Opus agent)
-		aiStubCmd("audit-sim", "Simulate a compliance assessor evaluation (v0.7.0)"),
-		aiStubCmd("translate", "Translate natural language to a Cedar policy (v0.7.0)"),
-		aiStubCmd("analyze", "Detect anomalies in Cedar decision log (v0.7.0)"),
-		aiStubCmd("impact", "Analyze framework change impact from a PDF (v0.7.0)"),
-		aiStubCmd("remediate", "Generate remediation artifacts for a control gap (v0.7.0)"),
-	)
+		aiAuditSimCmd(), aiTranslateCmd(), aiAnalyzeCmd(), aiImpactCmd(), aiRemediateCmd())
 	return cmd
-}
-
-func aiStubCmd(use, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("%s — coming in v0.7.0 (requires Opus agent with tool use)\n", use)
-			return nil
-		},
-	}
 }
 
 func aiAskCmd() *cobra.Command {
@@ -2560,5 +2659,216 @@ Example:
 		},
 	}
 	cmd.Flags().String("org", "provabl", "GitHub org that signed the release")
+	return cmd
+}
+
+func aiAuditSimCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "audit-sim",
+		Short: "Simulate a CMMC Level 2 assessor evaluation",
+		Long: `Runs a simulated DFARS/CMMC Level 2 third-party assessment against
+the current compliance posture. Produces a draft assessment report with
+likely findings and weaknesses. Uses Claude Opus 4.6.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			region, _ := cmd.Flags().GetString("region")
+			analyst, err := ai.NewAnalyst(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to Bedrock: %w", err)
+			}
+			fmt.Println("Running simulated CMMC Level 2 assessment (Opus 4.6)...")
+			result, err := analyst.AuditSim(ctx)
+			if err != nil {
+				return fmt.Errorf("audit simulation failed: %w", err)
+			}
+			fmt.Printf("\nSimulated Score: %d / 110 controls\n\n", result.Score)
+			fmt.Printf("Assessor Narrative:\n%s\n\n", result.Narrative)
+			if len(result.Weaknesses) > 0 {
+				fmt.Println("Weaknesses identified:")
+				for _, w := range result.Weaknesses {
+					fmt.Printf("  • %s\n", w)
+				}
+			}
+			if len(result.Findings) > 0 {
+				fmt.Println("\nDraft Findings:")
+				for _, f := range result.Findings {
+					fmt.Printf("  [FINDING] %s\n", f)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().String("region", "us-east-1", "AWS region for Bedrock")
+	return cmd
+}
+
+func aiTranslateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "translate [statement]",
+		Short: "Translate natural language to a Cedar policy",
+		Long: `Translates a natural language access control statement into a Cedar policy.
+Uses Claude Opus 4.6 for precision. The output is a proposed Cedar policy
+you can review and move to .attest/proposed/ for testing.
+
+Example:
+  attest ai translate "Deny S3 access to users who haven't completed CUI training"`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			region, _ := cmd.Flags().GetString("region")
+			analyst, err := ai.NewAnalyst(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to Bedrock: %w", err)
+			}
+			statement := strings.Join(args, " ")
+			fmt.Printf("Translating: %q\n\n", statement)
+			cedar, err := analyst.TranslateToCedar(ctx, statement)
+			if err != nil {
+				return fmt.Errorf("translation failed: %w", err)
+			}
+			fmt.Println(cedar)
+			fmt.Println("\nReview the policy, then: cp proposed.cedar .attest/proposed/")
+			fmt.Println("Test with: attest simulate --proposed .attest/proposed/")
+			return nil
+		},
+	}
+	cmd.Flags().String("region", "us-east-1", "AWS region for Bedrock")
+	return cmd
+}
+
+func aiAnalyzeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "analyze",
+		Short: "Detect anomalies in the Cedar decision log",
+		Long: `Reads .attest/history/cedar-decisions.jsonl and uses Claude Sonnet 4.6
+to identify unusual patterns: DENY bursts, off-hours access, repeated violations.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			region, _ := cmd.Flags().GetString("region")
+			logPath, _ := cmd.Flags().GetString("log")
+			analyst, err := ai.NewAnalyst(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to Bedrock: %w", err)
+			}
+			fmt.Printf("Analyzing Cedar decision log: %s\n\n", logPath)
+			anomalies, err := analyst.AnalyzeAnomalies(ctx, logPath)
+			if err != nil {
+				return fmt.Errorf("analysis failed: %w", err)
+			}
+			if len(anomalies) == 0 {
+				fmt.Println("No anomalies detected.")
+				return nil
+			}
+			for _, a := range anomalies {
+				fmt.Printf("[%s] %s (%d occurrences)\n", a.Severity, a.Pattern, a.Occurrences)
+				if len(a.ControlIDs) > 0 {
+					fmt.Printf("  Controls: %s\n", strings.Join(a.ControlIDs, ", "))
+				}
+				fmt.Printf("  Suggestion: %s\n\n", a.Suggestion)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().String("region", "us-east-1", "AWS region for Bedrock")
+	cmd.Flags().String("log", filepath.Join(".attest", "history", "cedar-decisions.jsonl"), "Cedar decision log path")
+	return cmd
+}
+
+func aiImpactCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "impact <framework-file>",
+		Short: "Analyze the compliance impact of a new framework",
+		Long: `Reads a framework document (PDF, markdown, or text) and estimates
+the impact of activating it: new controls needed, overlaps with existing SCPs,
+and SCP budget delta. Uses Claude Opus 4.6.
+
+Example:
+  attest ai impact docs/fedramp-moderate-controls.pdf`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			region, _ := cmd.Flags().GetString("region")
+			analyst, err := ai.NewAnalyst(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to Bedrock: %w", err)
+			}
+			fmt.Printf("Analyzing framework impact: %s\n\n", args[0])
+			result, err := analyst.AnalyzeImpact(ctx, args[0])
+			if err != nil {
+				return fmt.Errorf("impact analysis failed: %w", err)
+			}
+			fmt.Printf("Summary:\n%s\n\n", result.Summary)
+			if len(result.NewControls) > 0 {
+				fmt.Printf("New controls (%d):\n", len(result.NewControls))
+				for _, c := range result.NewControls {
+					fmt.Printf("  + %s\n", c)
+				}
+			}
+			if len(result.AffectedSCPs) > 0 {
+				fmt.Printf("\nAffected SCPs: %s\n", strings.Join(result.AffectedSCPs, ", "))
+			}
+			if result.SCPBudgetDelta != 0 {
+				sign := "+"
+				if result.SCPBudgetDelta < 0 {
+					sign = ""
+				}
+				fmt.Printf("SCP budget delta: %s%d chars\n", sign, result.SCPBudgetDelta)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().String("region", "us-east-1", "AWS region for Bedrock")
+	return cmd
+}
+
+func aiRemediateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "remediate <control-id>",
+		Short: "Generate a remediation artifact for a control gap",
+		Long: `Generates a concrete remediation artifact for a specific control gap:
+a Cedar policy, SCP statement, Terraform config, or procedure draft.
+Uses Claude Sonnet 4.6.
+
+Example:
+  attest ai remediate 3.11.2   # vulnerability scanning gap`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			region, _ := cmd.Flags().GetString("region")
+			outDir, _ := cmd.Flags().GetString("out")
+			analyst, err := ai.NewAnalyst(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to Bedrock: %w", err)
+			}
+			controlID := args[0]
+			fmt.Printf("Generating remediation for %s...\n\n", controlID)
+			artifact, err := analyst.Remediate(ctx, controlID)
+			if err != nil {
+				return fmt.Errorf("remediation failed: %w", err)
+			}
+			fmt.Printf("Type: %s\nTitle: %s\n\n", artifact.Type, artifact.Title)
+			fmt.Println(artifact.Content)
+			if artifact.Explanation != "" {
+				fmt.Printf("\nExplanation: %s\n", artifact.Explanation)
+			}
+			// Write to proposed directory if --out specified.
+			if outDir != "" {
+				ext := map[string]string{
+					"cedar-policy": ".cedar", "scp-addition": ".json",
+					"terraform": ".tf", "procedure-draft": ".md",
+				}[artifact.Type]
+				if ext == "" {
+					ext = ".txt"
+				}
+				outPath := filepath.Join(outDir, fmt.Sprintf("remediate-%s%s", controlID, ext))
+				if err := os.WriteFile(outPath, []byte(artifact.Content), 0640); err == nil {
+					fmt.Printf("\nWritten to: %s\n", outPath)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().String("region", "us-east-1", "AWS region for Bedrock")
+	cmd.Flags().String("out", "", "Directory to write the artifact (optional)")
 	return cmd
 }

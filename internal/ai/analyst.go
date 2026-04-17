@@ -352,6 +352,276 @@ Return JSON: {summary, priority_items}.`
 	return plan, nil
 }
 
+// --- AuditSim ---
+
+// AuditSimResult is the output of an assessor simulation.
+type AuditSimResult struct {
+	Score      int    // simulated CMMC score
+	Narrative  string // assessor narrative
+	Weaknesses []string
+	Findings   []string
+}
+
+// AuditSim simulates a DFARS/CMMC Level 2 assessor evaluation against the
+// current posture, producing a draft assessment report with likely findings.
+// Uses Opus for maximum reasoning depth.
+func (a *Analyst) AuditSim(ctx context.Context) (*AuditSimResult, error) {
+	postureSummary := a.loadPostureSummary()
+	systemPrompt := `You are a CMMC Level 2 third-party assessor (C3PAO) conducting a
+simulated assessment. Your role is to identify weaknesses and likely assessment
+findings based on the organization's current compliance posture.
+
+Be rigorous and realistic. Assessors do not give credit for partially-implemented
+controls or controls where administrative dependencies are unmet. Cite specific
+NIST 800-171 control IDs (e.g., 3.1.1, 3.5.3) in every finding.
+
+Return JSON: {
+  "score": <integer out of 110>,
+  "narrative": "<summary paragraph>",
+  "weaknesses": ["<control-id>: <weakness description>", ...],
+  "findings": ["<finding title and description>", ...]
+}`
+
+	userMsg := fmt.Sprintf("Posture under assessment:\n%s\n\nConduct a simulated CMMC Level 2 assessment.", postureSummary)
+
+	input := &bedrockruntime.ConverseStreamInput{
+		ModelId: aws.String(selectModel(CapabilityAuditSim)),
+		Messages: []types.Message{
+			{Role: types.ConversationRoleUser,
+				Content: []types.ContentBlock{&types.ContentBlockMemberText{Value: userMsg}}},
+		},
+		System: []types.SystemContentBlock{
+			&types.SystemContentBlockMemberText{Value: systemPrompt},
+		},
+	}
+	raw, err := a.streamConverse(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	var result AuditSimResult
+	if err := json.Unmarshal([]byte(extractJSON(raw)), &result); err != nil {
+		return &AuditSimResult{Narrative: raw}, nil
+	}
+	return &result, nil
+}
+
+// --- TranslateToCedar ---
+
+// TranslateToCedar takes a natural language access control statement and
+// produces a Cedar policy. Uses Opus for precision.
+func (a *Analyst) TranslateToCedar(ctx context.Context, statement string) (string, error) {
+	systemPrompt := a.buildSystemPrompt() + `
+
+Your task is to translate a natural language access control requirement into a
+Cedar policy. Follow these rules:
+- Use the "forbid-unless" pattern for compliance controls
+- Principal attributes come from the org's compiled Cedar schema
+- Reference the existing compiled policies in .attest/compiled/cedar/ for context
+- Output ONLY valid Cedar policy text, no explanation
+- Add a brief comment above explaining the control it enforces`
+
+	input := &bedrockruntime.ConverseStreamInput{
+		ModelId: aws.String(selectModel(CapabilityNLToCedar)),
+		Messages: []types.Message{
+			{Role: types.ConversationRoleUser,
+				Content: []types.ContentBlock{&types.ContentBlockMemberText{
+					Value: "Translate to Cedar policy:\n\n" + statement,
+				}}},
+		},
+		System: []types.SystemContentBlock{
+			&types.SystemContentBlockMemberText{Value: systemPrompt},
+		},
+	}
+	return a.streamConverse(ctx, input)
+}
+
+// --- AnalyzeAnomalies ---
+
+// AnomalyResult is a detected anomaly in the Cedar decision log.
+type AnomalyResult struct {
+	Pattern     string // description of the anomaly
+	ControlIDs  []string
+	Severity    string // "HIGH", "MEDIUM", "LOW"
+	Occurrences int
+	Suggestion  string
+}
+
+// AnalyzeAnomalies reads the Cedar decision log and detects unusual patterns.
+// Uses Sonnet for structured extraction.
+func (a *Analyst) AnalyzeAnomalies(ctx context.Context, logPath string) ([]AnomalyResult, error) {
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading decision log %s: %w", logPath, err)
+	}
+	// Limit to last 500 lines to keep context manageable.
+	lines := strings.Split(string(logData), "\n")
+	if len(lines) > 500 {
+		lines = lines[len(lines)-500:]
+	}
+	logSample := strings.Join(lines, "\n")
+
+	systemPrompt := `You are analyzing a Cedar PDP decision log for a compliance system.
+Each line is a JSON decision event with: timestamp, action, principal, resource, effect (ALLOW/DENY).
+
+Identify anomalous patterns: unusual DENY bursts, repeated access attempts, privileged
+action patterns, off-hours access, or systematic policy violations.
+
+Return JSON array: [{
+  "pattern": "<description>",
+  "control_ids": ["3.1.1", ...],
+  "severity": "HIGH|MEDIUM|LOW",
+  "occurrences": <count>,
+  "suggestion": "<remediation suggestion>"
+}]`
+
+	input := &bedrockruntime.ConverseStreamInput{
+		ModelId: aws.String(selectModel(CapabilityAnomaly)),
+		Messages: []types.Message{
+			{Role: types.ConversationRoleUser,
+				Content: []types.ContentBlock{&types.ContentBlockMemberText{
+					Value: "Analyze this Cedar decision log for anomalies:\n\n" + logSample,
+				}}},
+		},
+		System: []types.SystemContentBlock{
+			&types.SystemContentBlockMemberText{Value: systemPrompt},
+		},
+	}
+	raw, err := a.streamConverse(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	var results []AnomalyResult
+	if err := json.Unmarshal([]byte(extractJSON(raw)), &results); err != nil {
+		return []AnomalyResult{{Pattern: raw, Severity: "UNKNOWN"}}, nil
+	}
+	return results, nil
+}
+
+// --- AnalyzeImpact ---
+
+// ImpactResult describes the compliance impact of a framework change.
+type ImpactResult struct {
+	Summary     string
+	NewControls []string // controls added
+	RemovedControls []string // controls removed
+	AffectedSCPs   []string
+	SCPBudgetDelta int // estimated chars added/saved
+}
+
+// AnalyzeImpact reads a framework document (PDF, markdown, text) and
+// estimates the impact of activating or updating it against current posture.
+// Uses Opus for depth of analysis.
+func (a *Analyst) AnalyzeImpact(ctx context.Context, frameworkPath string) (*ImpactResult, error) {
+	content, err := os.ReadFile(frameworkPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", frameworkPath, err)
+	}
+	postureSummary := a.loadPostureSummary()
+
+	systemPrompt := `You are a compliance architect analyzing the impact of adding or changing a
+compliance framework for an AWS Secure Research Environment.
+
+Given the current posture and the framework document, identify:
+1. New controls that would need to be implemented (not already covered)
+2. Overlapping controls already satisfied by existing SCPs/Cedar policies
+3. Which SCPs might need to change
+4. Estimated SCP character budget impact (each SCP has max 5,120 chars)
+
+Return JSON: {
+  "summary": "<paragraph>",
+  "new_controls": ["<id>: <title>", ...],
+  "removed_controls": [],
+  "affected_scps": ["<scp-name>", ...],
+  "scp_budget_delta": <integer>
+}`
+
+	userMsg := fmt.Sprintf("Current posture:\n%s\n\nFramework document (%s):\n%s",
+		postureSummary, filepath.Base(frameworkPath), string(content[:min(len(content), 8000)]))
+
+	input := &bedrockruntime.ConverseStreamInput{
+		ModelId: aws.String(selectModel(CapabilityFrameworkImpact)),
+		Messages: []types.Message{
+			{Role: types.ConversationRoleUser,
+				Content: []types.ContentBlock{&types.ContentBlockMemberText{Value: userMsg}}},
+		},
+		System: []types.SystemContentBlock{
+			&types.SystemContentBlockMemberText{Value: systemPrompt},
+		},
+	}
+	raw, err := a.streamConverse(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	var result ImpactResult
+	if err := json.Unmarshal([]byte(extractJSON(raw)), &result); err != nil {
+		return &ImpactResult{Summary: raw}, nil
+	}
+	return &result, nil
+}
+
+// min returns the smaller of two ints.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// --- Remediate ---
+
+// RemediationArtifact is a generated remediation for a control gap.
+type RemediationArtifact struct {
+	ControlID   string
+	Title       string
+	Type        string // "cedar-policy", "scp-addition", "procedure-draft", "terraform"
+	Content     string // the artifact itself
+	Explanation string
+}
+
+// Remediate generates a remediation artifact for a specific control gap.
+// Uses Sonnet for code/artifact generation.
+func (a *Analyst) Remediate(ctx context.Context, controlID string) (*RemediationArtifact, error) {
+	postureSummary := a.loadPostureSummary()
+	systemPrompt := a.buildSystemPrompt() + `
+
+Your task is to generate a concrete remediation artifact for the specified control gap.
+Choose the most appropriate artifact type:
+- "cedar-policy" if the control can be enforced via Cedar PDP
+- "scp-addition" if the control requires an SCP statement
+- "procedure-draft" for administrative controls requiring human process
+- "terraform" for infrastructure controls
+
+Return JSON: {
+  "control_id": "<id>",
+  "title": "<artifact title>",
+  "type": "<artifact type>",
+  "content": "<the actual artifact — Cedar policy, SCP JSON, procedure text, or Terraform>",
+  "explanation": "<why this artifact addresses the control>"
+}`
+
+	userMsg := fmt.Sprintf("Current posture:\n%s\n\nGenerate a remediation artifact for control gap: %s", postureSummary, controlID)
+
+	input := &bedrockruntime.ConverseStreamInput{
+		ModelId: aws.String(selectModel(CapabilityRemediation)),
+		Messages: []types.Message{
+			{Role: types.ConversationRoleUser,
+				Content: []types.ContentBlock{&types.ContentBlockMemberText{Value: userMsg}}},
+		},
+		System: []types.SystemContentBlock{
+			&types.SystemContentBlockMemberText{Value: systemPrompt},
+		},
+	}
+	raw, err := a.streamConverse(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	var artifact RemediationArtifact
+	if err := json.Unmarshal([]byte(extractJSON(raw)), &artifact); err != nil {
+		return &RemediationArtifact{ControlID: controlID, Type: "prose", Content: raw}, nil
+	}
+	return &artifact, nil
+}
+
 // --- Streaming helper ---
 
 // streamConverse calls ConverseStream and collects the full text response.

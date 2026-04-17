@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-04-17
+
 ### Added
 
 - `attest apply` auto-tag: creates a `applied-YYYYMMDD-HHMMSS` git tag in the
@@ -50,7 +52,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not a default; solution is `--scp-strategy merged`). Adds pre-apply checkpoint
   reminder, rollback caveat in Step 5, merged-strategy compile example with budget
   output, and link to `docs/operations/rollback.md`.
-- Bumped version to `0.8.0-dev`.
+- Bumped version to `0.8.0-dev` → `0.8.0`.
+- `attest simulate` now performs a real CloudTrail replay: polls the last N hours of
+  events, evaluates each against both current and proposed Cedar policies, and reports
+  ALLOW→DENY and DENY→ALLOW changes. Previously printed placeholder output.
+- `attest provision` returns a clear actionable error with manual steps instead of
+  printing fake progress output. Planned for v0.9.0 (#38).
+- `auth.UserFromContext()` implemented via context value store (`WithUser()`/`UserFromContext()`).
+- AI capabilities fully wired to Bedrock (5 previously stubbed commands):
+  `attest ai audit-sim` (Opus 4.6 CMMC assessor simulation),
+  `attest ai translate` (NL → Cedar policy, Opus 4.6),
+  `attest ai analyze` (Cedar log anomaly detection, Sonnet 4.6),
+  `attest ai impact` (framework change impact, Opus 4.6),
+  `attest ai remediate` (remediation artifact generation, Sonnet 4.6).
 
 ## [0.7.0] - 2026-04-15
 
