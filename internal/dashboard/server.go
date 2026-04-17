@@ -27,6 +27,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/provabl/attest/internal/auth"
 	"github.com/provabl/attest/internal/evaluator"
 	"github.com/provabl/attest/internal/reporting"
 	"github.com/provabl/attest/internal/waiver"
@@ -48,6 +49,26 @@ type Server struct {
 	storeDir    string
 	authToken   string  // empty = no auth (local use only)
 	sseConns    int64   // active SSE connection count (atomic)
+}
+
+// NewServerWithOIDC creates a dashboard server using OIDC authentication.
+func NewServerWithOIDC(addr, storeDir string, oidcHandler *auth.OIDCHandler, eval *evaluator.Evaluator) *Server {
+	s := &Server{
+		addr:      addr,
+		mux:       http.NewServeMux(),
+		eval:      eval,
+		storeDir:  storeDir,
+	}
+	oidcHandler.RegisterRoutes(s.mux)
+	s.mux.Handle("/", oidcHandler.Middleware(http.HandlerFunc(s.handleIndex)))
+	s.mux.Handle("/api/posture", oidcHandler.Middleware(http.HandlerFunc(s.handlePosture)))
+	s.mux.Handle("/api/frameworks", oidcHandler.Middleware(http.HandlerFunc(s.handleFrameworks)))
+	s.mux.Handle("/api/operations/stream", oidcHandler.Middleware(http.HandlerFunc(s.handleOperationsSSE)))
+	s.mux.Handle("/api/environments", oidcHandler.Middleware(http.HandlerFunc(s.handleEnvironments)))
+	s.mux.Handle("/api/waivers", oidcHandler.Middleware(http.HandlerFunc(s.handleWaivers)))
+	s.mux.Handle("/api/incidents", oidcHandler.Middleware(http.HandlerFunc(s.handleIncidents)))
+	s.mux.Handle("/api/generate", oidcHandler.Middleware(http.HandlerFunc(s.handleGenerate)))
+	return s
 }
 
 // NewServer creates a dashboard server.

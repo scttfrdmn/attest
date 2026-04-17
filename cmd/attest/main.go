@@ -20,7 +20,10 @@ import (
 	iamSvc "github.com/aws/aws-sdk-go-v2/service/iam"
 
 	"github.com/provabl/attest/internal/ai"
+	"github.com/provabl/attest/internal/auth"
 	"github.com/provabl/attest/internal/dashboard"
+	"github.com/provabl/attest/internal/principal"
+	"github.com/provabl/attest/internal/provision"
 	"github.com/provabl/attest/internal/artifact"
 	"github.com/provabl/attest/internal/attestation"
 	compilerce "github.com/provabl/attest/internal/compiler/cedar"
@@ -41,7 +44,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.8.1"
+var version = "0.9.0"
 
 func main() {
 	root := &cobra.Command{
@@ -532,6 +535,8 @@ func frameworksCmd() *cobra.Command {
 				fmt.Println("  nist-800-171-r2     NIST SP 800-171 Rev 2 (CMMC)     available")
 				fmt.Println("  hipaa               HIPAA Security Rule               available (BAA detected)")
 				fmt.Println("  ferpa               FERPA                             available")
+				fmt.Println("  iso27001-2022        ISO/IEC 27001:2022               available")
+				fmt.Println("  fedramp-moderate     FedRAMP Moderate Baseline        available")
 				fmt.Println("  nist-800-53-r5      NIST SP 800-53 Rev 5 (FedRAMP)   available")
 				fmt.Println("  itar                ITAR Export Control                available")
 				fmt.Println("  cui                 CUI (32 CFR Part 2002)            available")
@@ -1154,6 +1159,30 @@ Provide principal, action, resource ARNs and entity attributes as --attr flags.`
 				return fmt.Errorf("loading Cedar policies: %w", err)
 			}
 
+			// Resolve principal attributes (SAML tags + optional LDAP).
+			ldapURL, _ := cmd.Flags().GetString("ldap-url")
+			ldapBaseDN, _ := cmd.Flags().GetString("ldap-base-dn")
+			region, _ := cmd.Flags().GetString("region")
+			if ldapURL != "" {
+				ctx := context.Background()
+				samlSrc, err := principal.NewSAMLSource(ctx, region)
+				if err == nil {
+					ldapSrc := principal.NewLDAPSource(ldapURL, ldapBaseDN)
+					resolver := principal.NewResolver(samlSrc, ldapSrc)
+					if resolved, err := resolver.Resolve(ctx, principalARN); err == nil {
+						if resolved.CUITrainingCurrent {
+							attributes["principal.cui_training_current"] = true
+						}
+						for _, lab := range resolved.LabMembership {
+							attributes["principal.lab_membership"] = lab
+						}
+						if resolved.AdminLevel != "" {
+							attributes["principal.admin_level"] = resolved.AdminLevel
+						}
+					}
+				}
+			}
+
 			// Build Cedar request.
 			req := evaluator.AuthzRequest{
 				PrincipalARN: principalARN,
@@ -1189,6 +1218,9 @@ Provide principal, action, resource ARNs and entity attributes as --attr flags.`
 	cmd.Flags().String("resource", "", "Resource ARN (required)")
 	cmd.Flags().StringSlice("attr", nil, "Entity attributes: entity.attr=value (repeatable)")
 	cmd.Flags().String("cedar", filepath.Join(".attest", "compiled", "cedar"), "Cedar policies directory")
+	cmd.Flags().String("ldap-url", "", "LDAP server URL for principal attribute resolution (optional)")
+	cmd.Flags().String("ldap-base-dn", "", "LDAP base DN (required with --ldap-url)")
+	cmd.Flags().String("region", "us-east-1", "AWS region for SAML/IAM attribute resolution")
 	_ = cmd.MarkFlagRequired("principal")
 	_ = cmd.MarkFlagRequired("action")
 	_ = cmd.MarkFlagRequired("resource")
@@ -1706,12 +1738,19 @@ func serveCmd() *cobra.Command {
 provides real-time compliance visibility: posture, frameworks, Cedar PDP
 operations feed, waivers, incidents, and document generation.
 
-Use --no-auth (default) for local use. Use --auth to require the
-ATTEST_DASHBOARD_TOKEN environment variable as a bearer token.`,
+Auth options (choose one):
+  --auth              Static bearer token via ATTEST_DASHBOARD_TOKEN (local/CI)
+  --oidc-issuer <url> OIDC/OAuth2 SSO — works with Shibboleth, Okta, Azure AD
+
+Default (no flags): no auth, localhost only — for local development.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			addr, _ := cmd.Flags().GetString("addr")
 			authFlag, _ := cmd.Flags().GetBool("auth")
+			oidcIssuer, _ := cmd.Flags().GetString("oidc-issuer")
+			oidcClientID, _ := cmd.Flags().GetString("oidc-client-id")
+			oidcClientSecret, _ := cmd.Flags().GetString("oidc-client-secret")
+			oidcRedirect, _ := cmd.Flags().GetString("oidc-redirect")
 
 			authToken := ""
 			if authFlag {
@@ -1724,6 +1763,39 @@ ATTEST_DASHBOARD_TOKEN environment variable as a bearer token.`,
 				}
 			}
 
+			// If OIDC is configured, it takes precedence over static token.
+			if oidcIssuer != "" {
+				if oidcClientID == "" {
+					oidcClientID = os.Getenv("ATTEST_OIDC_CLIENT_ID")
+				}
+				if oidcClientSecret == "" {
+					oidcClientSecret = os.Getenv("ATTEST_OIDC_CLIENT_SECRET")
+				}
+				if oidcClientID == "" {
+					return fmt.Errorf("--oidc-client-id or ATTEST_OIDC_CLIENT_ID is required with --oidc-issuer")
+				}
+				if oidcRedirect == "" {
+					scheme := "http"
+					oidcRedirect = fmt.Sprintf("%s://localhost%s/callback", scheme, addr)
+				}
+				cfg := &auth.OIDCConfig{
+					IssuerURL:    oidcIssuer,
+					ClientID:     oidcClientID,
+					ClientSecret: oidcClientSecret,
+					RedirectURL:  oidcRedirect,
+				}
+				oidcHandler, err := auth.NewOIDCHandler(ctx, cfg)
+				if err != nil {
+					return fmt.Errorf("initializing OIDC: %w", err)
+				}
+				fmt.Printf("Starting attest dashboard with OIDC auth (%s)\n", oidcIssuer)
+				srv := dashboard.NewServerWithOIDC(addr, ".attest", oidcHandler, nil)
+				if err := srv.Start(ctx); err != nil && err.Error() != "http: Server closed" {
+					return err
+				}
+				return nil
+			}
+
 			fmt.Printf("Starting attest dashboard on http://localhost%s\n", addr)
 			srv := dashboard.NewServer(addr, ".attest", authToken, nil)
 			if err := srv.Start(ctx); err != nil && err.Error() != "http: Server closed" {
@@ -1734,6 +1806,10 @@ ATTEST_DASHBOARD_TOKEN environment variable as a bearer token.`,
 	}
 	cmd.Flags().String("addr", "127.0.0.1:8080", "Listen address (default 127.0.0.1:8080 — localhost only)")
 	cmd.Flags().Bool("auth", false, "Require ATTEST_DASHBOARD_TOKEN bearer token")
+	cmd.Flags().String("oidc-issuer", "", "OIDC issuer URL (e.g., https://sso.university.edu)")
+	cmd.Flags().String("oidc-client-id", "", "OIDC client ID (or ATTEST_OIDC_CLIENT_ID env)")
+	cmd.Flags().String("oidc-client-secret", "", "OIDC client secret (or ATTEST_OIDC_CLIENT_SECRET env)")
+	cmd.Flags().String("oidc-redirect", "", "OIDC redirect URL (default: http://localhost<addr>/callback)")
 	return cmd
 }
 
@@ -1975,23 +2051,139 @@ func translateCloudTrailEvent(ev cttypes.Event) *evaluator.AuthzRequest {
 }
 
 func provisionCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "provision",
-		Short: "Create a new compliant research environment (v0.9.0)",
+		Short: "Create a new compliant research environment",
 		Long: `Creates a new AWS account in the SRE with the correct OU placement,
-tags, and Cedar entity registration based on the requested data
-classifications. Checks prerequisites (BAA signed, training current)
-before provisioning.
+attest:* tags, and SCPs inherited from the target OU. The account is
+ready for CUI/PHI/FERPA research workloads immediately after provisioning.
 
-Environment provisioning is planned for v0.9.0. Track progress: #38`,
+The target OU is selected automatically from data classes:
+  CUI   → research-controlled OU
+  PHI   → research-hipaa OU
+  FERPA → research-education OU
+  PII   → research-sensitive OU
+
+Prerequisites: the target OU must exist in your Organization.
+Create it first: aws organizations create-organizational-unit --parent-id <root> --name research-controlled`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("environment provisioning is not yet implemented (planned for v0.9.0 — see issue #38)\n" +
-				"  To create a compliant environment manually:\n" +
-				"  1. Create AWS account in your Organization\n" +
-				"  2. Tag: attest:data-class=CUI, attest:owner=<PI>, attest:purpose=<description>\n" +
-				"  3. Run 'attest scan' to include the new environment in posture reporting")
+			ctx := context.Background()
+			name, _ := cmd.Flags().GetString("name")
+			owner, _ := cmd.Flags().GetString("owner")
+			email, _ := cmd.Flags().GetString("email")
+			purpose, _ := cmd.Flags().GetString("purpose")
+			dataClasses, _ := cmd.Flags().GetStringSlice("data-class")
+			approve, _ := cmd.Flags().GetBool("approve")
+			region, _ := cmd.Flags().GetString("region")
+
+			if name == "" {
+				return fmt.Errorf("--name is required")
+			}
+			if email == "" {
+				return fmt.Errorf("--email is required (must be unique in your AWS Organization)")
+			}
+			if len(dataClasses) == 0 {
+				return fmt.Errorf("--data-class is required (e.g., --data-class CUI)")
+			}
+
+			// Load SRE.
+			sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml"))
+			if err != nil {
+				return fmt.Errorf("reading .attest/sre.yaml: %w (run 'attest init' first)", err)
+			}
+			var sre schema.SRE
+			if err := yaml.Unmarshal(sreData, &sre); err != nil {
+				return err
+			}
+
+			provisioner, err := provision.NewProvisioner(ctx, region)
+			if err != nil {
+				return fmt.Errorf("connecting to AWS: %w", err)
+			}
+
+			req := &provision.Request{
+				Name:        name,
+				Owner:       owner,
+				Email:       email,
+				Purpose:     purpose,
+				DataClasses: dataClasses,
+			}
+
+			fmt.Println("Computing provisioning plan...")
+			plan, err := provisioner.ComputePlan(ctx, &sre, req)
+			if err != nil {
+				return fmt.Errorf("computing plan: %w", err)
+			}
+
+			fmt.Printf("\nProvisioning plan:\n")
+			fmt.Printf("  Account name:   %s\n", plan.AccountName)
+			fmt.Printf("  Account email:  %s\n", plan.AccountEmail)
+			fmt.Printf("  Target OU:      %s (%s)\n", plan.TargetOUName, plan.TargetOU)
+			fmt.Printf("  SCPs inherited: %d\n", plan.SCPsInherited)
+			fmt.Printf("  Data classes:   %s\n", strings.Join(dataClasses, ", "))
+			fmt.Println("\nPrerequisites:")
+			for _, pr := range plan.Prerequisites {
+				mark := "✓"
+				if !pr.Met {
+					mark = "✗"
+				}
+				fmt.Printf("  %s %s\n", mark, pr.Description)
+			}
+			fmt.Println("\nTags to apply:")
+			for k, v := range plan.AttestTags {
+				fmt.Printf("  %s = %s\n", k, v)
+			}
+
+			if !plan.AllMet {
+				return fmt.Errorf("\nPrerequisites not met — resolve the issues above and re-run")
+			}
+
+			if !approve {
+				fmt.Print("\nCreate this environment? [y/N] ")
+				var answer string
+				fmt.Scanln(&answer)
+				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+					fmt.Println("Aborted.")
+					return nil
+				}
+			}
+
+			fmt.Printf("\nCreating AWS account %q...\n", plan.AccountName)
+			fmt.Println("  (Account creation is async — polling every 5s, timeout 10 min)")
+			env, err := provisioner.Execute(ctx, plan)
+			if err != nil {
+				return fmt.Errorf("provisioning failed: %w", err)
+			}
+
+			fmt.Printf("\nEnvironment created: %s\n", env.AccountID)
+			fmt.Printf("  Placed in OU: %s\n", plan.TargetOUName)
+			fmt.Printf("  Owner: %s\n", env.Owner)
+			fmt.Println("\nNext steps:")
+			fmt.Println("  1. attest scan — include new environment in posture report")
+			fmt.Println("  2. attest compile --scp-strategy merged — update SCP set if needed")
+			fmt.Println("  3. attest apply --approve — deploy updated SCPs to org")
+
+			// Register in sre.yaml.
+			if sre.Environments == nil {
+				sre.Environments = make(map[string]schema.Environment)
+			}
+			sre.Environments[env.AccountID] = *env
+			updated, err := yaml.Marshal(sre)
+			if err == nil {
+				_ = os.WriteFile(filepath.Join(".attest", "sre.yaml"), updated, 0640)
+			}
+
+			return nil
 		},
 	}
+	cmd.Flags().String("name", "", "Environment name (required)")
+	cmd.Flags().String("owner", "", "PI or lab owner")
+	cmd.Flags().String("email", "", "AWS account email — must be globally unique (required)")
+	cmd.Flags().String("purpose", "", "Research purpose description")
+	cmd.Flags().StringSlice("data-class", nil, "Data class(es): CUI, PHI, FERPA, PII, OPEN")
+	cmd.Flags().Bool("approve", false, "Skip interactive confirmation")
+	cmd.Flags().String("region", "us-east-1", "AWS region")
+	return cmd
 }
 
 func waiverCmd() *cobra.Command {

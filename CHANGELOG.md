@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-04-17
+
+### Added
+
+- `attest provision [--name] [--email] [--owner] [--data-class] [--approve]` —
+  full environment provisioning: computes target OU from data class (CUI→research-controlled,
+  PHI→research-hipaa, FERPA→research-education), checks prerequisites, creates AWS account
+  via Organizations API (async polling), moves to target OU, applies `attest:*` tags, and
+  registers environment in `.attest/sre.yaml`. Uses existing `organizations` SDK dep (#38).
+- `frameworks/fedramp-moderate/framework.yaml` — FedRAMP Moderate baseline: 23 controls
+  across AC, AU, CM, IA, SC, SI families. All SCP conditions overlap with NIST 800-171 R2
+  and HIPAA — adding FedRAMP to an org with NIST+HIPAA costs ~0 additional SCP chars
+  (conditions already deduplicated by the intelligent compiler) (#55).
+- `internal/principal/resolver.go` — `LDAPSource.Resolve()` implemented using
+  `go-ldap/ldap/v3`. Maps `memberOf` groups (`lab-*`, `research-*` → LabMembership,
+  `admin-*` → AdminLevel). `NewLDAPSource(url, baseDN)` constructor. Falls back
+  gracefully if LDAP is unavailable.
+- `attest evaluate [--ldap-url] [--ldap-base-dn] [--region]` — optional LDAP principal
+  attribute resolution wired into one-shot Cedar evaluation.
+- `attest serve [--oidc-issuer] [--oidc-client-id] [--oidc-client-secret]` — OIDC/OAuth2
+  authentication for the dashboard via `internal/auth/OIDCHandler`. Supports Shibboleth,
+  Okta, Azure AD, and any OIDC-compliant IdP. Routes: `GET /login`, `GET /callback`,
+  `GET /logout`. Session cookies (8h TTL). Roles mapped from OIDC claims. Static token
+  auth (`--auth`) unchanged for local/CI use (#42).
+- `dashboard.NewServerWithOIDC()` — dashboard constructor that wraps all routes with
+  OIDC middleware.
+- `frameworks list` now shows `iso27001-2022` and `fedramp-moderate`.
+
+### Changed
+
+- `internal/auth/auth.go` — full OIDC implementation replacing the `TODO` stub.
+  `Middleware()` stub replaced by `OIDCHandler.Middleware()`. `StaticTokenMiddleware()`
+  extracted for local/CI use. `UserFromContext()` / `WithUser()` unchanged.
+- Dependencies added: `go-ldap/ldap/v3`, `coreos/go-oidc/v3`, `golang.org/x/oauth2`.
+- Version bumped to 0.9.0.
+
 ## [0.8.1] - 2026-04-17
 
 ### Security

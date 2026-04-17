@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	ldap "github.com/go-ldap/ldap/v3"
 	"github.com/provabl/attest/pkg/schema"
 )
 
@@ -180,29 +181,92 @@ func roleNameFromARN(arn string) string {
 
 // LDAPSource resolves principal attributes from LDAP/Active Directory.
 // Connects to an LDAP server and queries group membership for the user
-// associated with the IAM principal.
+// associated with the IAM role name (via cn attribute).
 //
-// The LDAPSource maps LDAP group names to LabMembership. Groups that match
-// the pattern "lab-*" or "research-*" are treated as lab affiliations.
+// Groups matching "lab-*" or "research-*" are mapped to LabMembership.
+// Groups matching "admin-*" set AdminLevel = "env".
 type LDAPSource struct {
-	URL    string // e.g., "ldap://ldap.university.edu:389"
-	BaseDN string // e.g., "dc=university,dc=edu"
+	URL      string // e.g., "ldap://ldap.university.edu:389"
+	BaseDN   string // e.g., "dc=university,dc=edu"
+	BindDN   string // service account DN (optional, anonymous bind if empty)
+	BindPass string // service account password
+}
+
+// NewLDAPSource creates an LDAP attribute source.
+func NewLDAPSource(url, baseDN string) *LDAPSource {
+	return &LDAPSource{URL: url, BaseDN: baseDN}
 }
 
 func (l *LDAPSource) Name() string { return "ldap" }
 
 // Resolve queries LDAP for group membership of the user behind the IAM role.
-// Gracefully returns nil (empty attributes) if LDAP is unavailable — Cedar
-// evaluation will default to deny for policies requiring lab membership.
-//
-// Note: This implementation requires the ldap.v3 package. To enable:
-//   go get github.com/go-ldap/ldap/v3
-//
-// The search maps the IAM role name to a user via the cn attribute, then
-// retrieves the user's memberOf groups.
+// Gracefully returns nil if LDAP is unavailable — Cedar policies that require
+// lab membership will default to deny when these attributes are absent.
 func (l *LDAPSource) Resolve(ctx context.Context, principalARN string, attrs *schema.PrincipalAttributes) error {
-	// Implementation deferred: requires go-ldap/ldap/v3 dependency.
-	// The interface is defined and the integration pattern is documented above.
-	// Community contributions welcome — see frameworks/CONTRIBUTING.md.
+	roleName := roleNameFromARN(principalARN)
+	if roleName == "" {
+		return nil // not a role ARN
+	}
+
+	conn, err := ldap.DialURL(l.URL)
+	if err != nil {
+		return nil // LDAP unavailable — not fatal, Cedar defaults to deny
+	}
+	defer conn.Close()
+
+	// Bind (anonymous or service account).
+	if l.BindDN != "" {
+		if err := conn.Bind(l.BindDN, l.BindPass); err != nil {
+			return nil // bind failed — log but don't block evaluation
+		}
+	}
+
+	// Search for user by cn matching the IAM role name.
+	searchReq := ldap.NewSearchRequest(
+		l.BaseDN,
+		ldap.ScopeWholeSubtree,
+		ldap.NeverDerefAliases,
+		100,  // size limit
+		10,   // time limit seconds
+		false,
+		fmt.Sprintf("(&(objectClass=person)(cn=%s))", ldap.EscapeFilter(roleName)),
+		[]string{"memberOf", "cn", "mail"},
+		nil,
+	)
+
+	result, err := conn.Search(searchReq)
+	if err != nil || len(result.Entries) == 0 {
+		return nil // user not found — not fatal
+	}
+
+	entry := result.Entries[0]
+	for _, group := range entry.GetAttributeValues("memberOf") {
+		// Extract CN from the group DN: "CN=lab-genomics,OU=groups,DC=..."
+		groupCN := extractCN(group)
+		switch {
+		case strings.HasPrefix(groupCN, "lab-") || strings.HasPrefix(groupCN, "research-"):
+			attrs.LabMembership = append(attrs.LabMembership, groupCN)
+		case strings.HasPrefix(groupCN, "admin-"):
+			attrs.AdminLevel = "env"
+		}
+	}
+
 	return nil
+}
+
+// extractCN parses the CN value from a distinguished name.
+// "CN=lab-genomics,OU=groups,DC=uni,DC=edu" → "lab-genomics"
+func extractCN(dn string) string {
+	parts := strings.Split(dn, ",")
+	if len(parts) == 0 {
+		return dn
+	}
+	first := strings.TrimSpace(parts[0])
+	if after, ok := strings.CutPrefix(first, "CN="); ok {
+		return after
+	}
+	if after, ok := strings.CutPrefix(first, "cn="); ok {
+		return after
+	}
+	return first
 }
