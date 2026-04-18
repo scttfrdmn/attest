@@ -3,7 +3,9 @@ package multisre
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -85,9 +87,14 @@ func (c *CostCollector) Collect(ctx context.Context) (*CostSummary, error) {
 			if len(group.Keys) == 0 {
 				continue
 			}
-			service := group.Keys[0]
+			// Sanitize service name to prevent ANSI terminal injection.
+			// Cost Explorer names are AWS-controlled, but be defensive.
+			service := sanitizeServiceName(group.Keys[0])
 			if amt, ok := group.Metrics["UnblendedCost"]; ok && amt.Amount != nil {
-				usd, _ := strconv.ParseFloat(*amt.Amount, 64)
+				usd, err := strconv.ParseFloat(*amt.Amount, 64)
+				if err != nil || math.IsNaN(usd) || math.IsInf(usd, 0) || usd < 0 {
+					continue // skip invalid/negative cost values
+				}
 				serviceMap[service] += usd
 				summary.MonthlyCostUSD += usd
 			}
@@ -118,4 +125,17 @@ func (c *CostCollector) Collect(ctx context.Context) (*CostSummary, error) {
 	}
 
 	return summary, nil
+}
+
+// sanitizeServiceName removes ANSI escape sequences and control characters from
+// AWS service names returned by Cost Explorer, preventing terminal injection.
+func sanitizeServiceName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		if r < 32 || r == 127 || r == '\x1b' {
+			continue // drop control characters and ESC (ANSI escape prefix)
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }

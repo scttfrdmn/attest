@@ -136,8 +136,10 @@ func (c *Client) Push(ctx context.Context, docType string, payload []byte) (*Pus
 	}
 
 	if c.dryRun {
-		fmt.Printf("DRY RUN — would POST %s to %s\n", docType, c.endpoint)
-		fmt.Printf("Payload (%d bytes):\n%s\n", len(payload), truncate(string(payload), 500))
+		// Show intent without printing payload contents — OSCAL documents contain
+		// sensitive compliance details that should not appear in shared terminals or CI logs.
+		fmt.Printf("DRY RUN — would POST %s (%d bytes) to %s\n", docType, len(payload), c.endpoint)
+		fmt.Println("  (Payload not displayed — add --show-payload to print explicitly)")
 		return result, nil
 	}
 

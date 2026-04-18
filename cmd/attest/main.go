@@ -13,6 +13,7 @@ import (
 
 	cedar "github.com/cedar-policy/cedar-go"
 
+	"encoding/json"
 	"net/mail"
 	"regexp"
 	"sync"
@@ -55,7 +56,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.11.1"
+var version = "0.11.2"
 
 func main() {
 	root := &cobra.Command{
@@ -3896,8 +3897,29 @@ Requires: cloudtrail:DescribeTrails, events:PutRule, events:PutTargets,
 			fmt.Printf("  ✓ EventBridge rule created: %s\n", aws.ToString(ruleOut.RuleArn))
 
 			// Set SQS queue policy to allow EventBridge delivery.
-			policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"events.amazonaws.com"},"Action":"sqs:SendMessage","Resource":"%s","Condition":{"ArnEquals":{"aws:SourceArn":"%s"}}}]}`,
-				queueARN, aws.ToString(ruleOut.RuleArn))
+			// Use json.Marshal to safely embed ARNs — prevents JSON injection if
+			// an ARN ever contains characters like " or \ (rare but defensive).
+			policyDoc := map[string]any{
+				"Version": "2012-10-17",
+				"Statement": []map[string]any{{
+					"Effect": "Allow",
+					"Principal": map[string]string{
+						"Service": "events.amazonaws.com",
+					},
+					"Action":   "sqs:SendMessage",
+					"Resource": queueARN,
+					"Condition": map[string]any{
+						"ArnEquals": map[string]string{
+							"aws:SourceArn": aws.ToString(ruleOut.RuleArn),
+						},
+					},
+				}},
+			}
+			policyBytes, err := json.Marshal(policyDoc)
+			if err != nil {
+				return fmt.Errorf("building queue policy: %w", err)
+			}
+			policy := string(policyBytes)
 			_, err = sqsSvc.SetQueueAttributes(ctx, &sqssvc.SetQueueAttributesInput{
 				QueueUrl:   aws.String(queueURL),
 				Attributes: map[string]string{"Policy": policy},

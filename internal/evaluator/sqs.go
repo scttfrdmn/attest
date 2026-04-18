@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	neturl "net/url"
 	"os"
 	"strings"
 	"time"
@@ -23,34 +24,58 @@ type sqsPoller struct {
 
 func newSQSPoller(svc *sqs.Client, queueURL string) (*sqsPoller, error) {
 	// Validate queue URL format to prevent SSRF via hand-edited evaluator.yaml.
-	// AWS SQS queue URLs follow: https://sqs.<region>.amazonaws.com/<account>/<queue>
-	if !strings.HasPrefix(queueURL, "https://sqs.") || !strings.Contains(queueURL, ".amazonaws.com/") {
-		return nil, fmt.Errorf("invalid SQS queue URL %q: must be https://sqs.<region>.amazonaws.com/...", queueURL)
+	// Use URL parsing with hostname check — substring matching is vulnerable to
+	// subdomain confusion: https://sqs.us-east-1.amazonaws.com.evil.com/...
+	// passes HasPrefix("https://sqs.") AND Contains(".amazonaws.com/").
+	u, err := neturl.Parse(queueURL)
+	if err != nil || u.Scheme != "https" {
+		return nil, fmt.Errorf("invalid SQS queue URL: must use https scheme")
+	}
+	host := u.Hostname()
+	// Host must be exactly sqs.<region>.amazonaws.com — not a subdomain of it.
+	if !strings.HasSuffix(host, ".amazonaws.com") ||
+		!strings.HasPrefix(host, "sqs.") ||
+		strings.Count(host, ".") < 3 { // sqs.us-east-1.amazonaws.com has 3 dots
+		return nil, fmt.Errorf("invalid SQS queue URL hostname %q: must be sqs.<region>.amazonaws.com", host)
 	}
 	return &sqsPoller{svc: svc, queueURL: queueURL}, nil
 }
 
-// Poll performs a long-poll (20s wait) on the SQS queue and returns translated
-// AuthzRequests along with the receipt handles needed to delete processed messages.
-func (p *sqsPoller) Poll(ctx context.Context) ([]*AuthzRequest, []string, error) {
+// messageRecord binds a set of AuthzRequests to the SQS receipt handle of the
+// originating message. This ensures the correct message is deleted after its
+// requests are processed — regardless of how many requests translateSQSMessage
+// extracts per message (0, 1, or many).
+type messageRecord struct {
+	reqs   []*AuthzRequest
+	handle string
+}
+
+// Poll performs a long-poll (20s wait) on the SQS queue and returns per-message
+// records. Each record links the parsed requests to their SQS receipt handle so
+// that only successfully-evaluated messages are deleted.
+func (p *sqsPoller) Poll(ctx context.Context) ([]messageRecord, error) {
 	out, err := p.svc.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String(p.queueURL),
 		MaxNumberOfMessages: 10,
 		WaitTimeSeconds:     20,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("SQS ReceiveMessage: %w", err)
+		return nil, fmt.Errorf("SQS ReceiveMessage: %w", err)
 	}
 
-	var reqs []*AuthzRequest
-	var handles []string
+	var records []messageRecord
 	for _, msg := range out.Messages {
-		reqs = append(reqs, translateSQSMessage(msg)...)
+		reqs := translateSQSMessage(msg)
+		handle := ""
 		if msg.ReceiptHandle != nil {
-			handles = append(handles, *msg.ReceiptHandle)
+			handle = *msg.ReceiptHandle
 		}
+		// Include all messages in the record list — even those that produced
+		// no AuthzRequests — so their handles can be deleted (non-CloudTrail
+		// messages should be removed from the queue, not redelivered endlessly).
+		records = append(records, messageRecord{reqs: reqs, handle: handle})
 	}
-	return reqs, handles, nil
+	return records, nil
 }
 
 // DeleteProcessed removes successfully-evaluated messages from the queue.
@@ -176,7 +201,7 @@ func (e *Evaluator) StartWithSQS(ctx context.Context, sqsSvc *sqs.Client, queueU
 		default:
 		}
 
-		reqs, handles, err := poller.Poll(ctx)
+		records, err := poller.Poll(ctx)
 		if err != nil {
 			if strings.Contains(err.Error(), "context") {
 				return nil
@@ -184,33 +209,42 @@ func (e *Evaluator) StartWithSQS(ctx context.Context, sqsSvc *sqs.Client, queueU
 			continue
 		}
 
-		var processed []string
-		for i, req := range reqs {
-			decision, err := e.EvaluateWithPolicies(ctx, ps, req)
-			if err != nil {
-				continue
+		// Process each message record. A record may contain zero requests (e.g.,
+		// non-CloudTrail EventBridge messages) — these are still deleted so they
+		// don't stay in the queue and get redelivered endlessly.
+		var toDelete []string
+		for _, record := range records {
+			allSucceeded := true
+			for _, req := range record.reqs {
+				decision, err := e.EvaluateWithPolicies(ctx, ps, req)
+				if err != nil {
+					allSucceeded = false
+					continue
+				}
+				ev := DecisionEvent{
+					Timestamp: decision.Timestamp,
+					Action:    decision.Action,
+					Principal: decision.Principal,
+					Resource:  decision.Resource,
+					Effect:    decision.Effect,
+					PolicyID:  decision.PolicyID,
+				}
+				if b, err := json.Marshal(ev); err == nil {
+					_, _ = logFile.Write(append(b, '\n'))
+				}
+				select {
+				case bcast <- ev:
+				default:
+				}
 			}
-			ev := DecisionEvent{
-				Timestamp: decision.Timestamp,
-				Action:    decision.Action,
-				Principal: decision.Principal,
-				Resource:  decision.Resource,
-				Effect:    decision.Effect,
-				PolicyID:  decision.PolicyID,
-			}
-			if b, err := json.Marshal(ev); err == nil {
-				_, _ = logFile.Write(append(b, '\n'))
-			}
-			select {
-			case bcast <- ev:
-			default:
-			}
-			if i < len(handles) {
-				processed = append(processed, handles[i])
+			// Delete the message if all its requests were processed (or it had
+			// no requests — non-CloudTrail messages we don't want redelivered).
+			if allSucceeded && record.handle != "" {
+				toDelete = append(toDelete, record.handle)
 			}
 		}
-		if len(processed) > 0 {
-			_ = poller.DeleteProcessed(ctx, processed)
+		if len(toDelete) > 0 {
+			_ = poller.DeleteProcessed(ctx, toDelete)
 		}
 	}
 }

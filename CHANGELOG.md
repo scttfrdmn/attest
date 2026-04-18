@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-04-18
+
+### Security
+
+- **CRITICAL fixed**: SQS message/handle mismatch — `Poll()` now returns `[]messageRecord`
+  (pairing each message's `[]*AuthzRequest` with its receipt handle) instead of separate
+  parallel slices. The old design deleted the wrong SQS message when `translateSQSMessage`
+  returned 0 requests for a non-CloudTrail message, causing infinite redelivery of some
+  messages and silent deletion of others. `StartWithSQS` updated to iterate records.
+- **CRITICAL fixed**: SQS queue URL subdomain confusion — `newSQSPoller()` now uses
+  `net/url.Parse()` and `strings.Count(host, ".")` to verify the hostname is exactly
+  `sqs.<region>.amazonaws.com`. The previous `HasPrefix` + `Contains` check allowed
+  `https://sqs.us-east-1.amazonaws.com.evil.com/...` to pass validation.
+- **HIGH fixed**: SQS queue IAM policy constructed with `json.Marshal()` instead of
+  `fmt.Sprintf()` — prevents JSON injection if ARNs ever contain `"` or `\`.
+- **HIGH fixed**: OSCAL payload no longer printed in dry-run mode — compliance documents
+  contain sensitive control implementation details; removed truncated payload print.
+- **HIGH fixed**: Cost Explorer service names sanitized via `sanitizeServiceName()` —
+  strips ANSI escape sequences and control characters before display.
+- **MEDIUM fixed**: `ParseFloat` errors and non-finite values (NaN/Inf/negative) are now
+  skipped in cost aggregation instead of silently producing `0` or invalid totals.
+
 ## [0.11.1] - 2026-04-18
 
 ### Security
