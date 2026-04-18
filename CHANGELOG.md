@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-04-18
+
+### Security
+
+This release fixes findings from the first **board-wide** (full codebase) security audit
+— not limited to new code — covering packages that had not been reviewed in previous cycles.
+
+- **CRITICAL fixed**: Prompt injection via framework control titles — `loadFrameworkContext()`
+  embedded raw YAML `ctrl.Title` values in Bedrock system prompts. A malicious framework YAML
+  with a title containing `\n` could inject arbitrary instructions. New `sanitizePromptField()`
+  strips newlines, control characters, and truncates to 512 chars before embedding any
+  user-controlled value (framework IDs, control titles, SRE name, OrgID) in prompts.
+- **CRITICAL fixed**: Prompt injection via SRE metadata — `buildSystemPrompt()` embedded
+  `sre.OrgID` and `sre.Name` from `.attest/sre.yaml` without sanitization. Applied
+  `sanitizePromptField()` to all embedded values.
+- **HIGH fixed**: OOM via unbounded file reads in `AnalyzeImpact()` and `IngestDocument()` —
+  both now check file size via `os.Stat()` before `os.ReadFile()`; reject files larger than
+  `maxDocumentSize` (10 MB) with a clear error message.
+- **MEDIUM fixed**: LDAP group names validated by `isValidGroupName()` before being stored
+  in `PrincipalAttributes.LabMembership` — rejects names containing newlines, quotes, ANSI
+  escape sequences, or other special characters that could propagate into Cedar evaluation
+  or log output.
+
 ## [0.11.2] - 2026-04-18
 
 ### Security

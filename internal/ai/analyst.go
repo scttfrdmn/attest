@@ -124,7 +124,19 @@ type IngestFinding struct {
 
 // IngestDocument reads a compliance document and maps its content to framework controls.
 // Uses Sonnet for structured extraction. Returns findings with evidence citations.
+// maxDocumentSize limits how large a document attest will read into memory
+// for AI analysis. Prevents OOM on pathologically large files.
+const maxDocumentSize = 10 * 1024 * 1024 // 10 MB
+
 func (a *Analyst) IngestDocument(ctx context.Context, docPath string, activeFrameworks []string) ([]IngestFinding, error) {
+	info, err := os.Stat(docPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", docPath, err)
+	}
+	if info.Size() > maxDocumentSize {
+		return nil, fmt.Errorf("document %s is too large (%d bytes, max %d); split it or use a smaller excerpt",
+			filepath.Base(docPath), info.Size(), maxDocumentSize)
+	}
 	content, err := os.ReadFile(docPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", docPath, err)
@@ -582,6 +594,14 @@ type ImpactResult struct {
 // estimates the impact of activating or updating it against current posture.
 // Uses Opus for depth of analysis.
 func (a *Analyst) AnalyzeImpact(ctx context.Context, frameworkPath string) (*ImpactResult, error) {
+	info, err := os.Stat(frameworkPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", frameworkPath, err)
+	}
+	if info.Size() > maxDocumentSize {
+		return nil, fmt.Errorf("framework file %s is too large (%d bytes, max %d)",
+			filepath.Base(frameworkPath), info.Size(), maxDocumentSize)
+	}
 	content, err := os.ReadFile(frameworkPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", frameworkPath, err)
@@ -731,12 +751,15 @@ func (a *Analyst) buildSystemPrompt() string {
 	if sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml")); err == nil {
 		var sre schema.SRE
 		if yaml.Unmarshal(sreData, &sre) == nil {
-			b.WriteString(fmt.Sprintf("Organization: %s (%s)\n", sre.OrgID, sre.Name))
+			// Sanitize user-controllable fields before embedding in Bedrock prompts.
+			// sre.yaml is a local file that could be manually edited.
+			b.WriteString(fmt.Sprintf("Organization: %s (%s)\n",
+				sanitizePromptField(sre.OrgID), sanitizePromptField(sre.Name)))
 			b.WriteString(fmt.Sprintf("Environments: %d\n", len(sre.Environments)))
 			if len(sre.Frameworks) > 0 {
 				fwIDs := make([]string, len(sre.Frameworks))
 				for i, f := range sre.Frameworks {
-					fwIDs[i] = f.ID
+					fwIDs[i] = sanitizePromptField(f.ID)
 				}
 				b.WriteString(fmt.Sprintf("Active frameworks: %s\n", strings.Join(fwIDs, ", ")))
 			}
@@ -789,10 +812,40 @@ func (a *Analyst) loadFrameworkContext(frameworkIDs []string) string {
 			continue
 		}
 		for _, ctrl := range fw.Controls {
-			b.WriteString(fmt.Sprintf("  %s (%s): %s\n", ctrl.ID, fwID, ctrl.Title))
+			// Sanitize control titles and IDs — a malicious framework YAML could
+			// contain newlines in titles to inject instructions into Bedrock prompts.
+			b.WriteString(fmt.Sprintf("  %s (%s): %s\n",
+				sanitizePromptField(ctrl.ID),
+				sanitizePromptField(fwID),
+				sanitizePromptField(ctrl.Title)))
 		}
 	}
 	return b.String()
+}
+
+// sanitizePromptField removes characters that could be used for prompt injection
+// when embedding user-supplied or YAML-sourced values in Bedrock system prompts.
+// Strips newlines (the primary injection vector), carriage returns, null bytes,
+// and other control characters that could be used to terminate one "section" and
+// start a new instruction.
+func sanitizePromptField(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r':
+			b.WriteRune(' ') // collapse newlines to spaces
+		case r < 32 || r == 127:
+			// drop other control characters
+		default:
+			b.WriteRune(r)
+		}
+	}
+	result := b.String()
+	// Truncate to prevent excessively long injected values from dominating the prompt.
+	if len(result) > 512 {
+		result = result[:512] + "…"
+	}
+	return result
 }
 
 // listDocuments returns a formatted list of document files in a directory.

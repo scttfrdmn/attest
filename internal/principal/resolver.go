@@ -248,6 +248,11 @@ func (l *LDAPSource) Resolve(ctx context.Context, principalARN string, attrs *sc
 	for _, group := range entry.GetAttributeValues("memberOf") {
 		// Extract CN from the group DN: "CN=lab-genomics,OU=groups,DC=..."
 		groupCN := extractCN(group)
+		// Validate group name: only allow safe characters that can appear in
+		// LabMembership values used in Cedar policies and log output.
+		if !isValidGroupName(groupCN) {
+			continue
+		}
 		switch {
 		case strings.HasPrefix(groupCN, "lab-") || strings.HasPrefix(groupCN, "research-"):
 			attrs.LabMembership = append(attrs.LabMembership, groupCN)
@@ -257,6 +262,22 @@ func (l *LDAPSource) Resolve(ctx context.Context, principalARN string, attrs *sc
 	}
 
 	return nil
+}
+
+// isValidGroupName validates LDAP group CNs before storing in PrincipalAttributes.
+// Only allows alphanumeric, dash, and underscore — prevents special characters
+// (newlines, quotes, ANSI escapes) from propagating into Cedar evaluation or logs.
+func isValidGroupName(s string) bool {
+	if s == "" || len(s) > 256 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // extractCN parses the CN value from a distinguished name.
