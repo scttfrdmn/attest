@@ -50,7 +50,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.10.2"
+var version = "0.10.3"
 
 func main() {
 	root := &cobra.Command{
@@ -3097,6 +3097,10 @@ Registry stored in .attest/sres.yaml. Each SRE gets its own .attest/.sre-<id>/ s
 
 			if !all && id == "" {
 				return fmt.Errorf("specify --id <sre-id> or --all")
+			}
+			// Validate --id to prevent path traversal and injection in error messages.
+			if id != "" && !multisre.IsValidSREID(id) {
+				return fmt.Errorf("invalid SRE ID %q: must be alphanumeric, hyphen, or underscore", id)
 			}
 
 			sres, err := mgr.List()

@@ -109,6 +109,14 @@ func (m *Manager) Load() (*Registry, error) {
 	if err := yaml.Unmarshal(data, &reg); err != nil {
 		return nil, fmt.Errorf("parsing registry: %w", err)
 	}
+	// Re-validate all IDs on load to defend against TOCTOU: the registry file
+	// could be manually edited to contain unsafe IDs after Add() validated them.
+	for _, e := range reg.SREs {
+		if !isValidSREID(e.ID) {
+			return nil, fmt.Errorf("registry contains invalid SRE ID %q — edit %s to fix",
+				e.ID, m.registryPath)
+		}
+	}
 	return &reg, nil
 }
 

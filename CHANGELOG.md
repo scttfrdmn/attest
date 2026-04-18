@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-04-17
+
+### Security
+
+- **CRITICAL fixed**: Assessor organization markdown injection — `--assessor` flag value
+  embedded in CMMC bundle `readiness.md` without sanitization. `[Evil Corp](https://phishing.com)`
+  would render as an active link when the report is viewed as HTML. New `sanitizeMarkdown()`
+  helper escapes `[`, `]`, `(`, `)`, `*`, `_`, `` ` ``, `<`, `>`, `&`, and collapses
+  newlines. Applied to all user-supplied fields in generated reports (`AssessorOrg`, `OrgID`).
+- **CRITICAL fixed**: Registry TOCTOU path traversal — `Manager.Load()` now re-validates
+  all SRE IDs parsed from `.attest/sres.yaml` with `isValidSREID()`. A manually-edited
+  registry file with `id: "../../etc"` would previously bypass the validation enforced by
+  `Add()` and reach `StoreDir()`. `Load()` now returns an error on any invalid ID.
+- **HIGH fixed**: `attest sre scan --id` missing validation — the `--id` flag value was not
+  validated with `IsValidSREID()`, unlike the `--from`/`--to` flags in `sre diff`. Now
+  validated before use. Consistent validation across all `sre` subcommands.
+
+### Added
+
+- `internal/document/cmmc/bundle_test.go` — 7 test cases for `sanitizeMarkdown()`: link
+  injection, script tags, newlines, backtick code spans, markdown emphasis. `internal/document/cmmc`
+  now has test coverage for the first time.
+- `internal/multisre/toctou_test.go` — 3 tests for TOCTOU fix: manually-injected unsafe ID
+  in registry YAML is rejected on `Load()`, normal valid registry still loads.
+
 ## [0.10.2] - 2026-04-17
 
 ### Security
