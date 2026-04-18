@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-04-17
+
+### Added
+
+- **`attest integrate grc push`** — GRC platform integration (#71). Generates OSCAL
+  Assessment Results from the current crosswalk and POSTs to any OSCAL-compatible HTTP
+  endpoint. Supports ServiceNow GRC, RSA Archer, and generic receivers. Auth via
+  `ATTEST_GRC_TOKEN` env var (never CLI). Retry with exponential backoff on 5xx;
+  fail-fast on 4xx. `--dry-run` prints payload without sending. `--on-change` watches
+  for posture changes and pushes at a configurable interval.
+- **`attest enforce setup`** — EventBridge + SQS infrastructure setup (#72). Creates
+  an EventBridge rule matching CloudTrail events, an SQS queue (`attest-cedar-events`)
+  as the target, sets the queue policy, and saves the queue URL to `.attest/evaluator.yaml`.
+  After setup, `attest watch` automatically uses SQS for sub-second Cedar evaluation
+  latency (vs. 30s CloudTrail polling).
+- **`evaluator.StartWithSQS()`** — SQS-based Cedar PDP continuous evaluation. Long-polls
+  SQS (20s wait, batch 10), parses EventBridge-wrapped CloudTrail events, evaluates via
+  Cedar, writes to decision log, and deletes only successfully-processed messages
+  (at-least-once semantics). `internal/evaluator/sqs.go`.
+- **`attest serve --assessor-mode`** — CMMC C3PAO assessor portal (#73). Read-only
+  dashboard mode with `--assessor-org` and `--assessor-expires` flags. All POST/PUT/DELETE
+  endpoints return 403. Session expiry enforced. New `GET /api/assessor/me` endpoint
+  returns assessor info. `dashboard.NewAssessorServer()` constructor.
+- **`attest sre report [--cost] [--output csv]`** — Multi-SRE aggregate compliance and
+  cost report (#74). Shows per-SRE posture score and (with `--cost`) monthly AWS spend
+  via Cost Explorer. Exports to CSV. Uses existing `ScanAll()` infrastructure.
+- **`internal/integrations/grc/`** — New package: `GRCClient` with `Push()`,
+  `PushWithRetry()`, `WatchAndPush()`. Platform-specific headers for ServiceNow and Archer.
+- **`internal/multisre/cost.go`** — `CostCollector` and `CostSummary` types. Queries
+  AWS Cost Explorer for 30-day spend, aggregates by service, returns top-5.
+- **`internal/document/oscal/oscal_test.go`** — First test coverage for the OSCAL package:
+  UUID format, uniqueness, status mapping, SSP structure, Assessment Results structure,
+  empty controls edge case (9 tests).
+- **`internal/integrations/grc/client_test.go`** — 9 tests: push success, auth header,
+  no-token, 4xx fail-fast, 5xx error, dry-run, platform headers, truncate, document type.
+- **`internal/multisre/cost_test.go`** — 3 tests: cost aggregation across time buckets,
+  empty result, top-5 limit enforcement.
+- Dependencies added: `service/sqs`, `service/eventbridge`, `service/costexplorer`.
+
 ## [0.10.3] - 2026-04-17
 
 ### Security

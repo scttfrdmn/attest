@@ -43,12 +43,15 @@ var templateFS embed.FS
 
 // Server is the attest web dashboard.
 type Server struct {
-	addr        string
-	mux         *http.ServeMux
-	eval        *evaluator.Evaluator
-	storeDir    string
-	authToken   string  // empty = no auth (local use only)
-	sseConns    int64   // active SSE connection count (atomic)
+	addr           string
+	mux            *http.ServeMux
+	eval           *evaluator.Evaluator
+	storeDir       string
+	authToken      string     // empty = no auth (local use only)
+	sseConns       int64      // active SSE connection count (atomic)
+	assessorMode   bool       // true = read-only C3PAO assessor portal
+	assessorOrg    string     // name of the assessor organization
+	assessorExpiry time.Time  // zero = no expiry
 }
 
 // NewServerWithOIDC creates a dashboard server using OIDC authentication.
@@ -68,6 +71,30 @@ func NewServerWithOIDC(addr, storeDir string, oidcHandler *auth.OIDCHandler, eva
 	s.mux.Handle("/api/waivers", oidcHandler.Middleware(http.HandlerFunc(s.handleWaivers)))
 	s.mux.Handle("/api/incidents", oidcHandler.Middleware(http.HandlerFunc(s.handleIncidents)))
 	s.mux.Handle("/api/generate", oidcHandler.Middleware(http.HandlerFunc(s.handleGenerate)))
+	return s
+}
+
+// AssessorConfig holds configuration for assessor portal mode.
+type AssessorConfig struct {
+	Org    string    // C3PAO organization name
+	Expiry time.Time // access expiry (zero = no expiry)
+}
+
+// NewAssessorServer creates a read-only dashboard for C3PAO assessor access.
+func NewAssessorServer(addr, storeDir, authToken string, cfg AssessorConfig, eval *evaluator.Evaluator) *Server {
+	s := &Server{
+		addr:           addr,
+		mux:            http.NewServeMux(),
+		eval:           eval,
+		storeDir:       storeDir,
+		authToken:      authToken,
+		assessorMode:   true,
+		assessorOrg:    cfg.Org,
+		assessorExpiry: cfg.Expiry,
+	}
+	s.registerRoutes()
+	// Add assessor-specific endpoint.
+	s.mux.HandleFunc("/api/assessor/me", s.handleAssessorMe)
 	return s
 }
 
@@ -107,6 +134,50 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// assessorGuard enforces read-only mode for assessor portal sessions.
+// Blocks all write/mutation endpoints and checks session expiry.
+func (s *Server) assessorGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.assessorMode {
+			// Check session expiry.
+			if !s.assessorExpiry.IsZero() && time.Now().After(s.assessorExpiry) {
+				http.Error(w, "Assessor session expired — contact the organization to renew access",
+					http.StatusUnauthorized)
+				return
+			}
+			// Block state-mutating endpoints.
+			if r.URL.Path == "/api/generate" ||
+				r.Method == http.MethodPost ||
+				r.Method == http.MethodPut ||
+				r.Method == http.MethodDelete ||
+				r.Method == http.MethodPatch {
+				http.Error(w, "Read-only assessor mode: this operation is not permitted",
+					http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// handleAssessorMe returns assessor session information.
+func (s *Server) handleAssessorMe(w http.ResponseWriter, r *http.Request) {
+	if !s.assessorMode {
+		http.Error(w, "not in assessor mode", http.StatusNotFound)
+		return
+	}
+	expiry := ""
+	if !s.assessorExpiry.IsZero() {
+		expiry = s.assessorExpiry.Format("2006-01-02T15:04:05Z")
+	}
+	jsonResponse(w, map[string]any{
+		"assessor_org":  s.assessorOrg,
+		"mode":          "read-only",
+		"expiry":        expiry,
+		"store_dir":     s.storeDir,
+	})
+}
+
 // Start launches the dashboard server.
 func (s *Server) Start(ctx context.Context) error {
 	if s.authToken == "" {
@@ -114,9 +185,16 @@ func (s *Server) Start(ctx context.Context) error {
 		fmt.Println("           Only run without auth on trusted localhost networks.")
 		fmt.Println("           Use --auth with ATTEST_DASHBOARD_TOKEN for production use.")
 	}
+	if s.assessorMode {
+		fmt.Printf("  Mode: Assessor portal (read-only) — %s\n", s.assessorOrg)
+		if !s.assessorExpiry.IsZero() {
+			fmt.Printf("  Access expires: %s\n", s.assessorExpiry.Format("2006-01-02"))
+		}
+	}
+	handler := securityHeaders(s.assessorGuard(s.authMiddleware(s.mux)))
 	srv := &http.Server{
 		Addr:              s.addr,
-		Handler:           securityHeaders(s.authMiddleware(s.mux)),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}

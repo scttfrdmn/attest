@@ -21,12 +21,17 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
 	cttypes "github.com/aws/aws-sdk-go-v2/service/cloudtrail/types"
+	ebsvc "github.com/aws/aws-sdk-go-v2/service/eventbridge"
+	ebtypes "github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
 	iamSvc "github.com/aws/aws-sdk-go-v2/service/iam"
+	sqssvc "github.com/aws/aws-sdk-go-v2/service/sqs"
+	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	"github.com/provabl/attest/internal/ai"
 	"github.com/provabl/attest/internal/auth"
 	"github.com/provabl/attest/internal/dashboard"
 	"github.com/provabl/attest/internal/document/cmmc"
+	"github.com/provabl/attest/internal/integrations/grc"
 	"github.com/provabl/attest/internal/multisre"
 	"github.com/provabl/attest/internal/principal"
 	"github.com/provabl/attest/internal/provision"
@@ -35,8 +40,8 @@ import (
 	compilerce "github.com/provabl/attest/internal/compiler/cedar"
 	compilerscp "github.com/provabl/attest/internal/compiler/scp"
 	"github.com/provabl/attest/internal/deploy"
-	"github.com/provabl/attest/internal/document/assessment"
-	"github.com/provabl/attest/internal/document/oscal"
+	assessmentpkg "github.com/provabl/attest/internal/document/assessment"
+	osalexport "github.com/provabl/attest/internal/document/oscal"
 	"github.com/provabl/attest/internal/document/poam"
 	"github.com/provabl/attest/internal/document/ssp"
 	"github.com/provabl/attest/internal/evaluator"
@@ -50,7 +55,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.10.3"
+var version = "0.11.0"
 
 func main() {
 	root := &cobra.Command{
@@ -90,6 +95,8 @@ within it are research environments that inherit the org-level posture.`,
 		versionCmd(),
 		verifyCmd(),
 		sreCmd(),
+		integrateCmd(),
+		enforceCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -1516,7 +1523,7 @@ func generatePOAM(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Cross
 
 func generateAssessment(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Crosswalk, docsDir string) error {
 	fmt.Printf("Generating self-assessment (%s)...\n", fw.Name)
-	gen := assessment.NewGenerator()
+	gen := assessmentpkg.NewGenerator()
 	doc, err := gen.Generate(sre, fw, crosswalk)
 	if err != nil {
 		return fmt.Errorf("generating assessment: %w", err)
@@ -1539,7 +1546,7 @@ func generateOSCAL(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Cros
 	if err != nil {
 		return err
 	}
-	sspExporter := oscal.NewSSPExporter()
+	sspExporter := osalexport.NewSSPExporter()
 	sspJSON, err := sspExporter.ExportSSP(sspDoc)
 	if err != nil {
 		return fmt.Errorf("exporting SSP to OSCAL: %w", err)
@@ -1551,12 +1558,12 @@ func generateOSCAL(sre *schema.SRE, fw *schema.Framework, crosswalk *schema.Cros
 	fmt.Printf("  SSP: %s\n", sspPath)
 
 	// Re-generate assessment for OSCAL export.
-	assGen := assessment.NewGenerator()
+	assGen := assessmentpkg.NewGenerator()
 	assDoc, err := assGen.Generate(sre, fw, crosswalk)
 	if err != nil {
 		return err
 	}
-	assExporter := oscal.NewAssessmentExporter()
+	assExporter := osalexport.NewAssessmentExporter()
 	assJSON, err := assExporter.ExportAssessment(assDoc)
 	if err != nil {
 		return fmt.Errorf("exporting assessment to OSCAL: %w", err)
@@ -1914,6 +1921,34 @@ Default (no flags): no auth, localhost only — for local development.`,
 				return nil
 			}
 
+			// Check for assessor portal mode.
+			assessorMode, _ := cmd.Flags().GetBool("assessor-mode")
+			assessorOrg, _ := cmd.Flags().GetString("assessor-org")
+			assessorExpiresStr, _ := cmd.Flags().GetString("assessor-expires")
+
+			if assessorMode {
+				if authToken == "" {
+					fmt.Println("  WARNING: Assessor portal running without authentication.")
+					fmt.Println("           Set ATTEST_DASHBOARD_TOKEN and use --auth for production.")
+				}
+				var expiry time.Time
+				if assessorExpiresStr != "" {
+					var err error
+					expiry, err = time.Parse("2006-01-02", assessorExpiresStr)
+					if err != nil {
+						return fmt.Errorf("--assessor-expires must be YYYY-MM-DD: %w", err)
+					}
+					expiry = expiry.Add(23*time.Hour + 59*time.Minute + 59*time.Second) // end of day
+				}
+				fmt.Printf("Starting attest assessor portal on http://localhost%s\n", addr)
+				srv := dashboard.NewAssessorServer(addr, ".attest", authToken,
+					dashboard.AssessorConfig{Org: assessorOrg, Expiry: expiry}, nil)
+				if err := srv.Start(ctx); err != nil && err.Error() != "http: Server closed" {
+					return err
+				}
+				return nil
+			}
+
 			fmt.Printf("Starting attest dashboard on http://localhost%s\n", addr)
 			srv := dashboard.NewServer(addr, ".attest", authToken, nil)
 			if err := srv.Start(ctx); err != nil && err.Error() != "http: Server closed" {
@@ -1928,6 +1963,9 @@ Default (no flags): no auth, localhost only — for local development.`,
 	cmd.Flags().String("oidc-client-id", "", "OIDC client ID (or ATTEST_OIDC_CLIENT_ID env)")
 	cmd.Flags().String("oidc-client-secret", "", "OIDC client secret (or ATTEST_OIDC_CLIENT_SECRET env)")
 	cmd.Flags().String("oidc-redirect", "", "OIDC redirect URL (default: http://localhost<addr>/callback)")
+	cmd.Flags().Bool("assessor-mode", false, "Launch as read-only C3PAO assessor portal")
+	cmd.Flags().String("assessor-org", "", "Assessor organization name (e.g., 'Cyber-AB Assessor LLC')")
+	cmd.Flags().String("assessor-expires", "", "Assessor access expiry date (YYYY-MM-DD)")
 	return cmd
 }
 
@@ -3257,7 +3295,105 @@ Registry stored in .attest/sres.yaml. Each SRE gets its own .attest/.sre-<id>/ s
 	diffSub.Flags().String("from", "", "Source SRE ID")
 	diffSub.Flags().String("to", "", "Target SRE ID")
 
-	cmd.AddCommand(addSub, listSub, removeSub, scanSub, diffSub)
+	// Report subcommand — aggregate posture + optional cost data across all SREs.
+	reportSub := &cobra.Command{
+		Use:   "report",
+		Short: "Multi-SRE aggregate compliance and cost report",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			withCost, _ := cmd.Flags().GetBool("cost")
+			region, _ := cmd.Flags().GetString("region")
+			csvOutput, _ := cmd.Flags().GetString("output")
+
+			sres, err := mgr.List()
+			if err != nil {
+				return err
+			}
+			if len(sres) == 0 {
+				return fmt.Errorf("no SREs registered — use 'attest sre add'")
+			}
+
+			// Optionally collect cost data.
+			var costCollector *multisre.CostCollector
+			if withCost {
+				costCollector, err = multisre.NewCostCollector(ctx, region)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "  Warning: could not initialize Cost Explorer: %v\n", err)
+					fmt.Fprintf(os.Stderr, "  Proceeding without cost data.\n")
+				}
+			}
+
+			fmt.Printf("\nMulti-SRE Compliance Report  %s\n\n", time.Now().UTC().Format("2006-01-02"))
+			fmt.Printf("  %-15s  %-20s  %-10s  %s\n", "SRE ID", "Org ID", "Score", "Monthly Cost")
+			fmt.Printf("  %s\n", strings.Repeat("─", 65))
+
+			totalScore, totalMax := 0, 0
+			var csvRows []string
+			if csvOutput != "" {
+				csvRows = append(csvRows, "sre_id,org_id,score_pct,monthly_cost_usd")
+			}
+
+			for _, s := range sres {
+				storeDir := mgr.StoreDir(s.ID)
+				score, maxScore := 0, 0
+				cwData, err := os.ReadFile(filepath.Join(storeDir, "compiled", "crosswalk.yaml"))
+				if err == nil {
+					var cw schema.Crosswalk
+					if yaml.Unmarshal(cwData, &cw) == nil {
+						for _, e := range cw.Entries {
+							maxScore += 5
+							switch e.Status {
+							case "enforced", "aws_covered":
+								score += 5
+							case "partial":
+								score += 3
+							}
+						}
+					}
+				}
+
+				pct := 0.0
+				if maxScore > 0 {
+					pct = float64(score) / float64(maxScore) * 100
+				}
+				totalScore += score
+				totalMax += maxScore
+
+				costStr := "–"
+				costUSD := 0.0
+				if costCollector != nil {
+					if summary, err := costCollector.Collect(ctx); err == nil {
+						costStr = fmt.Sprintf("$%.0f/mo", summary.MonthlyCostUSD)
+						costUSD = summary.MonthlyCostUSD
+					}
+				}
+
+				fmt.Printf("  %-15s  %-20s  %5.1f%%  %s\n", s.ID, s.OrgID, pct, costStr)
+				if csvOutput != "" {
+					csvRows = append(csvRows, fmt.Sprintf("%s,%s,%.1f,%.2f", s.ID, s.OrgID, pct, costUSD))
+				}
+			}
+
+			fmt.Printf("  %s\n", strings.Repeat("─", 65))
+			if totalMax > 0 {
+				fmt.Printf("  %-15s  %-20s  %5.1f%%\n", "AGGREGATE", fmt.Sprintf("%d SREs", len(sres)),
+					float64(totalScore)/float64(totalMax)*100)
+			}
+
+			if csvOutput != "" {
+				content := strings.Join(csvRows, "\n") + "\n"
+				if err := os.WriteFile(csvOutput, []byte(content), 0640); err == nil {
+					fmt.Printf("\nExported to: %s\n", csvOutput)
+				}
+			}
+			return nil
+		},
+	}
+	reportSub.Flags().Bool("cost", false, "Include AWS Cost Explorer data (requires ce:GetCostAndUsage)")
+	reportSub.Flags().String("region", "us-east-1", "AWS region")
+	reportSub.Flags().String("output", "", "Export as CSV to the given file path")
+
+	cmd.AddCommand(addSub, listSub, removeSub, scanSub, diffSub, reportSub)
 	return cmd
 }
 
@@ -3563,4 +3699,259 @@ Examples:
 	cmd.Flags().String("type", "procedure", "Document type: procedure, policy, training-plan, template")
 	cmd.Flags().String("out", "", "Directory to write the document (optional)")
 	return cmd
+}
+
+func integrateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "integrate",
+		Short: "Integrate attest with enterprise systems",
+	}
+	cmd.AddCommand(integrateGRCCmd())
+	return cmd
+}
+
+func integrateGRCCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "grc",
+		Short: "Push OSCAL compliance documents to a GRC platform",
+	}
+	cmd.AddCommand(integrateGRCPushCmd())
+	return cmd
+}
+
+func integrateGRCPushCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "push",
+		Short: "Push current OSCAL assessment to a GRC platform endpoint",
+		Long: `Generates OSCAL Assessment Results from the current posture and POSTs
+the document to the configured GRC platform endpoint.
+
+Auth: set ATTEST_GRC_TOKEN env var (Bearer token or API key).
+Never pass tokens on the command line — they appear in process listings.
+
+Supported platforms: servicenow, archer, generic (any OSCAL-compatible HTTP endpoint)
+
+Examples:
+  # ServiceNow GRC
+  ATTEST_GRC_TOKEN=<token> attest integrate grc push \
+    --endpoint https://company.service-now.com/api/now/table/sn_grc_document \
+    --platform servicenow
+
+  # Dry-run: see what would be sent
+  attest integrate grc push --endpoint https://example.com --dry-run`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			endpoint, _ := cmd.Flags().GetString("endpoint")
+			platformStr, _ := cmd.Flags().GetString("platform")
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			onChange, _ := cmd.Flags().GetBool("on-change")
+			intervalSecs, _ := cmd.Flags().GetInt("interval")
+
+			client, err := grc.NewClient(endpoint, grc.Platform(platformStr), dryRun)
+			if err != nil {
+				return err
+			}
+
+			// Load crosswalk for OSCAL export.
+			cwData, err := os.ReadFile(filepath.Join(".attest", "compiled", "crosswalk.yaml"))
+			if err != nil {
+				return fmt.Errorf("run 'attest compile' first: %w", err)
+			}
+			var cw schema.Crosswalk
+			if err := yaml.Unmarshal(cwData, &cw); err != nil {
+				return err
+			}
+
+			// Build a minimal assessment from crosswalk for OSCAL generation.
+			assess := buildAssessmentFromCrosswalk(&cw)
+
+			generateOSCAL := func() ([]byte, error) {
+				exporter := osalexport.NewAssessmentExporter()
+				return exporter.ExportAssessment(assess)
+			}
+
+			if onChange {
+				fmt.Printf("Watching for posture changes, pushing every %ds...\n", intervalSecs)
+				return client.WatchAndPush(ctx,
+					filepath.Join(".attest", "history"),
+					generateOSCAL,
+					time.Duration(intervalSecs)*time.Second)
+			}
+
+			payload, err := generateOSCAL()
+			if err != nil {
+				return fmt.Errorf("generating OSCAL: %w", err)
+			}
+
+			fmt.Printf("Pushing OSCAL Assessment Results to %s...\n", endpoint)
+			result, err := client.PushWithRetry(ctx, "assessment", payload, 3)
+			if err != nil {
+				return fmt.Errorf("push failed: %w", err)
+			}
+			if dryRun {
+				return nil
+			}
+			fmt.Printf("  HTTP %d — pushed %d bytes to %s\n",
+				result.StatusCode, len(payload), result.Endpoint)
+			fmt.Printf("  Pushed at: %s\n", result.PushedAt.Format(time.RFC3339))
+			return nil
+		},
+	}
+	cmd.Flags().String("endpoint", "", "GRC platform OSCAL endpoint URL (required)")
+	cmd.Flags().String("platform", "generic", "Platform type: servicenow, archer, generic")
+	cmd.Flags().Bool("dry-run", false, "Show payload without sending")
+	cmd.Flags().Bool("on-change", false, "Watch for posture changes and push continuously")
+	cmd.Flags().Int("interval", 3600, "Push interval in seconds (with --on-change)")
+	return cmd
+}
+
+func enforceCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "enforce",
+		Short: "Manage continuous Cedar PDP enforcement infrastructure",
+	}
+	cmd.AddCommand(enforceSetupCmd())
+	return cmd
+}
+
+func enforceSetupCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "setup",
+		Short: "Create EventBridge rule + SQS queue for real-time Cedar PDP evaluation",
+		Long: `Sets up the AWS infrastructure for sub-second Cedar policy evaluation:
+  1. Creates an EventBridge rule matching CloudTrail management events
+  2. Creates an SQS queue (attest-cedar-events) as the target
+  3. Sets the queue policy to allow EventBridge delivery
+  4. Writes the queue URL to .attest/sre.yaml
+
+After setup, 'attest watch' automatically uses SQS instead of CloudTrail polling,
+reducing Cedar evaluation latency from ~30s to sub-second.
+
+Requires: cloudtrail:DescribeTrails, events:PutRule, events:PutTargets,
+          sqs:CreateQueue, sqs:SetQueueAttributes`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			region, _ := cmd.Flags().GetString("region")
+
+			cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+			if err != nil {
+				return fmt.Errorf("loading AWS config: %w", err)
+			}
+
+			fmt.Printf("Setting up EventBridge + SQS for Cedar PDP (region: %s)...\n", region)
+
+			// Create SQS queue.
+			sqsSvc := sqssvc.NewFromConfig(cfg)
+			queueOut, err := sqsSvc.CreateQueue(ctx, &sqssvc.CreateQueueInput{
+				QueueName: aws.String("attest-cedar-events"),
+				Attributes: map[string]string{
+					"MessageRetentionPeriod":  "86400",  // 1 day
+					"VisibilityTimeout":        "60",
+					"ReceiveMessageWaitTimeSeconds": "20", // enable long-polling by default
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("creating SQS queue: %w", err)
+			}
+			queueURL := aws.ToString(queueOut.QueueUrl)
+			fmt.Printf("  ✓ SQS queue created: %s\n", queueURL)
+
+			// Get queue ARN for EventBridge target.
+			attrOut, err := sqsSvc.GetQueueAttributes(ctx, &sqssvc.GetQueueAttributesInput{
+				QueueUrl:       aws.String(queueURL),
+				AttributeNames: []sqstypes.QueueAttributeName{"QueueArn"},
+			})
+			if err != nil {
+				return fmt.Errorf("getting queue ARN: %w", err)
+			}
+			queueARN := attrOut.Attributes["QueueArn"]
+
+			// Create EventBridge rule.
+			ebSvc := ebsvc.NewFromConfig(cfg)
+			ruleOut, err := ebSvc.PutRule(ctx, &ebsvc.PutRuleInput{
+				Name:        aws.String("attest-cedar-cloudtrail"),
+				Description: aws.String("Delivers CloudTrail management events to attest Cedar PDP"),
+				EventPattern: aws.String(`{"source":["aws.cloudtrail"]}`),
+				State:        ebtypes.RuleStateEnabled,
+			})
+			if err != nil {
+				return fmt.Errorf("creating EventBridge rule: %w", err)
+			}
+			fmt.Printf("  ✓ EventBridge rule created: %s\n", aws.ToString(ruleOut.RuleArn))
+
+			// Set SQS queue policy to allow EventBridge delivery.
+			policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"events.amazonaws.com"},"Action":"sqs:SendMessage","Resource":"%s","Condition":{"ArnEquals":{"aws:SourceArn":"%s"}}}]}`,
+				queueARN, aws.ToString(ruleOut.RuleArn))
+			_, err = sqsSvc.SetQueueAttributes(ctx, &sqssvc.SetQueueAttributesInput{
+				QueueUrl:   aws.String(queueURL),
+				Attributes: map[string]string{"Policy": policy},
+			})
+			if err != nil {
+				return fmt.Errorf("setting queue policy: %w", err)
+			}
+
+			// Add SQS as EventBridge target.
+			_, err = ebSvc.PutTargets(ctx, &ebsvc.PutTargetsInput{
+				Rule: aws.String("attest-cedar-cloudtrail"),
+				Targets: []ebtypes.Target{
+					{Id: aws.String("attest-sqs"), Arn: aws.String(queueARN)},
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("setting EventBridge target: %w", err)
+			}
+			fmt.Printf("  ✓ EventBridge target set to SQS queue\n")
+
+			// Save queue URL to sre.yaml.
+			// Save queue URL to a config file for attest watch to discover.
+			queueConfig := fmt.Sprintf("sqs_queue_url: %q\n", queueURL)
+			if err := os.WriteFile(filepath.Join(".attest", "evaluator.yaml"), []byte(queueConfig), 0640); err == nil {
+				fmt.Printf("  ✓ Queue URL saved to .attest/evaluator.yaml\n")
+			}
+
+			fmt.Println("\nSetup complete. Run 'attest watch' to start real-time Cedar evaluation.")
+			fmt.Printf("Queue URL: %s\n", queueURL)
+			return nil
+		},
+	}
+	cmd.Flags().String("region", "us-east-1", "AWS region")
+	return cmd
+}
+
+// buildAssessmentFromCrosswalk builds a minimal Assessment struct for OSCAL export.
+func buildAssessmentFromCrosswalk(cw *schema.Crosswalk) *assessmentpkg.Assessment {
+	a := &assessmentpkg.Assessment{
+		Title:       fmt.Sprintf("%s Assessment Results", cw.Framework),
+		Framework:   cw.Framework,
+		GeneratedAt: cw.GeneratedAt,
+	}
+	familyMap := make(map[string]*assessmentpkg.FamilyScore)
+	for _, e := range cw.Entries {
+		family := strings.SplitN(e.ControlID, ".", 2)[0]
+		if familyMap[family] == nil {
+			familyMap[family] = &assessmentpkg.FamilyScore{Family: family, MaxScore: 0}
+		}
+		score := 0
+		switch e.Status {
+		case "enforced", "aws_covered":
+			score = 5
+		case "partial":
+			score = 3
+		}
+		familyMap[family].Controls = append(familyMap[family].Controls, assessmentpkg.ControlScore{
+			ControlID: e.ControlID, Status: e.Status,
+			Score: score, MaxScore: 5,
+		})
+		familyMap[family].Score += score
+		familyMap[family].MaxScore += 5
+		a.TotalScore += score
+		a.MaxScore += 5
+	}
+	for _, fs := range familyMap {
+		a.FamilyScores = append(a.FamilyScores, *fs)
+	}
+	if a.MaxScore > 0 {
+		a.ScorePercent = float64(a.TotalScore) / float64(a.MaxScore) * 100
+	}
+	return a
 }
