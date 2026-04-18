@@ -55,7 +55,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.11.0"
+var version = "0.11.1"
 
 func main() {
 	root := &cobra.Command{
@@ -1928,17 +1928,19 @@ Default (no flags): no auth, localhost only — for local development.`,
 
 			if assessorMode {
 				if authToken == "" {
-					fmt.Println("  WARNING: Assessor portal running without authentication.")
-					fmt.Println("           Set ATTEST_DASHBOARD_TOKEN and use --auth for production.")
+					return fmt.Errorf("--assessor-mode requires --auth and ATTEST_DASHBOARD_TOKEN: " +
+						"C3PAO assessors must authenticate before accessing compliance data")
 				}
 				var expiry time.Time
 				if assessorExpiresStr != "" {
 					var err error
-					expiry, err = time.Parse("2006-01-02", assessorExpiresStr)
+					// Parse as UTC date; use UTC throughout to avoid timezone-dependent access control.
+					expiry, err = time.ParseInLocation("2006-01-02", assessorExpiresStr, time.UTC)
 					if err != nil {
 						return fmt.Errorf("--assessor-expires must be YYYY-MM-DD: %w", err)
 					}
-					expiry = expiry.Add(23*time.Hour + 59*time.Minute + 59*time.Second) // end of day
+					// Set to end of the specified UTC day.
+					expiry = expiry.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
 				}
 				fmt.Printf("Starting attest assessor portal on http://localhost%s\n", addr)
 				srv := dashboard.NewAssessorServer(addr, ".attest", authToken,
@@ -3304,6 +3306,15 @@ Registry stored in .attest/sres.yaml. Each SRE gets its own .attest/.sre-<id>/ s
 			withCost, _ := cmd.Flags().GetBool("cost")
 			region, _ := cmd.Flags().GetString("region")
 			csvOutput, _ := cmd.Flags().GetString("output")
+			if csvOutput != "" {
+				// Validate output path to prevent path traversal.
+				if filepath.IsAbs(csvOutput) {
+					return fmt.Errorf("--output must be a relative path, not absolute: %s", csvOutput)
+				}
+				if clean := filepath.Clean(csvOutput); strings.HasPrefix(clean, "..") {
+					return fmt.Errorf("--output must not escape the project directory: %s", csvOutput)
+				}
+			}
 
 			sres, err := mgr.List()
 			if err != nil {
@@ -3747,7 +3758,12 @@ Examples:
 			onChange, _ := cmd.Flags().GetBool("on-change")
 			intervalSecs, _ := cmd.Flags().GetInt("interval")
 
-			client, err := grc.NewClient(endpoint, grc.Platform(platformStr), dryRun)
+			// Validate platform against allowlist before passing to client.
+			platform, err := grc.ValidatePlatform(platformStr)
+			if err != nil {
+				return err
+			}
+			client, err := grc.NewClient(endpoint, platform, dryRun)
 			if err != nil {
 				return err
 			}

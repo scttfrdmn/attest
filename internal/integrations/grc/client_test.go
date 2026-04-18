@@ -39,10 +39,8 @@ func TestPush_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Set token via env var (never via CLI).
-	t.Setenv("ATTEST_GRC_TOKEN", "test-secret-token")
-
-	c, _ := NewClient(srv.URL, PlatformGeneric, false)
+	// Use newClientDirect for localhost test server (bypasses SSRF validation).
+	c := newClientDirect(srv.URL, PlatformGeneric, false, "test-secret-token")
 	payload := []byte(`{"system-security-plan":{"uuid":"test-uuid"}}`)
 	result, err := c.Push(context.Background(), "ssp", payload)
 	if err != nil {
@@ -73,7 +71,7 @@ func TestPush_NoTokenWhenEnvNotSet(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := NewClient(srv.URL, PlatformGeneric, false)
+	c := newClientDirect(srv.URL, PlatformGeneric, false, "")
 	_, err := c.Push(context.Background(), "ssp", []byte(`{}`))
 	if err != nil {
 		t.Fatalf("Push() error: %v", err)
@@ -89,7 +87,7 @@ func TestPush_FailFastOn4xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := NewClient(srv.URL, PlatformGeneric, false)
+	c := newClientDirect(srv.URL, PlatformGeneric, false, "")
 	result, err := c.Push(context.Background(), "ssp", []byte(`{}`))
 	if err == nil {
 		t.Error("Push() should return error on 401")
@@ -105,7 +103,7 @@ func TestPush_ServerError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := NewClient(srv.URL, PlatformGeneric, false)
+	c := newClientDirect(srv.URL, PlatformGeneric, false, "")
 	result, err := c.Push(context.Background(), "ssp", []byte(`{}`))
 	if err == nil {
 		t.Error("Push() should return error on 500")
@@ -139,10 +137,72 @@ func TestPlatformHeaders_ServiceNow(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := NewClient(srv.URL, PlatformServiceNow, false)
+	c := newClientDirect(srv.URL, PlatformServiceNow, false, "")
 	_, _ = c.Push(context.Background(), "ssp", []byte(`{}`))
 	if receivedAccept != "application/json" {
 		t.Errorf("ServiceNow Accept header = %q, want application/json", receivedAccept)
+	}
+}
+
+// TestNewClient_SSRFPrevention covers the CRITICAL SSRF fix: endpoint validation.
+func TestNewClient_SSRFPrevention(t *testing.T) {
+	ssrfURLs := []struct {
+		url  string
+		desc string
+	}{
+		{"http://169.254.169.254/latest/meta-data/", "AWS metadata endpoint"},
+		{"http://127.0.0.1:6379", "localhost Redis"},
+		{"http://localhost:9200", "localhost Elasticsearch"},
+		{"file:///etc/passwd", "file:// scheme"},
+		{"ftp://internal.example.com", "ftp:// scheme"},
+		{"http://10.0.0.1/api", "private RFC 1918 IP"},
+		{"http://192.168.1.1/", "private RFC 1918 IP"},
+		{"http://172.16.0.1/", "private RFC 1918 IP"},
+	}
+	for _, tc := range ssrfURLs {
+		_, err := NewClient(tc.url, PlatformGeneric, false)
+		if err == nil {
+			t.Errorf("NewClient(%q) should be rejected (%s)", tc.url, tc.desc)
+		}
+	}
+}
+
+func TestNewClient_SafeURLs(t *testing.T) {
+	safeURLs := []string{
+		"https://company.service-now.com/api/now/table/sn_grc_document",
+		"https://archer.company.com/api/core",
+		"http://grc.research.university.edu/api/oscal",
+		"https://api.example.com:8443/oscal",
+	}
+	for _, u := range safeURLs {
+		c, err := NewClient(u, PlatformGeneric, false)
+		if err != nil {
+			t.Errorf("NewClient(%q) should be valid, got: %v", u, err)
+		}
+		if c == nil {
+			t.Errorf("NewClient(%q) returned nil", u)
+		}
+	}
+}
+
+func TestValidatePlatform(t *testing.T) {
+	valid := []string{"servicenow", "archer", "generic"}
+	for _, p := range valid {
+		platform, err := ValidatePlatform(p)
+		if err != nil {
+			t.Errorf("ValidatePlatform(%q) error: %v", p, err)
+		}
+		if string(platform) == "" {
+			t.Errorf("ValidatePlatform(%q) returned empty platform", p)
+		}
+	}
+
+	invalid := []string{"unknown", "../../etc", "SERVICENOW", ""}
+	for _, p := range invalid {
+		_, err := ValidatePlatform(p)
+		if err == nil {
+			t.Errorf("ValidatePlatform(%q) should return error", p)
+		}
 	}
 }
 
@@ -161,7 +221,7 @@ func TestPushResult_DocumentType(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := NewClient(srv.URL, PlatformGeneric, false)
+	c := newClientDirect(srv.URL, PlatformGeneric, false, "")
 	result, err := c.Push(context.Background(), "assessment", []byte(`{}`))
 	if err != nil {
 		t.Fatalf("Push() error: %v", err)

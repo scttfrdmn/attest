@@ -139,8 +139,8 @@ func securityHeaders(next http.Handler) http.Handler {
 func (s *Server) assessorGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.assessorMode {
-			// Check session expiry.
-			if !s.assessorExpiry.IsZero() && time.Now().After(s.assessorExpiry) {
+			// Check session expiry — compare in UTC to avoid timezone-dependent access control.
+			if !s.assessorExpiry.IsZero() && time.Now().UTC().After(s.assessorExpiry.UTC()) {
 				http.Error(w, "Assessor session expired — contact the organization to renew access",
 					http.StatusUnauthorized)
 				return
@@ -171,10 +171,11 @@ func (s *Server) handleAssessorMe(w http.ResponseWriter, r *http.Request) {
 		expiry = s.assessorExpiry.Format("2006-01-02T15:04:05Z")
 	}
 	jsonResponse(w, map[string]any{
-		"assessor_org":  s.assessorOrg,
-		"mode":          "read-only",
-		"expiry":        expiry,
-		"store_dir":     s.storeDir,
+		// assessorOrg is HTML-entity-escaped to prevent XSS if rendered in browser.
+		"assessor_org": sanitizeForJSON(s.assessorOrg),
+		"mode":         "read-only",
+		"expiry":       expiry,
+		// store_dir intentionally omitted — internal filesystem path disclosure.
 	})
 }
 
@@ -394,6 +395,19 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- helpers ---
+
+// sanitizeForJSON sanitizes a string for safe embedding in JSON responses
+// that may be rendered as HTML. Encodes characters that have special meaning
+// in HTML to their entities, preventing XSS if the response is rendered without escaping.
+func sanitizeForJSON(s string) string {
+	replacer := strings.NewReplacer(
+		"<", "&lt;", ">", "&gt;",
+		"\"", "&quot;", "'", "&#39;",
+		"&", "&amp;",
+		"\n", " ", "\r", " ",
+	)
+	return replacer.Replace(s)
+}
 
 func jsonResponse(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")

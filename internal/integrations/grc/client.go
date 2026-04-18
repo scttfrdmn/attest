@@ -15,7 +15,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -28,7 +30,17 @@ const (
 	PlatformServiceNow Platform = "servicenow"
 	PlatformArcher     Platform = "archer"
 	PlatformGeneric    Platform = "generic"
+
+	// maxRetryLimit caps PushWithRetry to prevent infinite loops.
+	maxRetryLimit = 10
 )
+
+// ValidPlatforms is the set of recognised platform identifiers.
+var ValidPlatforms = map[string]Platform{
+	"servicenow": PlatformServiceNow,
+	"archer":     PlatformArcher,
+	"generic":    PlatformGeneric,
+}
 
 // PushResult records the outcome of a single push operation.
 type PushResult struct {
@@ -49,13 +61,20 @@ type Client struct {
 }
 
 // NewClient creates a GRC push client.
+// Validates that endpoint is a safe http(s) URL (not a private IP, localhost, or
+// non-HTTP scheme) to prevent SSRF attacks.
 // Token is read from ATTEST_GRC_TOKEN env var; endpoint from the --endpoint flag.
 func NewClient(endpoint string, platform Platform, dryRun bool) (*Client, error) {
 	if endpoint == "" {
 		return nil, fmt.Errorf("GRC endpoint is required (--endpoint <url>)")
 	}
+
+	// SSRF protection: validate endpoint is a safe external https/http URL.
+	if err := validateEndpoint(endpoint); err != nil {
+		return nil, err
+	}
+
 	token := os.Getenv("ATTEST_GRC_TOKEN")
-	// Token is optional for generic receivers that use other auth (e.g., mTLS)
 	return &Client{
 		endpoint: endpoint,
 		platform: platform,
@@ -65,6 +84,46 @@ func NewClient(endpoint string, platform Platform, dryRun bool) (*Client, error)
 			Timeout: 30 * time.Second,
 		},
 	}, nil
+}
+
+// validateEndpoint ensures the URL uses http(s) and does not target private IPs
+// or localhost (SSRF prevention).
+func validateEndpoint(endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("invalid endpoint URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("endpoint must use http or https scheme, got: %q", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("endpoint must include a hostname")
+	}
+	// Reject localhost and loopback.
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
+		return fmt.Errorf("endpoint cannot target localhost — GRC platforms are external services")
+	}
+	// Reject link-local (AWS metadata service is 169.254.169.254).
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsPrivate() {
+			return fmt.Errorf("endpoint cannot target private/internal IP address: %s", host)
+		}
+	}
+	return nil
+}
+
+// ValidatePlatform returns the Platform constant for a given string, or an error.
+func ValidatePlatform(s string) (Platform, error) {
+	p, ok := ValidPlatforms[s]
+	if !ok {
+		keys := make([]string, 0, len(ValidPlatforms))
+		for k := range ValidPlatforms {
+			keys = append(keys, k)
+		}
+		return "", fmt.Errorf("--platform must be one of %s, got: %q", strings.Join(keys, ", "), s)
+	}
+	return p, nil
 }
 
 // Push sends an OSCAL document (pre-marshaled JSON) to the configured endpoint.
@@ -77,7 +136,6 @@ func (c *Client) Push(ctx context.Context, docType string, payload []byte) (*Pus
 	}
 
 	if c.dryRun {
-		// In dry-run mode, print the payload that would be sent.
 		fmt.Printf("DRY RUN — would POST %s to %s\n", docType, c.endpoint)
 		fmt.Printf("Payload (%d bytes):\n%s\n", len(payload), truncate(string(payload), 500))
 		return result, nil
@@ -106,7 +164,9 @@ func (c *Client) Push(ctx context.Context, docType string, payload []byte) (*Pus
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 
 	if resp.StatusCode >= 400 {
-		result.Error = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		// Don't include raw response body in error (may contain sensitive data).
+		result.Error = fmt.Sprintf("HTTP %d: server returned error", resp.StatusCode)
+		_ = body // consumed but not propagated
 		return result, fmt.Errorf("GRC push failed: %s", result.Error)
 	}
 
@@ -114,8 +174,11 @@ func (c *Client) Push(ctx context.Context, docType string, payload []byte) (*Pus
 }
 
 // PushWithRetry wraps Push with exponential backoff on server errors (5xx).
-// 4xx errors (bad request, unauthorized) are not retried.
+// 4xx errors are not retried. maxRetries is capped at maxRetryLimit (10).
 func (c *Client) PushWithRetry(ctx context.Context, docType string, payload []byte, maxRetries int) (*PushResult, error) {
+	if maxRetries > maxRetryLimit {
+		maxRetries = maxRetryLimit
+	}
 	var lastErr error
 	backoff := 2 * time.Second
 
@@ -137,21 +200,20 @@ func (c *Client) PushWithRetry(ctx context.Context, docType string, payload []by
 			return result, nil
 		}
 
-		// Don't retry on 4xx (client errors) — fix the request.
+		// Don't retry on 4xx (client errors).
 		if result != nil && result.StatusCode >= 400 && result.StatusCode < 500 {
 			return result, err
 		}
 
 		lastErr = err
 		if attempt < maxRetries {
-			fmt.Printf("  Retry %d/%d after %s (last error: %v)\n", attempt+1, maxRetries, backoff, err)
+			fmt.Printf("  Retry %d/%d after %s\n", attempt+1, maxRetries, backoff)
 		}
 	}
 	return nil, fmt.Errorf("push failed after %d retries: %w", maxRetries, lastErr)
 }
 
-// WatchAndPush watches the posture history directory for new snapshots and
-// pushes them to the GRC endpoint. Blocks until ctx is cancelled.
+// WatchAndPush watches for posture changes and pushes at the given interval.
 func (c *Client) WatchAndPush(ctx context.Context, historyDir string, generateFn func() ([]byte, error), interval time.Duration) error {
 	fmt.Printf("Watching for posture changes (interval: %s)...\n", interval)
 	ticker := time.NewTicker(interval)
@@ -182,17 +244,30 @@ func (c *Client) setPlatformHeaders(req *http.Request) {
 	switch c.platform {
 	case PlatformServiceNow:
 		req.Header.Set("Accept", "application/json")
-		// ServiceNow GRC uses X-WantSessionNotifications for async delivery
 	case PlatformArcher:
 		req.Header.Set("Accept", "application/json")
-		req.Header.Set("X-Http-Method-Override", "PUT") // Archer uses override header
+		req.Header.Set("X-Http-Method-Override", "PUT")
 	}
 }
 
-// truncate returns the first n chars of s, appending "..." if truncated.
+// newClientDirect creates a client bypassing endpoint validation — for unit tests only.
+// Production callers must use NewClient which enforces SSRF protection.
+func newClientDirect(endpoint string, platform Platform, dryRun bool, token string) *Client {
+	return &Client{
+		endpoint: endpoint,
+		platform: platform,
+		token:    token,
+		dryRun:   dryRun,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// truncate returns the first n Unicode code points of s, appending "..." if truncated.
+// Uses rune (code point) slicing rather than byte slicing to avoid invalid UTF-8 output.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return string(runes[:n]) + "..."
 }

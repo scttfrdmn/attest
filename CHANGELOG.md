@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-04-18
+
+### Security
+
+- **CRITICAL fixed**: SSRF in `attest integrate grc push --endpoint` — endpoint URL now
+  validated by `validateEndpoint()`: must use http(s), must not target localhost/loopback,
+  must not target private/link-local IP ranges (prevents targeting AWS metadata endpoint
+  169.254.169.254, internal Redis, etc.). `newClientDirect()` constructor added for test
+  use with localhost servers.
+- **CRITICAL fixed**: Path traversal in `attest sre report --output` — output path
+  validated (must be relative, must not start with `..`), matching the pattern used by
+  `attest generate cmmc-bundle --output`.
+- **HIGH fixed**: UTF-8 truncation in `truncate()` — now uses `[]rune` slicing instead of
+  byte slicing; prevents invalid UTF-8 output when payload contains multi-byte characters.
+- **HIGH fixed**: Missing SQS queue URL validation in `newSQSPoller()` — queue URL from
+  `.attest/evaluator.yaml` now validated to match `https://sqs.*.amazonaws.com/` format,
+  preventing SSRF via hand-edited config file.
+- **HIGH fixed**: Filesystem path disclosure in assessor portal — `store_dir` field
+  removed from `GET /api/assessor/me` response; was exposing internal filesystem paths
+  to external C3PAO assessors.
+- **HIGH fixed**: Platform string validation in `integrateGRCPushCmd()` — `--platform`
+  flag now validated against explicit allowlist via `ValidatePlatform()` before being
+  cast to `grc.Platform` type.
+- **MEDIUM fixed**: Assessor portal now requires `--auth` — `--assessor-mode` without
+  `--auth` returns an error instead of printing a warning; C3PAO assessors must authenticate.
+- **MEDIUM fixed**: Timezone-safe assessor session expiry — expiry parsed with
+  `time.ParseInLocation(..., time.UTC)` and comparison uses `time.Now().UTC()`; prevents
+  timezone-dependent access control issues.
+- **MEDIUM fixed**: XSS in assessor org JSON response — `s.assessorOrg` now HTML-escaped
+  via `sanitizeForJSON()` before inclusion in `/api/assessor/me` response.
+- **LOW fixed**: `maxRetries` bounded to `maxRetryLimit` (10) in `PushWithRetry()`.
+
+### Added
+
+- `grc.ValidatePlatform()` — exported function validating platform strings against allowlist
+- `grc.ValidPlatforms` — exported map of valid platform identifiers
+- `grc.newClientDirect()` — package-internal constructor for tests (bypasses SSRF validation)
+- `dashboard.sanitizeForJSON()` — HTML-entity escaper for JSON response values
+- `evaluator.newSQSPoller()` — now returns error on invalid queue URL
+- Tests: SSRF prevention (8 rejected URLs + 4 safe URLs), `ValidatePlatform` (7 cases)
+
 ## [0.11.0] - 2026-04-17
 
 ### Added

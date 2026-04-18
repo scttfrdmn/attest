@@ -21,8 +21,13 @@ type sqsPoller struct {
 	queueURL string
 }
 
-func newSQSPoller(svc *sqs.Client, queueURL string) *sqsPoller {
-	return &sqsPoller{svc: svc, queueURL: queueURL}
+func newSQSPoller(svc *sqs.Client, queueURL string) (*sqsPoller, error) {
+	// Validate queue URL format to prevent SSRF via hand-edited evaluator.yaml.
+	// AWS SQS queue URLs follow: https://sqs.<region>.amazonaws.com/<account>/<queue>
+	if !strings.HasPrefix(queueURL, "https://sqs.") || !strings.Contains(queueURL, ".amazonaws.com/") {
+		return nil, fmt.Errorf("invalid SQS queue URL %q: must be https://sqs.<region>.amazonaws.com/...", queueURL)
+	}
+	return &sqsPoller{svc: svc, queueURL: queueURL}, nil
 }
 
 // Poll performs a long-poll (20s wait) on the SQS queue and returns translated
@@ -159,7 +164,10 @@ func (e *Evaluator) StartWithSQS(ctx context.Context, sqsSvc *sqs.Client, queueU
 	e.mu.Unlock()
 	defer close(bcast)
 
-	poller := newSQSPoller(sqsSvc, queueURL)
+	poller, err := newSQSPoller(sqsSvc, queueURL)
+	if err != nil {
+		return err
+	}
 
 	for {
 		select {
