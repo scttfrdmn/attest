@@ -22,7 +22,7 @@ jobs:
           cache: true
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@v3.9.1
 
       - name: Install syft (SBOM)
         uses: anchore/sbom-action/download-syft@v0
@@ -34,4 +34,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COSIGN_EXPERIMENTAL: "1"
