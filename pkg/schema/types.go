@@ -57,6 +57,15 @@ type Framework struct {
 	Version string `yaml:"version" json:"version"`
 	Source  string `yaml:"source" json:"source"` // URL to authoritative source
 
+	// AssessmentType indicates how this framework is assessed.
+	// Values: "self" (annual self-assessment), "c3pao" (third-party assessor),
+	// "dcsa" (government-led by Defense Counterintelligence and Security Agency).
+	AssessmentType string `yaml:"assessment_type,omitempty" json:"assessment_type,omitempty"`
+
+	// AssessmentCycle is how often re-assessment is required.
+	// Values: "annual", "triennial", "event" (triggered by significant change).
+	AssessmentCycle string `yaml:"assessment_cycle,omitempty" json:"assessment_cycle,omitempty"`
+
 	// ArtifactReports lists the Artifact report series relevant to this
 	// framework (e.g., SOC 2 Type II, ISO 27001 cert).
 	ArtifactReports []ArtifactReportRef `yaml:"artifact_reports" json:"artifact_reports"`

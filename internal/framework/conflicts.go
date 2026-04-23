@@ -138,6 +138,42 @@ func DetectConflicts(frameworks []*schema.Framework) []Conflict {
 		})
 	}
 
+	// CMMC Level 3 without Level 2 (nist-800-171-r2): Level 3 is a delta framework.
+	// Without Level 2, the 110 foundational Level 2 practices are unenforced.
+	if has("cmmc-level-3") && !has("nist-800-171-r2") {
+		conflicts = append(conflicts, Conflict{
+			Type:       "contradiction",
+			Severity:   "blocking",
+			Frameworks: []string{"cmmc-level-3"},
+			ControlIDs: []string{"AC.L3-3.1.1e", "SI.L3-3.14.1e"},
+			Description: "cmmc-level-3 is a delta framework containing only the 24 enhanced practices " +
+				"from NIST SP 800-172 that are specific to the CMMC Level 3 baseline. " +
+				"It requires nist-800-171-r2 (CMMC Level 2 — 110 practices) to be active for complete " +
+				"Level 3 coverage. Activating cmmc-level-3 alone leaves all 110 Level 2 practices unenforced.",
+			Resolution: "Activate nist-800-171-r2 alongside cmmc-level-3: " +
+				"`attest frameworks activate nist-800-171-r2 cmmc-level-3`. " +
+				"Together they cover all 134 CMMC Level 3 practices.",
+		})
+	}
+
+	// CMMC Level 1 note: Level 1 is a standalone framework (15 practices from FAR 52.204-21).
+	// It is a subset of Level 2 (nist-800-171-r2). If both are active, note the redundancy.
+	if has("cmmc-level-1") && has("nist-800-171-r2") {
+		conflicts = append(conflicts, Conflict{
+			Type:       "info",
+			Severity:   "info",
+			Frameworks: []string{"cmmc-level-1", "nist-800-171-r2"},
+			ControlIDs: []string{"AC.L1-3.1.1", "IA.L1-3.5.2"},
+			Description: "cmmc-level-1 (15 FAR 52.204-21 practices) is a strict subset of " +
+				"nist-800-171-r2 (CMMC Level 2, 110 practices). Activating both is valid for " +
+				"organizations that want Level 1 status tracking within a Level 2 program, " +
+				"but the merged SCP compiler will deduplicate all shared conditions.",
+			Resolution: "No action required. Activating both adds zero SCP budget cost for the " +
+				"Level 1 practices already covered by Level 2. Level 1 self-assessment reporting " +
+				"via `attest generate sprs --level 1` will use only the 15 Level 1 practices.",
+		})
+	}
+
 	// FedRAMP High without FedRAMP Moderate: fedramp-high is a delta framework
 	// that only covers controls beyond Moderate; activating High alone leaves a
 	// significant coverage gap across AC, AU, CM, IA, SC, and SI families.

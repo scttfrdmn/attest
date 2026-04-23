@@ -1,0 +1,556 @@
+id: cmmc-level-1
+name: CMMC Level 1 — Foundational (FAR 52.204-21)
+version: '2.0 (32 CFR Part 170, effective Dec 2024)'
+assessment_type: self
+assessment_cycle: annual
+source: https://dodcio.defense.gov/CMMC/
+
+# CMMC Level 1 — Foundational Cyber Hygiene
+# 15 practices from FAR 52.204-21 required to protect Federal Contract Information (FCI).
+# Annual self-assessment with results submitted to SPRS (Supplier Performance Risk System)
+# via the Procurement Integrated Enterprise Environment (PIEE).
+#
+# Assessment: Self-assessment — no third-party assessor required at Level 1.
+# Scoring: Pass/fail on all 15 practices. No partial credit. All must be implemented.
+# SPRS submission: https://www.sprs.csd.disa.mil/ (login required via PIEE/CAC)
+# Deadline: Prior to award of DoD contracts containing FAR 52.204-21.
+#
+# Level 1 is a STRICT SUBSET of Level 2 (NIST SP 800-171 Rev 2 / nist-800-171-r2).
+# If you are pursuing CMMC Level 2 certification, activate nist-800-171-r2 instead.
+# Activating both gives you Level 1 status tracking within the larger Level 2 program.
+#
+# Control ID convention: AC.L1-3.1.1 = Access Control, Level 1, NIST 800-171 §3.1.1
+#
+# Physical Protection (PE) controls are AWS Shared Responsibility for datacenter
+# infrastructure. Customer is responsible for their own facility/office physical security.
+# These controls are assessed via attestation (annual policy review + evidence collection).
+
+controls:
+
+# --- Access Control (AC) — 4 practices ---
+
+- id: AC.L1-3.1.1
+  family: Access Control
+  title: Authorized Access Control
+  responsibility:
+    aws: IAM enforces policy-based access; Organizations SCPs provide org-wide guardrails
+    customer: Provision accounts only to authorized users; use IAM roles not shared credentials;
+      enforce least-privilege policies; review and deactivate accounts when personnel depart
+  structural:
+  - id: scp-deny-anonymous-access
+    description: Deny all access from anonymous (unauthenticated) principals
+    actions:
+    - '*'
+    conditions:
+    - aws:PrincipalType == Anonymous
+    effect: Deny
+  - id: scp-require-org-principals
+    description: Restrict FCI-scope actions to principals within the organization
+    actions:
+    - s3:PutObject
+    - s3:GetObject
+    conditions:
+    - aws:PrincipalOrgID == ''
+    effect: Deny
+  operational:
+  - id: cedar-authorized-access
+    description: Access to FCI requires current authorization status
+    entities: [principal, resource]
+    attributes:
+      principal: [authorization_current, account_status]
+      resource: [data_classification]
+  monitoring:
+  - id: config-no-shared-credentials
+    resource_type: AWS::IAM::User
+    check: No IAM users with shared access keys; use IAM roles for service access
+  - id: config-inactive-accounts
+    resource_type: AWS::IAM::User
+    check: No IAM users with console access inactive for more than 90 days
+  assessment:
+    objectives:
+    - id: AC.L1-3.1.1[a]
+      description: Authorized users of the system are identified
+      auto_assessable: false
+      evidence_source: manual
+    - id: AC.L1-3.1.1[b]
+      description: Processes acting on behalf of authorized users are identified
+      auto_assessable: true
+      evidence_source: scp
+    - id: AC.L1-3.1.1[c]
+      description: Devices (and other systems) authorized to connect to the system are identified
+      auto_assessable: true
+      evidence_source: config
+    - id: AC.L1-3.1.1[d]
+      description: System access is limited to authorized users, processes, and devices
+      auto_assessable: true
+      evidence_source: scp
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: AC.L1-3.1.2
+  family: Access Control
+  title: Transaction and Function Control
+  responsibility:
+    aws: IAM permission boundaries and resource policies restrict API action types
+    customer: Define and enforce which transaction types each role may perform;
+      deny excessive permissions; review policy changes via CloudTrail
+  structural:
+  - id: scp-deny-admin-star
+    description: Deny wildcard admin actions outside designated admin paths
+    actions:
+    - iam:*
+    conditions:
+    - aws:PrincipalOrgPaths != /*/admin/*
+    effect: Deny
+  - id: scp-restrict-unused-services
+    description: Deny access to AWS services not authorized for FCI processing
+    actions:
+    - aws-marketplace:*
+    conditions:
+    - aws:PrincipalOrgPaths != /*/admin/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AC.L1-3.1.2[a]
+      description: Types of transactions and functions authorized users are permitted to execute are defined
+      auto_assessable: false
+      evidence_source: manual
+    - id: AC.L1-3.1.2[b]
+      description: Authorized users are limited to the types of transactions and functions permitted
+      auto_assessable: true
+      evidence_source: scp
+
+- id: AC.L1-3.1.20
+  family: Access Control
+  title: External Connections
+  responsibility:
+    aws: VPC provides network isolation; Direct Connect/VPN for private connectivity;
+      PrivateLink for private AWS service access
+    customer: Identify and document all external system connections; verify connections
+      are authorized; prohibit unauthorized external connections via SCPs and security groups
+  structural:
+  - id: scp-deny-unapproved-regions
+    description: Limit system operations to approved AWS regions (data residency boundary)
+    actions:
+    - '*'
+    conditions:
+    - aws:RequestedRegion not in [us-east-1, us-east-2, us-west-1, us-west-2]
+    effect: Deny
+  monitoring:
+  - id: config-vpc-peering-approved
+    resource_type: AWS::EC2::VPCPeeringConnection
+    check: All VPC peering connections are to approved accounts and VPCs
+  - id: config-transit-gateway-approved
+    resource_type: AWS::EC2::TransitGateway
+    check: Transit gateway attachments limited to organizational accounts
+  - id: config-no-internet-gateway-private
+    resource_type: AWS::EC2::InternetGateway
+    check: Private subnets hosting FCI do not have direct internet gateway routes
+  assessment:
+    objectives:
+    - id: AC.L1-3.1.20[a]
+      description: External systems with authorized connections to organizational systems are identified
+      auto_assessable: false
+      evidence_source: manual
+    - id: AC.L1-3.1.20[b]
+      description: Connections to external systems are verified and monitored
+      auto_assessable: true
+      evidence_source: config
+
+- id: AC.L1-3.1.22
+  family: Access Control
+  title: Control Public Information
+  responsibility:
+    aws: S3 Block Public Access, CloudFront origin policies, API Gateway authorizers
+    customer: Review information before posting to publicly accessible systems;
+      prohibit FCI from public repositories, public S3 buckets, public web services
+  structural:
+  - id: scp-block-s3-public-access
+    description: Block S3 public access at the organization account level
+    actions:
+    - s3:PutBucketPublicAccessBlock
+    conditions:
+    - s3:PublicAccessBlockAmazonS3 != true
+    effect: Deny
+  - id: scp-deny-public-acls
+    description: Deny S3 PutBucketAcl that would make a bucket or object public
+    actions:
+    - s3:PutBucketAcl
+    - s3:PutObjectAcl
+    conditions:
+    - s3:x-amz-acl == public-read
+    effect: Deny
+  monitoring:
+  - id: config-s3-no-public-buckets
+    resource_type: AWS::S3::Bucket
+    check: No S3 buckets have public access enabled; S3 Block Public Access active
+  assessment:
+    objectives:
+    - id: AC.L1-3.1.22[a]
+      description: Individuals authorized to post information to publicly accessible systems are identified
+      auto_assessable: false
+      evidence_source: manual
+    - id: AC.L1-3.1.22[b]
+      description: FCI is not posted to publicly accessible systems
+      auto_assessable: true
+      evidence_source: scp
+
+# --- Identification and Authentication (IA) — 2 practices ---
+
+- id: IA.L1-3.5.1
+  family: Identification and Authentication
+  title: User Identification
+  responsibility:
+    aws: IAM provides unique user identity for every principal; no anonymous access
+    customer: Assign unique identifiers to all users; prohibit shared accounts;
+      use unique IAM roles for automated processes
+  monitoring:
+  - id: config-iam-no-shared-accounts
+    resource_type: AWS::IAM::User
+    check: No shared service accounts; all users uniquely identified with distinct credentials
+  - id: config-no-root-access-keys
+    resource_type: AWS::IAM::AccessKey
+    check: Root account has no active access keys
+  assessment:
+    objectives:
+    - id: IA.L1-3.5.1[a]
+      description: The identity of each user of the system is authenticated or verified
+      auto_assessable: false
+      evidence_source: manual
+    - id: IA.L1-3.5.1[b]
+      description: Processes acting on behalf of users are uniquely identified and authenticated
+      auto_assessable: true
+      evidence_source: config
+
+- id: IA.L1-3.5.2
+  family: Identification and Authentication
+  title: User Authentication
+  responsibility:
+    aws: IAM supports MFA for console and API; STS provides short-lived credentials
+    customer: Enforce MFA for all human users; use IAM roles with STS for services;
+      prohibit long-lived static credentials for human access
+  structural:
+  - id: scp-require-mfa
+    description: Deny all console/API actions from IAM users without MFA
+    actions:
+    - '*'
+    conditions:
+    - aws:MultiFactorAuthPresent != true
+    - aws:PrincipalType == IAMUser
+    effect: Deny
+  monitoring:
+  - id: config-iam-mfa-enabled
+    resource_type: AWS::IAM::User
+    check: All IAM users with console access have MFA device enrolled
+  assessment:
+    objectives:
+    - id: IA.L1-3.5.2[a]
+      description: The identity of each user accessing the system is authenticated
+      auto_assessable: true
+      evidence_source: scp
+    - id: IA.L1-3.5.2[b]
+      description: Authenticators are managed and protected from disclosure
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Media Protection (MP) — 1 practice ---
+# AWS is responsible for physical media destruction at datacenter retirement.
+# Customer is responsible for sanitization of data on digital media they control.
+
+- id: MP.L1-3.8.3
+  family: Media Protection
+  title: Media Sanitization and Disposal
+  responsibility:
+    aws: AWS physically destroys storage media per NIST SP 800-88 when decommissioned;
+      this is covered by the AWS SOC 2 Type II report
+    customer: Sanitize or destroy digital media (EBS snapshots, S3 objects, EFS data,
+      RDS backups) containing FCI before deletion or transfer; document the process;
+      use AWS encryption with CMK deletion for cryptographic erasure
+  operational:
+  - id: cedar-media-sanitization-policy
+    description: Environments with FCI must have a documented media sanitization policy
+    entities: [environment]
+    attributes:
+      environment: [media_sanitization_policy_current, fci_data_present]
+    admin_dependencies:
+    - control_id: MP.L1-3.8.3
+      attribute: environment.media_sanitization_policy_current
+      consequence: Media sanitization compliance unverifiable without active policy documentation
+  assessment:
+    objectives:
+    - id: MP.L1-3.8.3[a]
+      description: FCI is sanitized or destroyed before disposal or reuse of system media
+      auto_assessable: false
+      evidence_source: manual
+    - id: MP.L1-3.8.3[b]
+      description: Media sanitization actions are documented
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+# --- Physical Protection (PE) — 4 practices ---
+# AWS datacenter physical security is covered by AWS Compliance programs (SOC 2 Type II,
+# ISO 27001, FedRAMP). These controls apply to CUSTOMER-controlled facilities (offices,
+# server rooms, co-location facilities) where FCI is accessed or processed.
+
+- id: PE.L1-3.10.1
+  family: Physical Protection
+  title: Physical Access Authorizations
+  responsibility:
+    aws: AWS manages physical security for all AWS datacenter facilities; customers
+      do not have physical access to AWS infrastructure (this satisfies the AWS-side)
+    customer: Limit physical access to your own offices, server rooms, and network
+      equipment to authorized personnel only; maintain access authorization lists;
+      use badge/keycard access systems; review access quarterly
+  assessment:
+    objectives:
+    - id: PE.L1-3.10.1[a]
+      description: Individuals authorized to access facilities containing system components are identified
+      auto_assessable: false
+      evidence_source: manual
+    - id: PE.L1-3.10.1[b]
+      description: Physical access to facilities is limited to authorized individuals
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: PE.L1-3.10.3
+  family: Physical Protection
+  title: Visitor Escorts
+  responsibility:
+    aws: AWS enforces visitor escort policies at all datacenter facilities
+    customer: Escort visitors in your own facilities; maintain visitor logs;
+      prohibit unescorted visitor access to areas where FCI is processed
+  assessment:
+    objectives:
+    - id: PE.L1-3.10.3[a]
+      description: Visitors are escorted and visitor activity is monitored in restricted areas
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: PE.L1-3.10.4
+  family: Physical Protection
+  title: Physical Access Logs
+  responsibility:
+    aws: AWS maintains electronic access logs for all datacenter facilities (available
+      in SOC 2 Type II report)
+    customer: Maintain audit logs of physical access to your own facilities;
+      use badge reader logs, visitor sign-in sheets, or electronic access systems;
+      retain logs for at least 90 days; review logs for anomalies
+  assessment:
+    objectives:
+    - id: PE.L1-3.10.4[a]
+      description: Audit logs of physical access are maintained
+      auto_assessable: false
+      evidence_source: manual
+    - id: PE.L1-3.10.4[b]
+      description: Physical access audit logs are reviewed to identify security incidents
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: PE.L1-3.10.5
+  family: Physical Protection
+  title: Physical Access Control Devices
+  responsibility:
+    aws: AWS manages badge/keycard systems for datacenter facilities
+    customer: Control and manage physical access devices (keycards, badges, PIN codes)
+      to your own facilities; revoke immediately upon personnel departure;
+      conduct annual inventory of access devices
+  assessment:
+    objectives:
+    - id: PE.L1-3.10.5[a]
+      description: Physical access devices are inventoried
+      auto_assessable: false
+      evidence_source: manual
+    - id: PE.L1-3.10.5[b]
+      description: Physical access devices are controlled and managed
+      auto_assessable: false
+      evidence_source: manual
+    - id: PE.L1-3.10.5[c]
+      description: Lost, stolen, or compromised physical access devices are reported and replacements issued
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+# --- System and Communications Protection (SC) — 2 practices ---
+# SC.L1-3.13.1 includes email security — email is a communications boundary.
+# DMARC/SPF/DKIM are required to prevent domain spoofing attacks against FCI.
+
+- id: SC.L1-3.13.1
+  family: System and Communications Protection
+  title: Boundary Protection
+  responsibility:
+    aws: VPC provides network isolation; Security Groups and NACLs control traffic;
+      GuardDuty monitors for threats at AWS network edges
+    customer: Monitor, control, and protect communications at external boundaries
+      including: internet perimeter, email boundaries, API endpoints, VPN connections;
+      implement DMARC/SPF/DKIM for email domain protection; configure SES with
+      spam/malware filtering; use WAF for web application boundaries
+  structural:
+  - id: scp-deny-public-resources
+    description: Deny creation of publicly accessible resources without explicit authorization
+    actions:
+    - ec2:AuthorizeSecurityGroupIngress
+    conditions:
+    - ec2:FromPort in [22, 23, 3389, 1433, 3306, 5432]
+    - aws:PrincipalOrgPaths != /*/security-admin/*
+    effect: Deny
+  monitoring:
+  - id: config-sg-no-unrestricted-inbound
+    resource_type: AWS::EC2::SecurityGroup
+    check: No security groups allow unrestricted inbound access (0.0.0.0/0) on sensitive ports
+  - id: config-vpc-flow-logs-enabled
+    resource_type: AWS::EC2::VPC
+    check: VPC flow logs enabled and delivered to centralized audit account
+  - id: config-waf-enabled
+    resource_type: AWS::WAFv2::WebACL
+    check: WAF attached to internet-facing ALBs and API Gateways
+  # Email boundary protection — DMARC/SPF/DKIM required to protect FCI from spoofing
+  - id: config-dmarc-policy
+    resource_type: AWS::Route53::RecordSet
+    check: DMARC TXT record (v=DMARC1) exists for organizational domains with p=quarantine or p=reject
+  - id: config-spf-record
+    resource_type: AWS::Route53::RecordSet
+    check: SPF TXT record (v=spf1) configured for organizational email-sending domains
+  - id: config-ses-dkim-enabled
+    resource_type: AWS::SES::EmailIdentity
+    check: DKIM signing enabled on all SES sending identities for organizational domains
+  assessment:
+    objectives:
+    - id: SC.L1-3.13.1[a]
+      description: External and internal organizational communications are monitored
+      auto_assessable: true
+      evidence_source: config
+    - id: SC.L1-3.13.1[b]
+      description: External and internal communications are controlled at boundaries
+      auto_assessable: true
+      evidence_source: scp
+    - id: SC.L1-3.13.1[c]
+      description: External and internal communications are protected at boundaries
+      auto_assessable: true
+      evidence_source: config
+    - id: SC.L1-3.13.1[d]
+      description: Email domain spoofing prevented via DMARC/SPF/DKIM
+      auto_assessable: true
+      evidence_source: config
+
+- id: SC.L1-3.13.5
+  family: System and Communications Protection
+  title: Public-Access System Separation
+  responsibility:
+    aws: VPC enables public/private subnet architecture; NACLs enforce subnet boundaries
+    customer: Implement subnetworks (public/private subnets, DMZ) to segregate
+      publicly accessible components from systems processing FCI; FCI systems must
+      reside in private subnets with no direct internet gateway routes
+  structural:
+  - id: scp-deny-direct-internet-access
+    description: Deny creation of routes that bypass NAT for FCI-tagged resources
+    actions:
+    - ec2:CreateRoute
+    conditions:
+    - ec2:RouteTableId != ''
+    - ec2:GatewayId contains igw-
+    - aws:RequestTag/attest:data-class == FCI
+    effect: Deny
+  monitoring:
+  - id: config-fci-instances-private-subnets
+    resource_type: AWS::EC2::Instance
+    check: EC2 instances tagged attest:data-class=FCI are in private subnets only
+  - id: config-private-subnet-no-igw
+    resource_type: AWS::EC2::Subnet
+    check: Private subnets have no routes to internet gateways; use NAT gateway
+  assessment:
+    objectives:
+    - id: SC.L1-3.13.5[a]
+      description: Publicly accessible system components are identified
+      auto_assessable: false
+      evidence_source: manual
+    - id: SC.L1-3.13.5[b]
+      description: System components processing FCI are separated from public-access components
+      auto_assessable: true
+      evidence_source: config
+
+# --- System and Information Integrity (SI) — 2 practices ---
+
+- id: SI.L1-3.14.1
+  family: System and Information Integrity
+  title: Flaw Remediation
+  responsibility:
+    aws: AWS manages patching for fully managed services (RDS, Lambda, EKS managed nodes,
+      ECR base images); AWS provides Security Bulletins for disclosed vulnerabilities
+    customer: Identify, report, and correct information system flaws in a timely manner;
+      use SSM Patch Manager for EC2; track CVEs via Amazon Inspector; remediate
+      critical findings within 30 days, high within 60 days
+  monitoring:
+  - id: config-ssm-patch-compliance
+    resource_type: AWS::SSM::PatchCompliance
+    check: All EC2 instances compliant with patch baseline; no critical patches missing
+  - id: config-inspector-critical-findings
+    resource_type: AWS::Inspector2::Finding
+    check: No critical Inspector findings older than 30 days; no high older than 60 days
+  assessment:
+    objectives:
+    - id: SI.L1-3.14.1[a]
+      description: System flaws are identified and reported in a timely manner
+      auto_assessable: true
+      evidence_source: config
+    - id: SI.L1-3.14.1[b]
+      description: Flaws are corrected in a timely manner
+      auto_assessable: true
+      evidence_source: config
+    - id: SI.L1-3.14.1[c]
+      description: Security alerts, advisories, and directives are addressed in a timely manner
+      auto_assessable: false
+      evidence_source: manual
+
+- id: SI.L1-3.14.2
+  family: System and Information Integrity
+  title: Malicious Code Protection
+  responsibility:
+    aws: Amazon GuardDuty provides threat detection; Inspector scans for CVEs;
+      Macie identifies sensitive data; ECR scans container images for vulnerabilities
+    customer: Deploy malicious code protection at appropriate locations: EC2 endpoints,
+      email gateways (SES receipt filters), S3 object scanning; update signatures
+      continuously; configure GuardDuty malware protection for EC2 and S3
+  monitoring:
+  - id: config-guardduty-enabled
+    resource_type: AWS::GuardDuty::Detector
+    check: GuardDuty enabled in all regions; malware protection enabled for EC2 and S3
+  - id: config-guardduty-malware-protection
+    resource_type: AWS::GuardDuty::Detector
+    check: GuardDuty malware protection enabled for on-demand EC2 scanning
+  # Email malware protection — email is the primary malware delivery vector
+  - id: config-ses-receipt-filter
+    resource_type: AWS::SES::ReceiptRuleSet
+    check: SES receipt rule sets include spam and malware filtering actions
+  assessment:
+    objectives:
+    - id: SI.L1-3.14.2[a]
+      description: Malicious code protection is employed at appropriate locations within systems
+      auto_assessable: true
+      evidence_source: config
+    - id: SI.L1-3.14.2[b]
+      description: Malicious code protection mechanisms are updated when new releases are available
+      auto_assessable: true
+      evidence_source: config
+    - id: SI.L1-3.14.2[c]
+      description: Periodic scans of the system and real-time scans of files from external sources are performed
+      auto_assessable: true
+      evidence_source: config
+    - id: SI.L1-3.14.2[d]
+      description: Email attachments and links scanned for malicious code
+      auto_assessable: true
+      evidence_source: config

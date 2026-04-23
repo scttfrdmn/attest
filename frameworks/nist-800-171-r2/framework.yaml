@@ -1971,6 +1971,17 @@ controls:
   - id: config-vpc-flow-logs-enabled
     resource_type: AWS::EC2::VPC
     check: Flow logs enabled and delivered to centralized audit
+  # Email is a communications boundary — DMARC/SPF/DKIM protect organizational domains
+  # from spoofing attacks that deliver malicious content to personnel handling CUI.
+  - id: config-dmarc-policy
+    resource_type: AWS::Route53::RecordSet
+    check: DMARC TXT record (v=DMARC1) exists for organizational domains with p=quarantine or p=reject
+  - id: config-spf-record
+    resource_type: AWS::Route53::RecordSet
+    check: SPF TXT record (v=spf1) configured for organizational email-sending domains
+  - id: config-ses-dkim-enabled
+    resource_type: AWS::SES::EmailIdentity
+    check: DKIM signing enabled on all SES sending identities for organizational domains
 - id: 3.13.2
   family: System and Communications Protection
   title: Employ architectural designs, software development techniques, and systems
@@ -2323,14 +2334,22 @@ controls:
     resource_type: AWS::GuardDuty::Detector
     check: GuardDuty Malware Protection enabled
     remediation: Enable GuardDuty Malware Protection in GuardDuty settings
+  # Email is the primary malware delivery vector — SES receipt filtering required
+  - id: config-ses-receipt-filter
+    resource_type: AWS::SES::ReceiptRuleSet
+    check: SES receipt rule sets include spam and malware filtering actions for inbound email
   assessment:
     objectives:
     - id: 3.14.2[a]
-      description: Malicious code protection mechanisms are implemented
+      description: Malicious code protection mechanisms are implemented at appropriate locations
       auto_assessable: true
       evidence_source: config
     - id: 3.14.2[b]
       description: Malicious code protection is updated when new releases are available
+      auto_assessable: true
+      evidence_source: config
+    - id: 3.14.2[c]
+      description: Email attachments scanned for malicious code before delivery
       auto_assessable: true
       evidence_source: config
 - id: 3.14.3

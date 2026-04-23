@@ -169,6 +169,68 @@ func TestFormatConflicts_NonEmpty(t *testing.T) {
 	}
 }
 
+func TestDetectConflicts_CMMCLevel3WithoutLevel2_Blocking(t *testing.T) {
+	// Two frameworks needed to pass the len < 2 early return; hipaa is neutral.
+	fws := []*schema.Framework{
+		{ID: "cmmc-level-3", Controls: []schema.Control{{ID: "AC.L3-3.1.1e", Title: "Dual Authorization"}}},
+		{ID: "hipaa", Controls: []schema.Control{{ID: "164.312", Title: "Technical safeguards"}}},
+	}
+	conflicts := DetectConflicts(fws)
+	if len(conflicts) == 0 {
+		t.Error("expected blocking conflict when cmmc-level-3 active without nist-800-171-r2")
+	}
+	var found bool
+	for _, c := range conflicts {
+		if c.Severity == "blocking" {
+			for _, fw := range c.Frameworks {
+				if fw == "cmmc-level-3" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a blocking conflict referencing cmmc-level-3")
+	}
+}
+
+func TestDetectConflicts_CMMCLevel3WithLevel2_NoBlock(t *testing.T) {
+	fws := []*schema.Framework{
+		{ID: "nist-800-171-r2", Controls: []schema.Control{{ID: "3.1.1", Title: "Access control"}}},
+		{ID: "cmmc-level-3", Controls: []schema.Control{{ID: "AC.L3-3.1.1e", Title: "Dual Authorization"}}},
+	}
+	conflicts := DetectConflicts(fws)
+	for _, c := range conflicts {
+		if c.Severity == "blocking" {
+			t.Errorf("unexpected blocking conflict when both nist-800-171-r2 and cmmc-level-3 active: %v", c)
+		}
+	}
+}
+
+func TestDetectConflicts_CMMCLevel1WithLevel2_InfoOnly(t *testing.T) {
+	fws := []*schema.Framework{
+		{ID: "cmmc-level-1", Controls: []schema.Control{{ID: "AC.L1-3.1.1", Title: "Authorized access"}}},
+		{ID: "nist-800-171-r2", Controls: []schema.Control{{ID: "3.1.1", Title: "Access control"}}},
+	}
+	conflicts := DetectConflicts(fws)
+	foundInfo := false
+	for _, c := range conflicts {
+		if c.Severity == "blocking" {
+			t.Errorf("unexpected blocking conflict for cmmc-level-1 + nist-800-171-r2: %v", c)
+		}
+		if c.Severity == "info" {
+			for _, fw := range c.Frameworks {
+				if fw == "cmmc-level-1" || fw == "nist-800-171-r2" {
+					foundInfo = true
+				}
+			}
+		}
+	}
+	if !foundInfo {
+		t.Error("expected an info conflict noting Level 1 is subset of Level 2")
+	}
+}
+
 func TestDetectConflicts_FedRAMPHighWithoutModerate(t *testing.T) {
 	fws := []*schema.Framework{
 		{ID: "fedramp-high", Controls: []schema.Control{{ID: "AU-10", Title: "Non-repudiation"}}},

@@ -56,7 +56,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.14.0"
+var version = "0.15.0"
 
 func main() {
 	root := &cobra.Command{
@@ -1321,7 +1321,7 @@ func generateCmd() *cobra.Command {
 		Use:   "generate",
 		Short: "Generate compliance documents from compiled crosswalk",
 	}
-	cmd.AddCommand(generateSSPCmd(), generatePOAMCmd(), generateAssessCmd(), generateOSCALCmd(), generateCMMCBundleCmd())
+	cmd.AddCommand(generateSSPCmd(), generatePOAMCmd(), generateAssessCmd(), generateOSCALCmd(), generateCMMCBundleCmd(), generateSPRSCmd())
 	return cmd
 }
 
@@ -1668,6 +1668,135 @@ Run 'attest compile' and 'attest scan' first to ensure the crosswalk is current.
 	}
 	cmd.Flags().String("output", "", "Output directory (default: cmmc-bundle-YYYY-MM-DD)")
 	cmd.Flags().String("assessor", "", "C3PAO organization name (optional, included in report header)")
+	return cmd
+}
+
+func generateSPRSCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "sprs",
+		Short: "Generate SPRS-compatible score report for DoD submission",
+		Long: `Generates a Supplier Performance Risk System (SPRS) score report using the
+DoD NIST 800-171 Assessment Methodology. The DoD methodology scores from 110
+(all controls implemented) downward, subtracting points for each unimplemented
+or partially implemented control.
+
+SPRS scores are submitted via the Procurement Integrated Enterprise Environment
+(PIEE) at https://piee.eb.mil/ prior to DoD contract award.
+
+Assessment types:
+  --level 1   CMMC Level 1 (15 FAR 52.204-21 practices, annual self-assessment)
+  --level 2   CMMC Level 2 (110 NIST 800-171 controls, default)
+  --level 3   CMMC Level 3 (134 controls, note: DCSA-assessed, not self-reportable)`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			level, _ := cmd.Flags().GetInt("level")
+			_, crosswalk, err := loadGenerateContext()
+			if err != nil {
+				return err
+			}
+
+			// DoD NIST 800-171 Assessment Methodology weights.
+			// Start at maximum (110 for L2, 15 for L1) and subtract for gaps/partials.
+			// High-value controls: -5 for gap, -3 for partial
+			// Standard controls: -3 for gap, -1 for partial (simplified; full weight table in 800-171A)
+			const maxScoreL2 = 110
+			const maxScoreL1 = 15
+
+			// Level 1 practice IDs (FAR 52.204-21)
+			level1Practices := map[string]bool{
+				"AC.L1-3.1.1": true, "AC.L1-3.1.2": true, "AC.L1-3.1.20": true, "AC.L1-3.1.22": true,
+				"IA.L1-3.5.1": true, "IA.L1-3.5.2": true,
+				"MP.L1-3.8.3": true,
+				"PE.L1-3.10.1": true, "PE.L1-3.10.3": true, "PE.L1-3.10.4": true, "PE.L1-3.10.5": true,
+				"SC.L1-3.13.1": true, "SC.L1-3.13.5": true,
+				"SI.L1-3.14.1": true, "SI.L1-3.14.2": true,
+			}
+			// Map Level 1 CMMC IDs to NIST 800-171 IDs for crosswalk lookup
+			level1NistMap := map[string]string{
+				"AC.L1-3.1.1": "3.1.1", "AC.L1-3.1.2": "3.1.2", "AC.L1-3.1.20": "3.1.20", "AC.L1-3.1.22": "3.1.22",
+				"IA.L1-3.5.1": "3.5.1", "IA.L1-3.5.2": "3.5.2",
+				"MP.L1-3.8.3": "3.8.3",
+				"PE.L1-3.10.1": "3.10.1", "PE.L1-3.10.3": "3.10.3", "PE.L1-3.10.4": "3.10.4", "PE.L1-3.10.5": "3.10.5",
+				"SC.L1-3.13.1": "3.13.1", "SC.L1-3.13.5": "3.13.5",
+				"SI.L1-3.14.1": "3.14.1", "SI.L1-3.14.2": "3.14.2",
+			}
+			_ = level1Practices
+
+			// Build status lookup from crosswalk.
+			statusByControl := make(map[string]string)
+			for _, e := range crosswalk.Entries {
+				if e.ControlID != "" {
+					statusByControl[e.ControlID] = e.Status
+				}
+			}
+
+			assessmentDate := time.Now().UTC().Format("2006-01-02")
+			fmt.Printf("SPRS Score Report — %s\n", assessmentDate)
+			fmt.Printf("Assessment Type: Self-Assessment\n")
+
+			switch level {
+			case 1:
+				fmt.Printf("CMMC Level:      Level 1 (FAR 52.204-21, 15 practices)\n")
+				fmt.Printf("Scoring:         Pass/fail — all 15 practices must be implemented\n\n")
+				implemented, total := 0, 0
+				for cmmcID, nistID := range level1NistMap {
+					total++
+					status := statusByControl[nistID]
+					if status == "enforced" || status == "aws_covered" {
+						implemented++
+					} else {
+						fmt.Printf("  NOT IMPLEMENTED: %s (%s) — status: %s\n", cmmcID, nistID, status)
+					}
+				}
+				fmt.Printf("\nResult: %d / %d practices implemented\n", implemented, total)
+				if implemented == total {
+					fmt.Println("SPRS Status:     PASS — eligible for annual self-assessment submission")
+				} else {
+					fmt.Printf("SPRS Status:     FAIL — %d practices not implemented; remediate before submission\n",
+						total-implemented)
+				}
+				fmt.Println("\nSubmit at: https://piee.eb.mil/ (DoD SPRS portal, CAC required)")
+
+			default: // Level 2
+				fmt.Printf("CMMC Level:      Level 2 (NIST SP 800-171 Rev 2, 110 practices)\n")
+				fmt.Printf("Scoring:         DoD methodology: start 110, subtract for gaps/partials\n\n")
+				score := maxScoreL2
+				gaps, partials := 0, 0
+				for _, e := range crosswalk.Entries {
+					switch e.Status {
+					case "gap":
+						score -= 3 // simplified: full 800-171A weights vary per control
+						gaps++
+					case "partial":
+						score -= 1
+						partials++
+					}
+				}
+				pct := float64(score) / float64(maxScoreL2) * 100
+				fmt.Printf("SPRS Score:      %d / %d (%.1f%%)\n", score, maxScoreL2, pct)
+				fmt.Printf("Controls:        Gaps: %d  Partial: %d\n", gaps, partials)
+				if score >= 88 {
+					fmt.Println("SPRS Status:     Assessment Ready — submit self-assessment to SPRS")
+				} else if score >= 55 {
+					fmt.Println("SPRS Status:     Conditional — POA&M required; run 'attest generate poam'")
+				} else {
+					fmt.Println("SPRS Status:     Not Ready — significant remediation required")
+				}
+				fmt.Println("\nNOTE: This score uses simplified per-control weights (all gaps = -3, partials = -1).")
+				fmt.Println("The official DoD NIST 800-171A methodology uses variable weights per control.")
+				fmt.Println("For a precise score, use the DoD Assessment Methodology spreadsheet:")
+				fmt.Println("  https://www.acq.osd.mil/cmmc/docs/NIST_SP-800-171_DoD_Assessment_Methodology_Version_1.2.1.pdf")
+				fmt.Println("\nSubmit at: https://piee.eb.mil/ (DoD SPRS portal, CAC required)")
+
+			case 3:
+				fmt.Println("CMMC Level 3 uses the DCSA government-led assessment process.")
+				fmt.Println("Level 3 scores are not self-reportable to SPRS.")
+				fmt.Println("Contact DCSA to initiate a Level 3 assessment.")
+				fmt.Println("  https://www.dcsa.mil/Industrial-Security/CMMC/")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().Int("level", 2, "CMMC level for SPRS scoring (1, 2, or 3)")
 	return cmd
 }
 

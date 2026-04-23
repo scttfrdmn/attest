@@ -1,0 +1,713 @@
+id: cmmc-level-3
+name: CMMC Level 3 — Expert (delta, activate with nist-800-171-r2)
+version: '2.0 (32 CFR Part 170, effective Dec 2024)'
+assessment_type: dcsa
+assessment_cycle: triennial
+source: https://dodcio.defense.gov/CMMC/
+
+# CMMC Level 3 — Expert / Enhanced Cyber Hygiene
+# 24 enhanced practices from NIST SP 800-172 (Enhanced Security Requirements for CUI).
+# DELTA FRAMEWORK: Contains ONLY the controls specific to Level 3.
+# Activate BOTH nist-800-171-r2 AND cmmc-level-3 for complete Level 3 coverage.
+#
+# Assessment: DCSA (Defense Counterintelligence and Security Agency) government-led.
+#   NOT self-assessed. NOT C3PAO. DCSA conducts the assessment triennialy.
+#   Organization must hold CMMC Level 2 certification before pursuing Level 3.
+#
+# SPRS scoring: Uses the full NIST 800-171A DoD Assessment Methodology.
+#   Base score: 110 (all Level 2 controls implemented)
+#   Level 3 additions: 24 enhanced practices (not scored by the -203 to +110 system;
+#   Level 3 is a separate DCSA determination, not an additive SPRS score)
+#
+# Target: Organizations handling CUI associated with programs critical to national security
+#   (classified SAPs, hypersonics, directed energy, space systems, etc.)
+#
+# Control ID convention: AC.L3-3.1.1e = Access Control, Level 3, 800-171 §3.1.1 enhanced
+
+controls:
+
+# --- Access Control (AC) — 3 enhanced practices ---
+
+- id: AC.L3-3.1.1e
+  family: Access Control
+  title: Dual Authorization
+  responsibility:
+    aws: IAM supports multi-person approval via approval workflows and tag-based policies
+    customer: Implement dual authorization (two-person integrity) for critical or sensitive
+      operations such as: KMS key deletion, production environment changes, privileged
+      account creation, system configuration changes
+  structural:
+  - id: scp-require-dual-approval-tag
+    description: Deny critical operations without dual-approval authorization tag
+    actions:
+    - kms:ScheduleKeyDeletion
+    - organizations:DeletePolicy
+    - cloudtrail:DeleteTrail
+    conditions:
+    - aws:RequestTag/dual-approval-authorized != true
+    - aws:PrincipalOrgPaths != /*/security-admin/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AC.L3-3.1.1e[a]
+      description: Dual authorization is implemented for critical and sensitive operations
+      auto_assessable: true
+      evidence_source: scp
+    - id: AC.L3-3.1.1e[b]
+      description: Individuals authorized to perform critical operations are identified
+      auto_assessable: false
+      evidence_source: manual
+
+- id: AC.L3-3.1.2e
+  family: Access Control
+  title: Organizationally Controlled Resources
+  responsibility:
+    aws: AWS Resource Access Manager supports organization-wide resource sharing policies
+    customer: Restrict access to organizationally controlled and owned resources;
+      deny access to non-government-cloud services for CUI; enforce that CUI
+      only flows to organizational accounts
+  structural:
+  - id: scp-restrict-to-org-resources
+    description: Deny access to resources outside the organizational account boundary
+    actions:
+    - s3:GetObject
+    - s3:PutObject
+    conditions:
+    - aws:ResourceOrgID == ''
+    - aws:PrincipalOrgPaths != /*/admin/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AC.L3-3.1.2e[a]
+      description: Access to organizationally owned or provisioned resources is restricted
+      auto_assessable: true
+      evidence_source: scp
+
+- id: AC.L3-3.1.3e
+  family: Access Control
+  title: Controlled Information Transfer
+  responsibility:
+    aws: AWS PrivateLink, VPC Endpoints, and network segmentation support controlled data flows
+    customer: Employ security safeguards including data type identifiers and validation
+      for information transfer between different security domains; prevent FCI from
+      crossing into unclassified or public domains
+  operational:
+  - id: cedar-domain-transfer-control
+    description: Information transfer between security domains requires explicit authorization
+    entities: [principal, resource]
+    attributes:
+      principal: [domain_transfer_authorized, clearance_level]
+      resource: [security_domain, data_classification]
+  assessment:
+    objectives:
+    - id: AC.L3-3.1.3e[a]
+      description: Security safeguards are employed for transfer of information between different security domains
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Awareness and Training (AT) — 2 enhanced practices ---
+# Both are administrative — no SCP/Cedar technical enforcement possible.
+
+- id: AT.L3-3.2.1e
+  family: Awareness and Training
+  title: Advanced Threat Awareness Training
+  responsibility:
+    aws: AWS provides security training resources including Security Bulletins and threat intelligence
+    customer: Provide advanced threat awareness training to individuals with elevated system
+      privileges; train on current APT tactics, techniques, and procedures (TTPs);
+      training must be role-specific and updated at least annually or when new threats emerge
+  operational:
+  - id: cedar-advanced-threat-training
+    description: Elevated-privilege users must complete current advanced threat awareness training
+    entities: [principal]
+    attributes:
+      principal: [advanced_threat_training_current, admin_level]
+    temporal:
+      condition_type: expiry
+      description: Advanced threat training expires annually; privileged access restricted until renewed
+    admin_dependencies:
+    - control_id: AT.L3-3.2.1e
+      attribute: principal.advanced_threat_training_current
+      consequence: Privileged access blocked when advanced threat training expires
+  assessment:
+    objectives:
+    - id: AT.L3-3.2.1e[a]
+      description: Advanced threat awareness training is provided to users with elevated privileges
+      auto_assessable: false
+      evidence_source: manual
+    - id: AT.L3-3.2.1e[b]
+      description: Training includes current threat information relevant to privileged roles
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: AT.L3-3.2.2e
+  family: Awareness and Training
+  title: Practical Exercises
+  responsibility:
+    aws: AWS provides phishing simulation and incident response tabletop exercise frameworks
+    customer: Conduct practical exercises (tabletop exercises, phishing simulations, red team
+      exercises) to reinforce security training for current threat scenarios;
+      exercises must be documented and results used to improve training
+  assessment:
+    objectives:
+    - id: AT.L3-3.2.2e[a]
+      description: Practical exercises are performed that reinforce security training
+      auto_assessable: false
+      evidence_source: manual
+    - id: AT.L3-3.2.2e[b]
+      description: Practical exercises include simulations of current APT techniques
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+# --- Audit and Accountability (AU) — 2 enhanced practices ---
+
+- id: AU.L3-3.3.1e
+  family: Audit and Accountability
+  title: Automated Log Correlation
+  responsibility:
+    aws: Security Hub, Detective, and CloudWatch Logs Insights support automated correlation
+    customer: Implement automated mechanisms to correlate audit log records from
+      multiple sources for real-time threat detection; deploy SIEM or equivalent;
+      correlate CloudTrail, VPC Flow Logs, GuardDuty findings, and application logs
+  monitoring:
+  - id: config-security-hub-correlation
+    resource_type: AWS::SecurityHub::Hub
+    check: Security Hub enabled with automated correlation; cross-account aggregation active
+  - id: config-detective-enabled
+    resource_type: AWS::Detective::Graph
+    check: Amazon Detective enabled for automated behavioral investigation
+  assessment:
+    objectives:
+    - id: AU.L3-3.3.1e[a]
+      description: Automated mechanisms are employed to integrate audit log review, analysis, and reporting
+      auto_assessable: true
+      evidence_source: config
+    - id: AU.L3-3.3.1e[b]
+      description: Anomalous activity detected through automated correlation
+      auto_assessable: true
+      evidence_source: config
+
+- id: AU.L3-3.3.2e
+  family: Audit and Accountability
+  title: Tamper-Proof Audit Mechanisms
+  responsibility:
+    aws: CloudTrail provides cryptographic log file integrity validation; S3 Object Lock
+      provides WORM storage; CloudTrail Lake provides immutable audit trail
+    customer: Implement tamper-proof audit recording using cryptographic protection;
+      enable CloudTrail log file validation; store logs in Object Lock WORM storage;
+      verify digest files periodically
+  structural:
+  - id: scp-immutable-audit-trail
+    description: Deny all actions that would modify or disable CloudTrail integrity validation
+    actions:
+    - cloudtrail:UpdateTrail
+    - cloudtrail:StopLogging
+    - cloudtrail:DeleteTrail
+    conditions: []
+    effect: Deny
+  - id: scp-protect-audit-storage
+    description: Deny deletion of S3 buckets storing audit logs
+    actions:
+    - s3:DeleteBucket
+    - s3:PutBucketVersioning
+    - s3:DeleteObjectVersion
+    conditions:
+    - aws:PrincipalOrgPaths != /*/security-admin/*
+    effect: Deny
+  monitoring:
+  - id: config-cloudtrail-integrity-validation
+    resource_type: AWS::CloudTrail::Trail
+    check: CloudTrail log file integrity validation enabled; digest files verified
+  assessment:
+    objectives:
+    - id: AU.L3-3.3.2e[a]
+      description: Tamper-proof mechanisms are used to record and store audit data
+      auto_assessable: true
+      evidence_source: scp
+
+# --- Configuration Management (CM) — 3 enhanced practices ---
+
+- id: CM.L3-3.4.1e
+  family: Configuration Management
+  title: Authoritative Source for Configuration
+  responsibility:
+    aws: AWS Service Catalog and Systems Manager Parameter Store provide authoritative
+      configuration repositories; AWS Config records authoritative configuration state
+    customer: Establish and maintain an authoritative source (golden AMIs, approved base
+      images, Service Catalog products) for configuration of system components;
+      all deployments must originate from approved configurations
+  monitoring:
+  - id: config-approved-ami-enforcement
+    resource_type: AWS::EC2::Instance
+    check: All EC2 instances launched from approved AMI catalog entries
+  - id: config-service-catalog-compliance
+    resource_type: AWS::ServiceCatalog::Product
+    check: Active Service Catalog portfolio with approved products for CUI workloads
+  assessment:
+    objectives:
+    - id: CM.L3-3.4.1e[a]
+      description: An authoritative source is established for approved configuration settings
+      auto_assessable: true
+      evidence_source: config
+
+- id: CM.L3-3.4.2e
+  family: Configuration Management
+  title: Automated Configuration Detection
+  responsibility:
+    aws: AWS Config continuously records resource configurations; Security Hub provides
+      compliance checks; Systems Manager State Manager enforces desired state
+    customer: Implement automated tools to detect unauthorized or misconfigured
+      components; use AWS Config Rules and conformance packs; alert on drift from
+      approved configuration baseline
+  monitoring:
+  - id: config-config-rules-active
+    resource_type: AWS::Config::ConfigRule
+    check: AWS Config conformance packs active with rules covering CUI-scope resources
+  - id: config-ssm-state-manager
+    resource_type: AWS::SSM::Association
+    check: SSM State Manager associations enforce approved configurations on EC2 instances
+  assessment:
+    objectives:
+    - id: CM.L3-3.4.2e[a]
+      description: Automated mechanisms detect unauthorized components and configuration changes
+      auto_assessable: true
+      evidence_source: config
+
+- id: CM.L3-3.4.3e
+  family: Configuration Management
+  title: Automated Inventory
+  responsibility:
+    aws: AWS Systems Manager Inventory, Config, and Resource Groups provide automated inventory
+    customer: Maintain a current, accurate, and complete inventory of all system
+      components using automated tools; use SSM Inventory for EC2; use Config for
+      all AWS resources; export to CMDB for enterprise asset management
+  monitoring:
+  - id: config-ssm-inventory-active
+    resource_type: AWS::SSM::ManagedInstance
+    check: SSM Inventory active on all EC2 instances; inventory data current within 24 hours
+  - id: config-config-recorder-all-resources
+    resource_type: AWS::Config::ConfigurationRecorder
+    check: AWS Config records all resource types; no resource types excluded from recording
+  assessment:
+    objectives:
+    - id: CM.L3-3.4.3e[a]
+      description: Automated mechanisms provide current inventory of system components
+      auto_assessable: true
+      evidence_source: config
+
+# --- Identification and Authentication (IA) — 3 enhanced practices ---
+
+- id: IA.L3-3.5.1e
+  family: Identification and Authentication
+  title: Cryptographic Authentication
+  responsibility:
+    aws: AWS IAM Roles Anywhere supports certificate-based authentication; FIPS 140-2
+      validated cryptographic modules available; STS provides cryptographically
+      signed temporary credentials
+    customer: Employ cryptographic mechanisms that resist replay attacks for all
+      network access to CUI systems; use FIPS 140-2 validated cryptographic modules;
+      implement certificate-based authentication where possible
+  structural:
+  - id: scp-require-fips-crypto
+    description: Deny network access using non-FIPS validated cryptographic mechanisms
+    actions:
+    - '*'
+    conditions:
+    - aws:SecureTransport == false
+    effect: Deny
+  assessment:
+    objectives:
+    - id: IA.L3-3.5.1e[a]
+      description: Cryptographic mechanisms that resist replay attacks are employed for network access
+      auto_assessable: true
+      evidence_source: scp
+
+- id: IA.L3-3.5.2e
+  family: Identification and Authentication
+  title: Automated Credential Management
+  responsibility:
+    aws: AWS Secrets Manager and IAM provide automated credential rotation;
+      SSM Parameter Store supports secure credential storage
+    customer: Implement automated mechanisms for credential generation, rotation,
+      and management; use Secrets Manager for automatic rotation; eliminate
+      long-lived static credentials; rotate all secrets on schedule
+  monitoring:
+  - id: config-secrets-manager-rotation
+    resource_type: AWS::SecretsManager::Secret
+    check: All secrets in Secrets Manager have automatic rotation enabled
+  - id: config-iam-no-old-access-keys
+    resource_type: AWS::IAM::AccessKey
+    check: No IAM access keys older than 90 days; use IAM roles instead of long-lived keys
+  assessment:
+    objectives:
+    - id: IA.L3-3.5.2e[a]
+      description: Automated mechanisms are employed for credential management
+      auto_assessable: true
+      evidence_source: config
+
+- id: IA.L3-3.5.3e
+  family: Identification and Authentication
+  title: Device Authentication
+  responsibility:
+    aws: AWS IoT Core, IAM Roles Anywhere, and VPC endpoint policies support
+      device-level authentication
+    customer: Prohibit connections from undetermined or unauthorized components;
+      use certificate-based device authentication; deny connections from unknown devices;
+      implement network access control for on-premises to cloud connections
+  structural:
+  - id: scp-deny-unknown-device-connections
+    description: Deny connections from components without organizational identity verification
+    actions:
+    - ec2:CreateVpnConnection
+    - directconnect:AllocatePrivateVirtualInterface
+    conditions:
+    - aws:PrincipalOrgID == ''
+    effect: Deny
+  assessment:
+    objectives:
+    - id: IA.L3-3.5.3e[a]
+      description: Connections from unknown or unauthorized devices are prohibited
+      auto_assessable: true
+      evidence_source: scp
+
+# --- Incident Response (IR) — 2 enhanced practices ---
+
+- id: IR.L3-3.6.1e
+  family: Incident Response
+  title: Security Operations Center
+  responsibility:
+    aws: AWS provides GuardDuty, Security Hub, and Detective as SOC tooling;
+      AWS Managed Security Services (MSSP) available for outsourced SOC
+    customer: Establish a Security Operations Center (SOC) with 24/7 monitoring
+      capability; implement formal incident response plan covering phases 1-6;
+      maintain IR team contacts and escalation procedures; test IR plan annually
+  operational:
+  - id: cedar-soc-active
+    description: CUI environments require active SOC monitoring with documented IR plan
+    entities: [environment]
+    attributes:
+      environment: [soc_monitoring_active, ir_plan_current, soc_contact_email]
+    admin_dependencies:
+    - control_id: IR.L3-3.6.1e
+      attribute: environment.soc_monitoring_active
+      consequence: CUI operations require active SOC; unmonitored environments out of compliance
+  assessment:
+    objectives:
+    - id: IR.L3-3.6.1e[a]
+      description: A Security Operations Center is established with 24/7 monitoring capability
+      auto_assessable: false
+      evidence_source: manual
+    - id: IR.L3-3.6.1e[b]
+      description: An incident response plan is documented, implemented, and tested
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: IR.L3-3.6.2e
+  family: Incident Response
+  title: Cyber Incident Response Team
+  responsibility:
+    aws: AWS provides 24/7 Security team contact via AWS Support (Business/Enterprise);
+      AWS CIRT available for critical incidents at Enterprise Support tier
+    customer: Establish and maintain a Cyber Incident Response Team (CIRT) with
+      documented roles, responsibilities, and contact information; CIRT must be
+      capable of responding within defined timeframes; conduct tabletop exercises
+  operational:
+  - id: cedar-cirt-assigned
+    description: CUI environments must have a CIRT team assigned and available
+    entities: [environment]
+    attributes:
+      environment: [cirt_team_assigned, cirt_response_sla_hours, cirt_contact_verified]
+  assessment:
+    objectives:
+    - id: IR.L3-3.6.2e[a]
+      description: A Cyber Incident Response Team is established with defined roles
+      auto_assessable: false
+      evidence_source: manual
+    - id: IR.L3-3.6.2e[b]
+      description: CIRT can respond to incidents within defined timeframes
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+# --- Risk Assessment (RA) — 1 enhanced practice ---
+
+- id: RA.L3-3.11.1e
+  family: Risk Assessment
+  title: Threat-Informed Risk Assessment
+  responsibility:
+    aws: AWS Threat Intelligence feeds into GuardDuty; AWS publishes Security Bulletins;
+      AWS Inspector uses NVD and vendor advisories
+    customer: Leverage threat intelligence to assess security solution effectiveness;
+      subscribe to DoD Cyber Crime Center (DC3) threat feeds; participate in ISACs;
+      use threat intelligence to prioritize risk remediation
+  monitoring:
+  - id: config-threat-intel-integration
+    resource_type: AWS::GuardDuty::ThreatIntelSet
+    check: GuardDuty configured with threat intelligence sets from authoritative sources
+  assessment:
+    objectives:
+    - id: RA.L3-3.11.1e[a]
+      description: Threat intelligence is leveraged to assess security solution effectiveness
+      auto_assessable: false
+      evidence_source: manual
+    - id: RA.L3-3.11.1e[b]
+      description: Risk assessments are informed by current threat intelligence
+      auto_assessable: true
+      evidence_source: config
+
+# --- Security Assessment (SA) — 1 enhanced practice ---
+
+- id: SA.L3-3.12.1e
+  family: Security Assessment
+  title: Plan of Action Tracking
+  responsibility:
+    aws: AWS provides Security Hub for centralized findings and POA&M tracking
+    customer: Develop Plans of Action and Milestones (POA&Ms) for all identified
+      vulnerabilities; track remediation progress; review POA&Ms with senior leadership
+      quarterly; close POA&M items when evidence collected; generate via attest poam
+  operational:
+  - id: cedar-poam-tracking-active
+    description: CUI environments must have active POA&M tracking for open findings
+    entities: [environment]
+    attributes:
+      environment: [poam_tracking_active, open_poam_count, last_poam_review]
+  monitoring:
+  - id: config-security-hub-poam
+    resource_type: AWS::SecurityHub::Finding
+    check: All high and critical Security Hub findings have associated POA&M entries
+  assessment:
+    objectives:
+    - id: SA.L3-3.12.1e[a]
+      description: Plans of action are developed for all identified vulnerabilities
+      auto_assessable: false
+      evidence_source: manual
+    - id: SA.L3-3.12.1e[b]
+      description: POA&M progress is tracked and reviewed regularly
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: quarterly
+    trigger: calendar
+
+# --- System and Communications Protection (SC) — 3 enhanced practices ---
+
+- id: SC.L3-3.13.1e
+  family: System and Communications Protection
+  title: FIPS-Validated Cryptography
+  responsibility:
+    aws: AWS GovCloud provides FIPS 140-2 validated endpoints; KMS uses HSMs validated
+      to FIPS 140-2 Level 3; ACM uses FIPS-validated algorithms
+    customer: Employ FIPS-validated cryptographic mechanisms to protect CUI in transit
+      and at rest; use FIPS endpoints for all AWS API calls; configure KMS with
+      customer-managed CMKs; enforce TLS 1.2+ with FIPS cipher suites
+  structural:
+  - id: scp-require-fips-endpoints
+    description: Enforce FIPS-validated cryptography for all CUI transmissions
+    actions:
+    - '*'
+    conditions:
+    - aws:SecureTransport == false
+    effect: Deny
+  - id: scp-require-kms-encryption
+    description: Require FIPS-validated KMS encryption for all CUI data at rest
+    actions:
+    - s3:PutObject
+    - ec2:CreateVolume
+    - rds:CreateDBInstance
+    conditions:
+    - aws:RequestedRegion in [us-east-1, us-east-2, us-west-1, us-west-2]
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SC.L3-3.13.1e[a]
+      description: FIPS-validated cryptographic mechanisms protect CUI during transmission
+      auto_assessable: true
+      evidence_source: scp
+    - id: SC.L3-3.13.1e[b]
+      description: FIPS-validated cryptographic mechanisms protect CUI at rest
+      auto_assessable: true
+      evidence_source: scp
+
+- id: SC.L3-3.13.2e
+  family: System and Communications Protection
+  title: Remote Collaborative Device Control
+  responsibility:
+    aws: AWS WorkSpaces and Chime support controlled collaboration with audit trails
+    customer: Prohibit remote activation of collaborative computing devices (cameras,
+      microphones, screen sharing) in sensitive areas; provide users with indication
+      of use; enforce via endpoint management for physical devices
+  structural:
+  - id: scp-restrict-chime-activate
+    description: Deny activation of remote collaboration features in sensitive accounts
+    actions:
+    - chime:CreateMeeting
+    - chime:CreateAttendee
+    conditions:
+    - aws:PrincipalTag/sensitivity-level == high
+    - aws:PrincipalOrgPaths != /*/collaboration-authorized/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SC.L3-3.13.2e[a]
+      description: Remote activation of collaborative computing devices is prohibited in sensitive areas
+      auto_assessable: true
+      evidence_source: scp
+    - id: SC.L3-3.13.2e[b]
+      description: Users are provided indication when collaborative devices are in use
+      auto_assessable: false
+      evidence_source: manual
+
+- id: SC.L3-3.13.3e
+  family: System and Communications Protection
+  title: Domain Isolation
+  responsibility:
+    aws: VPC, Transit Gateway, and PrivateLink enable domain separation; Network
+      Firewall provides stateful inspection between domains
+    customer: Implement domain isolation to enforce information flow between
+      security domains; use separate VPCs per classification level; implement
+      Network Firewall for inter-domain traffic; consider air-gapping for highest
+      sensitivity systems
+  monitoring:
+  - id: config-vpc-domain-isolation
+    resource_type: AWS::EC2::VPC
+    check: CUI-classified VPCs are isolated from general-purpose VPCs; cross-VPC
+      traffic routed through inspection points
+  - id: config-network-firewall-active
+    resource_type: AWS::NetworkFirewall::Firewall
+    check: Network Firewall deployed for traffic between security domains
+  assessment:
+    objectives:
+    - id: SC.L3-3.13.3e[a]
+      description: Security domains are isolated from each other
+      auto_assessable: true
+      evidence_source: config
+
+# --- System and Information Integrity (SI) — 4 enhanced practices ---
+
+- id: SI.L3-3.14.1e
+  family: System and Information Integrity
+  title: Continuous System Monitoring
+  responsibility:
+    aws: Security Hub, GuardDuty, CloudWatch, and Inspector provide continuous monitoring;
+      Security Hub Consolidated Findings aggregates across services
+    customer: Deploy continuous monitoring capable of detecting attacks and indicators
+      of potential attacks in real time; implement Security Hub with all integrations
+      enabled; configure CloudWatch alarms for anomalous activity; forward findings
+      to SIEM for correlation
+  monitoring:
+  - id: config-security-hub-score
+    resource_type: AWS::SecurityHub::Hub
+    check: Security Hub Security Score above 80%; all standards enabled (CIS, FSBP, PCI)
+  - id: config-cloudwatch-anomaly-alarms
+    resource_type: AWS::CloudWatch::Alarm
+    check: CloudWatch alarms configured for anomalous API activity, login failures,
+      and privilege escalation attempts
+  assessment:
+    objectives:
+    - id: SI.L3-3.14.1e[a]
+      description: Continuous system monitoring detects attacks and indicators of potential attacks
+      auto_assessable: true
+      evidence_source: config
+    - id: SI.L3-3.14.1e[b]
+      description: Monitoring includes real-time alerting for security events
+      auto_assessable: true
+      evidence_source: config
+
+- id: SI.L3-3.14.2e
+  family: System and Information Integrity
+  title: Unauthorized Use Detection
+  responsibility:
+    aws: GuardDuty behavioral analytics detect unauthorized use patterns; IAM Access
+      Analyzer identifies unintended access; Macie identifies sensitive data exposure
+    customer: Implement mechanisms to identify and respond to unauthorized system use;
+      use GuardDuty and Security Hub; implement User and Entity Behavior Analytics
+      (UEBA) for detecting insider threats and compromised accounts
+  operational:
+  - id: cedar-anomaly-detection-active
+    description: CUI environments require active behavioral anomaly detection
+    entities: [environment]
+    attributes:
+      environment: [anomaly_detection_active, ueba_enabled, last_anomaly_review]
+  monitoring:
+  - id: config-guardduty-findings-reviewed
+    resource_type: AWS::GuardDuty::Finding
+    check: All GuardDuty findings reviewed and addressed within SLA; no unacknowledged
+      high-severity findings older than 24 hours
+  assessment:
+    objectives:
+    - id: SI.L3-3.14.2e[a]
+      description: Unauthorized system use is identified through behavioral monitoring
+      auto_assessable: true
+      evidence_source: config
+    - id: SI.L3-3.14.2e[b]
+      description: Responses to unauthorized use are implemented
+      auto_assessable: false
+      evidence_source: manual
+
+- id: SI.L3-3.14.3e
+  family: System and Information Integrity
+  title: Integrity Violation Detection
+  responsibility:
+    aws: CloudTrail with integrity validation, AWS Config with change recording,
+      and ECR image scanning detect integrity violations
+    customer: Implement real-time integrity monitoring for critical system files and
+      configurations; use CloudTrail integrity validation; use Config for configuration
+      drift; implement file integrity monitoring (FIM) on critical EC2 instances
+  monitoring:
+  - id: config-cloudtrail-integrity
+    resource_type: AWS::CloudTrail::Trail
+    check: CloudTrail log file integrity validation enabled; digest files verified daily
+  - id: config-config-drift-detection
+    resource_type: AWS::Config::ConfigRule
+    check: AWS Config rules detect configuration drift in real time; non-compliant
+      resources flagged within 1 hour
+  assessment:
+    objectives:
+    - id: SI.L3-3.14.3e[a]
+      description: Integrity violations are detected in real time
+      auto_assessable: true
+      evidence_source: config
+    - id: SI.L3-3.14.3e[b]
+      description: Rapid responses to integrity violations are implemented
+      auto_assessable: false
+      evidence_source: manual
+
+- id: SI.L3-3.14.4e
+  family: System and Information Integrity
+  title: Behavioral Malware Analysis
+  responsibility:
+    aws: GuardDuty uses ML-based behavioral analysis; Macie provides data-centric
+      threat detection; Inspector provides vulnerability assessment
+    customer: Employ advanced malware detection using behavioral analysis techniques
+      in addition to signature-based detection; configure GuardDuty malware protection;
+      deploy endpoint detection and response (EDR) with behavioral analysis on all
+      EC2 instances; scan container images in ECR
+  monitoring:
+  - id: config-guardduty-ml-enabled
+    resource_type: AWS::GuardDuty::Detector
+    check: GuardDuty enabled with ML-based threat detection; malware protection active
+      for EC2 on-demand scanning and S3 scanning
+  - id: config-ecr-image-scanning-push
+    resource_type: AWS::ECR::Repository
+    check: ECR repositories have enhanced scanning (Inspector-based) enabled on push
+  assessment:
+    objectives:
+    - id: SI.L3-3.14.4e[a]
+      description: Behavioral malware analysis is employed beyond signature-based detection
+      auto_assessable: true
+      evidence_source: config
+    - id: SI.L3-3.14.4e[b]
+      description: Advanced malware detection covers endpoints, containers, and data stores
+      auto_assessable: true
+      evidence_source: config
