@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-04-23
+
+### Added
+
+- **Cedar authorization for the attest dashboard** (closes #42, completes v0.9.0
+  milestone: Provisioning + FedRAMP + OIDC auth + LDAP principal source).
+  Every HTTP request to the OIDC-authenticated dashboard is now evaluated against
+  embedded Cedar policies before reaching a handler.
+
+  Role permissions enforced by Cedar (`internal/dashboard/policies/dashboard.cedar`):
+  | Role | Posture | Frameworks | Environments | Waivers | Incidents | Ops SSE | Generate |
+  |---|---|---|---|---|---|---|---|
+  | admin | ✓ | ✓ | ✓ all | ✓ | ✓ | ✓ | ✓ |
+  | compliance_officer | ✓ | ✓ | ✓ all | ✓ | ✓ | ✓ | ✓ |
+  | security_engineer | ✓ | ✓ | ✓ all | read | ✓ | ✓ | ✗ |
+  | pi_researcher | ✓ | ✓ | **own only** | ✗ | ✗ | ✗ | ✗ |
+  | auditor | ✓ | ✓ | ✓ all | read | read | ✗ | ✗ |
+
+- PI researcher environment scoping: `GET /api/environments` filters the response
+  to environments where `env.Owner == user.Email`. Cedar permits the route; Go
+  applies the per-record filter.
+- `NewServerWithOIDC` now returns `(*Server, error)` — Cedar policy parse failures
+  surface at startup rather than silently at first request.
+- 37 new tests in `cedar_authz_test.go`: full role×endpoint×method matrix, PI
+  environment filtering, action mapping unit tests, policy parse smoke test.
+
 ## [0.12.2] - 2026-04-23
 
 ### Security
