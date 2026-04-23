@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-04-23
+
+### Security
+
+Second-pass board-wide audit — 4 findings.
+
+- **HIGH fixed**: Prompt injection in `ai.IngestDocument()` — raw document content
+  embedded directly in Bedrock user message; a crafted document could inject
+  model instructions. Fixed by wrapping content in `<document_content>` XML
+  delimiters and adding explicit anti-injection instruction to the system prompt.
+- **HIGH fixed**: Path traversal in `--classification-scheme` CLI flag —
+  `applyClassificationScheme()` used the flag value directly in `filepath.Join`
+  without a confinement check; `../../../etc/passwd` would read arbitrary files.
+  Added `filepath.Abs` confinement identical to `framework/loader.go`.
+- **MEDIUM fixed**: Symlink TOCTOU in CMMC bundle — `generateAttestationsIndex()`
+  and `generateWaiversRegister()` checked `e.Info()` for symlinks from `os.ReadDir`
+  then called `os.ReadFile` separately, leaving a race window. Replaced with
+  `os.Lstat()` immediately before each `os.ReadFile` call.
+- **MEDIUM fixed**: Check-then-act race in `multisre.Add()` — `Load→check→Save`
+  executed without a lock; concurrent calls could both pass the duplicate-ID check.
+  Added `sync.Mutex` to `Manager`; `Add()` and `Remove()` hold the lock for their
+  full critical section.
+
 ## [0.12.1] - 2026-04-23
 
 ### Security
