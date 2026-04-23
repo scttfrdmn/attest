@@ -173,6 +173,28 @@ type AssessmentObjective struct {
 	// "scp" = structural policy exists, "cedar" = operational evaluation logs,
 	// "config" = Config rule compliance, "manual" = human attestation required.
 	EvidenceSource string `yaml:"evidence_source" json:"evidence_source"`
+
+	// MaturityLevel is the NIST 800-171A assessment maturity level (1–3).
+	// L1 = Remedial (basic documentation), L2 = Managed (partially verified),
+	// L3 = Defined (fully documented and verified, required for CMMC Level 2 full credit).
+	// Zero means not yet assessed.
+	MaturityLevel int `yaml:"maturity_level,omitempty" json:"maturity_level,omitempty"`
+}
+
+// C3PAOEngagement tracks a formal CMMC C3PAO assessment engagement.
+type C3PAOEngagement struct {
+	ID             string    `yaml:"id" json:"id"`                           // e.g., "ASSESS-2026-Q2"
+	C3PAOOrg       string    `yaml:"c3pao_org" json:"c3pao_org"`              // e.g., "Vanta Security"
+	LeadAssessor   string    `yaml:"lead_assessor" json:"lead_assessor"`
+	AssessorTeam   []string  `yaml:"assessor_team,omitempty" json:"assessor_team,omitempty"`
+	FrameworkID    string    `yaml:"framework_id" json:"framework_id"`        // "nist-800-171-r2"
+	WindowStart    time.Time `yaml:"window_start" json:"window_start"`
+	WindowEnd      time.Time `yaml:"window_end" json:"window_end"`
+	Status         string    `yaml:"status" json:"status"`                    // "scheduled","active","closed"
+	SPRSScore      int       `yaml:"sprs_score,omitempty" json:"sprs_score,omitempty"`
+	SPRSSubmitted  time.Time `yaml:"sprs_submitted,omitempty" json:"sprs_submitted,omitempty"`
+	Notes          string    `yaml:"notes,omitempty" json:"notes,omitempty"`
+	CreatedAt      time.Time `yaml:"created_at" json:"created_at"`
 }
 
 // --- Crosswalk and Posture ---

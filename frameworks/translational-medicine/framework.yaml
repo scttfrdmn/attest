@@ -1,0 +1,396 @@
+id: translational-medicine
+name: Translational Medicine — Clinical Research Data Compliance
+version: '2026 (21 CFR Part 11, HIPAA, NIH DMS, ClinicalTrials.gov, IRB)'
+assessment_type: self
+assessment_cycle: annual
+source: https://www.fda.gov/regulatory-information/search-fda-guidance-documents/part-11-electronic-records-electronic-signatures-scope-and-application
+
+# Translational Medicine — Clinical Research Data Compliance Framework
+#
+# Translational medicine ("bench to bedside") research combines:
+#   - Laboratory/preclinical research (CUI, IP)
+#   - Human subjects research (PHI, IRB-protected)
+#   - Clinical trials (FDA-regulated, 21 CFR Part 11)
+#   - Health informatics (EHR data, real-world evidence)
+#
+# This framework covers requirements BEYOND standard HIPAA (hipaa framework):
+#   21 CFR Part 11    — FDA electronic records for IND/IDE clinical trials
+#   IRB Compliance    — Institutional Review Board human subjects protections
+#   ClinicalTrials.gov — NIH mandatory registration and results reporting
+#   De-identification  — HIPAA Safe Harbor vs Expert Determination methods
+#   CTSA              — Clinical and Translational Science Award data sharing
+#   Common Rule       — 45 CFR Part 46 human subjects protections
+#
+# Activate alongside hipaa and nist-800-171-r2 for complete translational research coverage.
+# Activate alongside nih-research-security for full NIH-funded research compliance.
+#
+# Note: 21 CFR Part 11 applies ONLY to FDA-regulated studies (IND/IDE studies,
+# PMA submissions). NIH-only behavioral studies typically do not require Part 11.
+
+controls:
+
+# --- 21 CFR Part 11 Electronic Records ---
+
+- id: CFR11.10a
+  family: Electronic Records
+  title: System Validation for Electronic Records
+  responsibility:
+    aws: AWS provides validated infrastructure; customers must validate their applications
+    customer: Validate all systems used to create, modify, maintain, archive, or transmit
+      FDA-regulated electronic records; validation documentation must demonstrate
+      accuracy, reliability, and consistent performance; maintain validation records
+      for the lifetime of the study plus 2 years
+  monitoring:
+  - id: config-cloudwatch-validation-logs
+    resource_type: AWS::CloudWatch::LogGroup
+    check: Application validation logs retained for study duration + 2 years
+  assessment:
+    objectives:
+    - id: CFR11.10a[a]
+      description: Systems used for FDA-regulated records are formally validated
+      auto_assessable: false
+      evidence_source: manual
+    - id: CFR11.10a[b]
+      description: Validation documentation is current and retained
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: CFR11.10b
+  family: Electronic Records
+  title: Audit Trail for Regulated Electronic Records
+  responsibility:
+    aws: CloudTrail provides API-level audit logs; DynamoDB and RDS provide row-level
+      audit capabilities; S3 Object Lock enables tamper-evident storage
+    customer: Implement audit trails for all regulated electronic records; audit trails
+      must capture: operator ID, date/time of entry, and prior value; audit trails
+      must be computer-generated (not user-modifiable); retain audit trails per study
+  structural:
+  - id: scp-protect-clinical-audit-trail
+    description: Protect CloudTrail and application audit logs from modification
+    actions:
+    - cloudtrail:DeleteTrail
+    - cloudtrail:UpdateTrail
+    - cloudtrail:StopLogging
+    conditions: []
+    effect: Deny
+  monitoring:
+  - id: config-cloudtrail-clinical-enabled
+    resource_type: AWS::CloudTrail::Trail
+    check: CloudTrail with integrity validation enabled for clinical trial systems
+  - id: config-rds-audit-logging
+    resource_type: AWS::RDS::DBInstance
+    check: RDS audit logging enabled for databases storing regulated clinical records
+  assessment:
+    objectives:
+    - id: CFR11.10b[a]
+      description: Computer-generated audit trails capture required fields for regulated records
+      auto_assessable: true
+      evidence_source: scp
+    - id: CFR11.10b[b]
+      description: Audit trails cannot be modified or deleted by regular users
+      auto_assessable: true
+      evidence_source: config
+
+- id: CFR11.10c
+  family: Electronic Records
+  title: Record Protection and Retention
+  responsibility:
+    aws: S3 Object Lock provides WORM storage; Glacier provides long-term archival;
+      KMS provides encryption; Cross-Region Replication provides disaster recovery
+    customer: Protect records from unauthorized alteration or destruction; maintain
+      accurate copies of records in readable form; store original and copies at
+      separate locations; encrypt per FIPS 140 standards
+  structural:
+  - id: scp-protect-clinical-records
+    description: Deny deletion of S3 buckets and objects containing regulated clinical records
+    actions:
+    - s3:DeleteBucket
+    - s3:DeleteObject
+    - s3:DeleteObjectVersion
+    conditions:
+    - aws:PrincipalOrgPaths != /*/security-admin/*
+    effect: Deny
+  monitoring:
+  - id: config-s3-object-lock-clinical
+    resource_type: AWS::S3::Bucket
+    check: S3 buckets containing regulated clinical records have Object Lock (WORM) enabled
+  assessment:
+    objectives:
+    - id: CFR11.10c[a]
+      description: Regulated records are protected from unauthorized alteration or destruction
+      auto_assessable: true
+      evidence_source: scp
+    - id: CFR11.10c[b]
+      description: Records are retained for required period (study duration + 2 years minimum)
+      auto_assessable: true
+      evidence_source: config
+
+- id: CFR11.10d
+  family: Electronic Records
+  title: Access Controls for Regulated Systems
+  responsibility:
+    aws: IAM provides granular access control; MFA available for all users
+    customer: Limit system access to authorized individuals; use unique user IDs and
+      passwords; use device checks if appropriate; use other procedures to prevent
+      unauthorized use; revoke access promptly when no longer needed
+  structural:
+  - id: scp-require-mfa-clinical
+    description: MFA required for all users accessing regulated clinical data systems
+    actions:
+    - '*'
+    conditions:
+    - aws:MultiFactorAuthPresent != true
+    - aws:PrincipalType == IAMUser
+    effect: Deny
+  assessment:
+    objectives:
+    - id: CFR11.10d[a]
+      description: Access to regulated systems limited to authorized users only
+      auto_assessable: true
+      evidence_source: scp
+    - id: CFR11.10d[b]
+      description: Unique user IDs used; shared accounts prohibited
+      auto_assessable: false
+      evidence_source: manual
+
+- id: CFR11.50
+  family: Electronic Signatures
+  title: Electronic Signature Authenticity
+  responsibility:
+    aws: AWS Key Management Service and CloudHSM support cryptographic signing;
+      DocuSign and Adobe Sign integrate with AWS for compliant e-signatures
+    customer: Electronic signatures must be unique to one individual; signatures
+      must include: printed name, date/time, meaning (author, reviewer, approver);
+      link signatures to records to prevent excision, copying, or alteration
+  assessment:
+    objectives:
+    - id: CFR11.50[a]
+      description: Electronic signatures are unique to one individual and non-transferable
+      auto_assessable: false
+      evidence_source: manual
+    - id: CFR11.50[b]
+      description: Signatures include printed name, date/time, and meaning
+      auto_assessable: false
+      evidence_source: manual
+
+# --- IRB / Human Subjects Research (Common Rule — 45 CFR Part 46) ---
+
+- id: IRB.001
+  family: Human Subjects Protection
+  title: IRB Protocol Approval and Monitoring
+  responsibility:
+    aws: AWS infrastructure supports IRB-approved data management; data classification
+      tags can encode IRB protocol status for Cedar policy evaluation
+    customer: Obtain IRB approval before beginning human subjects research;
+      maintain current IRB approval throughout the study; report protocol
+      deviations and adverse events to IRB; obtain re-approval for protocol
+      amendments affecting participant risk; use attest attest create for
+      tracking IRB approval status
+  operational:
+  - id: cedar-irb-approval-current
+    description: Research environments handling human subjects data require current IRB approval
+    entities: [principal, environment]
+    attributes:
+      principal: [irb_active, irb_protocol_number, irb_approval_expiry]
+      environment: [irb_protocol_registered, human_subjects_data]
+    temporal:
+      condition_type: event
+      description: IRB approval expires annually; access restricted until renewal confirmed
+    admin_dependencies:
+    - control_id: IRB.001
+      attribute: principal.irb_active
+      consequence: Human subjects data access blocked when IRB approval lapses
+  assessment:
+    objectives:
+    - id: IRB.001[a]
+      description: IRB approval obtained before human subjects research begins
+      auto_assessable: false
+      evidence_source: manual
+    - id: IRB.001[b]
+      description: Current IRB approval maintained throughout study duration
+      auto_assessable: false
+      evidence_source: manual
+    - id: IRB.001[c]
+      description: Protocol amendments and adverse events reported to IRB promptly
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: IRB.002
+  family: Human Subjects Protection
+  title: Informed Consent Documentation and Storage
+  responsibility:
+    aws: S3 with versioning provides secure, immutable consent document storage
+    customer: Obtain and document informed consent per 45 CFR Part 46 and ICH GCP;
+      store signed consent forms for duration of study plus 3 years;
+      maintain consent form version control; obtain re-consent when protocol
+      changes affect participant risk or data use
+  monitoring:
+  - id: config-s3-consent-versioning
+    resource_type: AWS::S3::Bucket
+    check: S3 buckets containing informed consent documents have versioning enabled
+  assessment:
+    objectives:
+    - id: IRB.002[a]
+      description: Informed consent obtained from all participants per 45 CFR Part 46
+      auto_assessable: false
+      evidence_source: manual
+    - id: IRB.002[b]
+      description: Consent forms retained for required period with version control
+      auto_assessable: true
+      evidence_source: config
+
+# --- ClinicalTrials.gov Registration (NIH Policy, 42 CFR Part 11) ---
+
+- id: CTG.001
+  family: Clinical Trial Registration
+  title: ClinicalTrials.gov Registration (21-Day Requirement)
+  responsibility:
+    aws: AWS infrastructure hosts trial management systems; no direct AWS responsibility
+      for ClinicalTrials.gov registration
+    customer: Register all applicable clinical trials on ClinicalTrials.gov within
+      21 days of first participant enrollment; register before enrollment for
+      NIH-funded trials; maintain current and accurate registration; include
+      all required data elements (NCT identifier, sponsor, conditions, interventions)
+  operational:
+  - id: cedar-clinicaltrials-registered
+    description: Clinical trial environments require ClinicalTrials.gov registration
+    entities: [environment]
+    attributes:
+      environment: [nct_identifier, clinicaltrials_registered, enrollment_start_date]
+    admin_dependencies:
+    - control_id: CTG.001
+      attribute: environment.clinicaltrials_registered
+      consequence: NIH grant non-compliance; potential withholding of funding for unregistered trials
+  assessment:
+    objectives:
+    - id: CTG.001[a]
+      description: Trial registered on ClinicalTrials.gov within 21 days of first enrollment
+      auto_assessable: false
+      evidence_source: manual
+    - id: CTG.001[b]
+      description: NCT registration number documented in study records and publications
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: CTG.002
+  family: Clinical Trial Registration
+  title: Results Submission Within 12 Months
+  responsibility:
+    aws: AWS compute resources support statistical analysis for results preparation
+    customer: Submit primary results to ClinicalTrials.gov within 12 months of
+      Primary Completion Date; include: participant flow, baseline characteristics,
+      primary/secondary outcome measures, adverse events; submit summary results
+      even for negative/inconclusive trials
+  assessment:
+    objectives:
+    - id: CTG.002[a]
+      description: Primary results submitted to ClinicalTrials.gov within 12 months of PCD
+      auto_assessable: false
+      evidence_source: manual
+    - id: CTG.002[b]
+      description: All required data elements included in results submission
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+# --- HIPAA De-identification ---
+
+- id: DEIDENT.001
+  family: PHI De-identification
+  title: Safe Harbor De-identification Method
+  responsibility:
+    aws: AWS Macie can identify PHI in S3 and flag data requiring de-identification;
+      AWS Glue supports ETL pipelines for de-identification processing
+    customer: Remove all 18 HIPAA Safe Harbor identifiers before treating data as
+      de-identified: names, geographic units smaller than state, dates (except year),
+      phone, fax, email, SSN, MRN, plan numbers, account numbers, certificate numbers,
+      VINs, URLs, IP addresses, device IDs, biometric identifiers, full-face photos,
+      unique numbers; verify no residual re-identification risk
+  monitoring:
+  - id: config-macie-phi-detection
+    resource_type: AWS::Macie::Session
+    check: Macie enabled and scanning research S3 buckets for residual PHI after de-identification
+  assessment:
+    objectives:
+    - id: DEIDENT.001[a]
+      description: All 18 HIPAA Safe Harbor identifiers removed from de-identified dataset
+      auto_assessable: false
+      evidence_source: manual
+    - id: DEIDENT.001[b]
+      description: Macie scans confirm no residual PHI in de-identified datasets
+      auto_assessable: true
+      evidence_source: config
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: DEIDENT.002
+  family: PHI De-identification
+  title: Expert Determination De-identification Method
+  responsibility:
+    aws: AWS analytics services (Athena, SageMaker) support statistical re-identification
+      risk analysis; Macie provides automated PHI detection
+    customer: Engage qualified statistical expert to assess re-identification risk;
+      document expert's qualifications, methods, and conclusions; expert must determine
+      risk of identifying any individual is "very small"; document analysis and retain
+      for audit; Expert Determination allows higher data utility than Safe Harbor
+  assessment:
+    objectives:
+    - id: DEIDENT.002[a]
+      description: Qualified statistical expert engaged and qualifications documented
+      auto_assessable: false
+      evidence_source: manual
+    - id: DEIDENT.002[b]
+      description: Expert determination analysis documented and risk conclusion "very small"
+      auto_assessable: false
+      evidence_source: manual
+    - id: DEIDENT.002[c]
+      description: Expert determination documentation retained with dataset
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+# --- Multi-Site Research and Data Use Agreements ---
+
+- id: DUA.001
+  family: Multi-Site Data Sharing
+  title: Data Use Agreement Management
+  responsibility:
+    aws: AWS supports secure cross-account data sharing via RAM, S3 bucket policies,
+      and Lake Formation; cross-org data sharing logged via CloudTrail
+    customer: Execute Data Use Agreements (DUAs) before sharing identifiable research
+      data across institutions; DUAs must specify: permitted uses, data security
+      requirements, breach notification, data disposal timeline; track DUA expirations
+  operational:
+  - id: cedar-dua-current
+    description: Cross-institutional data sharing requires current executed DUA
+    entities: [principal, resource]
+    attributes:
+      principal: [dua_executed, dua_institution, dua_expiry]
+      resource: [data_classification, sharing_authorized]
+  assessment:
+    objectives:
+    - id: DUA.001[a]
+      description: Executed DUAs in place before sharing identifiable research data
+      auto_assessable: false
+      evidence_source: manual
+    - id: DUA.001[b]
+      description: DUA tracking system maintained with expiry alerts
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event

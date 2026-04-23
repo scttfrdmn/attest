@@ -1,0 +1,308 @@
+id: nist-800-171-r3
+name: NIST SP 800-171 Rev 3 (delta — activate with nist-800-171-r2)
+version: 'Rev 3 (May 2024)'
+assessment_type: self
+assessment_cycle: annual
+source: https://csrc.nist.gov/pubs/sp/800/171/r3/final
+
+# NIST SP 800-171 Revision 3 — Delta Framework
+# Published: May 2024 | Assessment Guide: NIST SP 800-171A Rev 3
+#
+# IMPORTANT: CMMC 2.0 (32 CFR Part 170, effective Dec 2024) currently references
+# Rev 2. No DoD transition timeline to Rev 3 has been announced. Activate this
+# framework ALONGSIDE nist-800-171-r2 to prepare for the eventual Rev 3 transition.
+#
+# What changed from Rev 2 to Rev 3:
+#   - 110 requirements → 97 requirements (13 consolidated, not removed)
+#   - 14 families → 17 families (3 new: PL, SA, SR)
+#   - New numbering: 03.01.01 format (zero-padded)
+#   - "Periodically" replaced with Organization-Defined Parameters (ODPs)
+#   - Basic/Derived distinction removed; all requirements now from 800-53 directly
+#   - FIPS 140-2 explicit mandate softened to "applicable standards"
+#   - 800-171A Rev 3: 509 assessment objectives (up from 422)
+#
+# This delta contains ONLY the three new families added in Rev 3.
+# nist-800-171-r2 controls that were renumbered or reworded are noted
+# in the assessment objectives but do not require additional enforcement.
+#
+# Supply Chain Risk Management (03.17) is the most operationally significant
+# new family — it formalizes the supply chain controls we implemented via
+# cosign/SLSA attestation (attest ingest cosign) and Kyverno (attest compile --kyverno).
+
+controls:
+
+# --- Planning (PL) — new in Rev 3 ---
+# These requirements formalize the security planning obligations that existed
+# implicitly in Rev 2 but are now explicit requirements.
+
+- id: 03.12.1e
+  family: Planning
+  title: System Security Plan
+  responsibility:
+    aws: AWS provides FedRAMP System Security Plans as reference documentation
+    customer: Develop, document, and periodically update a system security plan (SSP)
+      that describes the system boundary, security requirements, and the controls
+      implemented or planned; attest generate ssp produces the SSP from live state
+  operational:
+  - id: cedar-ssp-current
+    description: Environments must have a current SSP before CUI operations
+    entities: [environment]
+    attributes:
+      environment: [ssp_current, ssp_last_updated, ssp_approver]
+    temporal:
+      condition_type: event
+      description: SSP updated when significant changes occur to environment or controls
+    admin_dependencies:
+    - control_id: 03.12.1e
+      attribute: environment.ssp_current
+      consequence: CUI operations require documented SSP; run 'attest generate ssp'
+  assessment:
+    objectives:
+    - id: 03.12.1e[a]
+      description: A system security plan is developed for the system
+      auto_assessable: false
+      evidence_source: manual
+    - id: 03.12.1e[b]
+      description: The SSP describes the system boundary and authorized users
+      auto_assessable: false
+      evidence_source: manual
+    - id: 03.12.1e[c]
+      description: The SSP describes security requirements and controls implemented
+      auto_assessable: false
+      evidence_source: manual
+    - id: 03.12.1e[d]
+      description: The SSP is reviewed and updated at defined frequency or when changes occur
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: 03.12.4e
+  family: Planning
+  title: Rules of Behavior
+  responsibility:
+    aws: AWS terms of service and acceptable use policies govern AWS use
+    customer: Establish rules of behavior for all users of the system; ensure users read,
+      understand, and sign rules before accessing CUI; update rules when system or
+      organizational requirements change
+  assessment:
+    objectives:
+    - id: 03.12.4e[a]
+      description: Rules of behavior are established for system users
+      auto_assessable: false
+      evidence_source: manual
+    - id: 03.12.4e[b]
+      description: Users sign rules of behavior before accessing the system
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+# --- System and Services Acquisition (SA) — new in Rev 3 ---
+
+- id: 03.14.5e
+  family: System and Services Acquisition
+  title: Developer Security Testing and Evaluation
+  responsibility:
+    aws: AWS performs security testing per FedRAMP; penetration testing results available
+      under NDA via AWS Artifact
+    customer: Require developers of software, hardware, and systems to create and implement
+      security assessment plans; employ testing processes appropriate for the development
+      life cycle; require documentation of security test results
+  monitoring:
+  - id: config-sast-in-pipeline
+    resource_type: AWS::CodeBuild::Project
+    check: CodeBuild projects include security testing (SAST/DAST) stages
+  assessment:
+    objectives:
+    - id: 03.14.5e[a]
+      description: Security assessment plans are created and implemented for software/systems
+      auto_assessable: false
+      evidence_source: manual
+    - id: 03.14.5e[b]
+      description: Security test results are documented and made available to authorized personnel
+      auto_assessable: true
+      evidence_source: config
+
+- id: 03.14.7e
+  family: System and Services Acquisition
+  title: Supply Chain Protection
+  responsibility:
+    aws: AWS maintains supply chain security program; SCRM documentation in AWS Artifact
+    customer: Develop a plan for managing supply chain risks; apply safeguards to protect
+      against supply chain threats; include supply chain risk assessments in acquisition
+      decisions; verify provenance of critical software components (SBOM + cosign)
+  operational:
+  - id: cedar-supply-chain-verified
+    description: Production workloads require verified supply chain provenance
+    entities: [resource]
+    attributes:
+      resource: [sbom_verified, image_signed, vendor_approved]
+  monitoring:
+  - id: config-ecr-signed-images
+    resource_type: AWS::ECR::Repository
+    check: Production ECR repositories require signed images (cosign verification active)
+  - id: config-sbom-attached
+    resource_type: AWS::ECR::Repository
+    check: Container images have attached SBOM attestation (CycloneDX or SPDX)
+  assessment:
+    objectives:
+    - id: 03.14.7e[a]
+      description: Supply chain risk management plan is developed
+      auto_assessable: false
+      evidence_source: manual
+    - id: 03.14.7e[b]
+      description: Safeguards are applied to protect against supply chain threats
+      auto_assessable: true
+      evidence_source: config
+    - id: 03.14.7e[c]
+      description: Software components are verified via SBOM and cryptographic attestation
+      auto_assessable: true
+      evidence_source: config
+
+# --- Supply Chain Risk Management (SR) — new in Rev 3, most significant addition ---
+# The SR family formalizes supply chain security requirements that align with
+# the cosign/SLSA attestation work in attest (attest ingest cosign, attest compile --kyverno).
+
+- id: 03.17.1
+  family: Supply Chain Risk Management
+  title: Supply Chain Risk Assessment
+  responsibility:
+    aws: AWS publishes supply chain security documentation and SCRM program details
+    customer: Assess supply chain risks as part of the risk assessment process;
+      identify and document supply chain threats to the system; use threat intelligence
+      to inform supply chain risk assessments; include supply chain risk in POA&M
+  assessment:
+    objectives:
+    - id: 03.17.1[a]
+      description: Supply chain risks are identified as part of risk assessment
+      auto_assessable: false
+      evidence_source: manual
+    - id: 03.17.1[b]
+      description: Supply chain threats are documented and tracked
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: 03.17.2
+  family: Supply Chain Risk Management
+  title: Acquisition Strategies and Tools
+  responsibility:
+    aws: AWS provides security documentation to inform acquisition decisions;
+      FedRAMP authorization serves as supply chain risk assessment for AWS services
+    customer: Use approved acquisition strategies for critical components; avoid
+      single-source dependencies for critical functionality; assess supplier security
+      posture before procurement; include security requirements in contracts
+  assessment:
+    objectives:
+    - id: 03.17.2[a]
+      description: Acquisition strategies include supply chain risk management considerations
+      auto_assessable: false
+      evidence_source: manual
+
+- id: 03.17.3
+  family: Supply Chain Risk Management
+  title: Supplier Assessments and Reviews
+  responsibility:
+    aws: AWS SOC 2 Type II and ISO 27001 certificates provide third-party supplier assessment
+    customer: Assess suppliers of critical components and services; conduct or use
+      third-party assessments of suppliers; review supplier performance and security;
+      document supplier risk assessments and track remediation
+  operational:
+  - id: cedar-supplier-assessed
+    description: External services used in CUI processing must have documented supplier assessment
+    entities: [resource]
+    attributes:
+      resource: [vendor_approved, vendor_assessment_current, fedramp_authorized]
+  assessment:
+    objectives:
+    - id: 03.17.3[a]
+      description: Suppliers of critical components are assessed and reviewed
+      auto_assessable: false
+      evidence_source: manual
+    - id: 03.17.3[b]
+      description: Supplier risk assessments are documented and reviewed annually
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: 03.17.4
+  family: Supply Chain Risk Management
+  title: Provenance
+  responsibility:
+    aws: AWS provides documented provenance for AWS services via FedRAMP packages
+    customer: Document and maintain provenance of critical components; use SBOM to track
+      software component origins; verify component authenticity via cryptographic signatures;
+      maintain records of software component origins throughout the lifecycle
+  structural:
+  - id: scp-require-signed-containers
+    description: Deny container deployments without verified cosign signatures
+    actions:
+    - ecr:BatchGetImage
+    conditions:
+    - ecr:ImageTag != latest
+    effect: Deny
+  monitoring:
+  - id: config-sbom-provenance
+    resource_type: AWS::ECR::Repository
+    check: Container images have cosign-verified provenance attestations with build source and commit SHA
+  assessment:
+    objectives:
+    - id: 03.17.4[a]
+      description: Provenance of critical software components is documented and maintained
+      auto_assessable: true
+      evidence_source: config
+    - id: 03.17.4[b]
+      description: Software components are verified via SBOM and cryptographic attestations
+      auto_assessable: true
+      evidence_source: config
+
+- id: 03.17.5
+  family: Supply Chain Risk Management
+  title: Disposal
+  responsibility:
+    aws: AWS provides certificate of destruction for decommissioned storage media;
+      cryptographic erasure via KMS CMK deletion provides verifiable data disposal
+    customer: Dispose of CUI-bearing components securely; use KMS CMK deletion for
+      cryptographic erasure of cloud-stored data; maintain disposal records; verify
+      destruction of physical media per NIST SP 800-88
+  structural:
+  - id: scp-protect-kms-disposal
+    description: Protect KMS CMKs from unauthorized deletion; require approval for key deletion
+    actions:
+    - kms:ScheduleKeyDeletion
+    conditions:
+    - aws:PrincipalOrgPaths != /*/security-admin/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: 03.17.5[a]
+      description: CUI-bearing components are disposed of securely with documentation
+      auto_assessable: true
+      evidence_source: scp
+
+- id: 03.17.6
+  family: Supply Chain Risk Management
+  title: Notification Agreements
+  responsibility:
+    aws: AWS notifies customers of security incidents and vulnerabilities via AWS Health
+      and Security Bulletins; notification procedures documented in AWS agreements
+    customer: Establish agreements with suppliers requiring notification of supply chain
+      attacks, vulnerabilities, or compromises; respond to supplier notifications;
+      include notification requirements in contracts and agreements
+  assessment:
+    objectives:
+    - id: 03.17.6[a]
+      description: Notification agreements established with critical suppliers
+      auto_assessable: false
+      evidence_source: manual
+    - id: 03.17.6[b]
+      description: Supplier notifications are tracked and acted upon
+      auto_assessable: false
+      evidence_source: manual

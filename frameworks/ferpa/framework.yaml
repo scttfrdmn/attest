@@ -299,3 +299,114 @@ controls:
     review_schedule:
       frequency: "annual"
       trigger: "calendar"
+
+  # ── Cloud and Digital Records Addendum ──────────────────────────────────
+  # FERPA (1974) predates cloud computing. These controls address modern
+  # digital and cloud-specific FERPA obligations confirmed by ED guidance.
+
+  - id: "FERPA-CLOUD-1"
+    family: "Cloud and Digital Records"
+    title: "Cloud Service Provider as School Official"
+    responsibility:
+      aws: "AWS is a third-party cloud provider; the institution must enter a
+        written agreement making AWS a 'school official' with legitimate
+        educational interest before sharing education records"
+      customer: "Execute written agreement with AWS (covered by AWS Customer
+        Agreement and BAA where applicable) designating them as a school
+        official; ensure agreement prohibits re-disclosure; maintain inventory
+        of all cloud services receiving FERPA-protected data"
+    assessment:
+      objectives:
+        - id: "FERPA-CLOUD-1[a]"
+          description: "Written agreements in place with all cloud providers receiving education records"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "FERPA-CLOUD-1[b]"
+          description: "Inventory of cloud services with FERPA data maintained"
+          auto_assessable: false
+          evidence_source: "manual"
+    review_schedule:
+      frequency: "annual"
+      trigger: "calendar"
+
+  - id: "FERPA-CLOUD-2"
+    family: "Cloud and Digital Records"
+    title: "Encryption of Education Records in Cloud Storage"
+    responsibility:
+      aws: "S3 server-side encryption (SSE-KMS) and TLS in transit protect
+        education records; KMS CMKs provide customer-controlled encryption keys"
+      customer: "Encrypt all FERPA-protected education records in cloud storage
+        with customer-managed KMS keys; encrypt in transit via TLS;
+        enable KMS key rotation; maintain encryption documentation"
+    structural:
+    - id: scp-require-kms-ferpa
+      description: Require KMS encryption for storage containing FERPA education records
+      actions:
+      - s3:PutObject
+      conditions:
+      - aws:RequestedRegion in [us-east-1, us-east-2, us-west-1, us-west-2]
+      effect: Deny
+    monitoring:
+    - id: config-s3-ferpa-encryption
+      resource_type: AWS::S3::Bucket
+      check: S3 buckets tagged attest:data-class=FERPA use KMS CMK encryption
+    assessment:
+      objectives:
+        - id: "FERPA-CLOUD-2[a]"
+          description: "FERPA education records encrypted at rest with CMK encryption"
+          auto_assessable: true
+          evidence_source: "config"
+        - id: "FERPA-CLOUD-2[b]"
+          description: "FERPA education records encrypted in transit via TLS"
+          auto_assessable: true
+          evidence_source: "scp"
+
+  - id: "FERPA-CLOUD-3"
+    family: "Cloud and Digital Records"
+    title: "FERPA + HIPAA Intersection — Student Health Records"
+    responsibility:
+      aws: "AWS HIPAA-eligible services cover both student health records (FERPA)
+        and patient health records (HIPAA); same technical controls apply"
+      customer: "Student health records held by a university are generally covered
+        by FERPA (not HIPAA) per ED/HHS joint guidance; if a covered entity
+        provides health care to students under a treatment relationship,
+        those records may be covered by HIPAA; implement both FERPA and HIPAA
+        controls and document the legal basis for each record category"
+    assessment:
+      objectives:
+        - id: "FERPA-CLOUD-3[a]"
+          description: "Student health record classification documented (FERPA vs HIPAA basis)"
+          auto_assessable: false
+          evidence_source: "manual"
+        - id: "FERPA-CLOUD-3[b]"
+          description: "Appropriate controls applied per record classification"
+          auto_assessable: false
+          evidence_source: "manual"
+    review_schedule:
+      frequency: "annual"
+      trigger: "calendar"
+
+  - id: "FERPA-CLOUD-4"
+    family: "Cloud and Digital Records"
+    title: "Student Research Data and FERPA Scope"
+    responsibility:
+      aws: "Data classification tags enable separation of FERPA-covered data
+        from research data not covered by FERPA"
+      customer: "Determine which student research data is covered by FERPA:
+        data collected in class context = FERPA-covered;
+        data collected under IRB as research subject = may not be FERPA-covered;
+        data used for institutional research (aggregate) = directory exceptions apply;
+        tag and classify data appropriately; document basis for FERPA applicability"
+    operational:
+    - id: cedar-ferpa-research-data
+      description: Student data used in research contexts requires FERPA classification determination
+      entities: [principal, resource]
+      attributes:
+        principal: [ferpa_authorized, student_status]
+        resource: [data_classification, ferpa_covered, irb_exempt]
+    assessment:
+      objectives:
+        - id: "FERPA-CLOUD-4[a]"
+          description: "FERPA scope determined for each category of student research data"
+          auto_assessable: false
+          evidence_source: "manual"

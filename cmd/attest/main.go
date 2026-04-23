@@ -57,7 +57,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.17.0"
+var version = "0.18.0"
 
 func main() {
 	root := &cobra.Command{
@@ -100,6 +100,7 @@ within it are research environments that inherit the org-level posture.`,
 		integrateCmd(),
 		enforceCmd(),
 		ingestCmd(),
+		c3paoCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -4043,6 +4044,167 @@ Examples:
 	cmd.Flags().String("type", "procedure", "Document type: procedure, policy, training-plan, template")
 	cmd.Flags().String("out", "", "Directory to write the document (optional)")
 	return cmd
+}
+
+func c3paoCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "c3pao",
+		Short: "Manage CMMC C3PAO assessment engagements",
+		Long: `Track formal CMMC Level 2 and Level 3 third-party assessment engagements.
+Records C3PAO organization, assessor team, audit window, and SPRS submission status.
+
+Assessment types:
+  Level 2: C3PAO (Third-Party Assessment Organization)
+  Level 3: DCSA (Defense Counterintelligence and Security Agency)`,
+	}
+
+	assessDir := filepath.Join(".attest", "assessments")
+
+	createCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Record a new C3PAO assessment engagement",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c3paoOrg, _ := cmd.Flags().GetString("c3pao")
+			leadAssessor, _ := cmd.Flags().GetString("lead")
+			frameworkID, _ := cmd.Flags().GetString("framework")
+			windowStart, _ := cmd.Flags().GetString("window-start")
+			windowEnd, _ := cmd.Flags().GetString("window-end")
+			notes, _ := cmd.Flags().GetString("notes")
+
+			start, err := time.Parse("2006-01-02", windowStart)
+			if err != nil {
+				return fmt.Errorf("invalid --window-start (YYYY-MM-DD): %w", err)
+			}
+			end, err := time.Parse("2006-01-02", windowEnd)
+			if err != nil {
+				return fmt.Errorf("invalid --window-end (YYYY-MM-DD): %w", err)
+			}
+
+			if err := os.MkdirAll(assessDir, 0750); err != nil {
+				return fmt.Errorf("creating assessments dir: %w", err)
+			}
+
+			engagement := schema.C3PAOEngagement{
+				ID:           fmt.Sprintf("ASSESS-%d-%s", time.Now().Year(), strings.ToUpper(c3paoOrg[:min3(len(c3paoOrg), 4)])),
+				C3PAOOrg:     c3paoOrg,
+				LeadAssessor: leadAssessor,
+				FrameworkID:  frameworkID,
+				WindowStart:  start,
+				WindowEnd:    end,
+				Status:       "scheduled",
+				Notes:        notes,
+				CreatedAt:    time.Now(),
+			}
+
+			data, err := yaml.Marshal(engagement)
+			if err != nil {
+				return fmt.Errorf("marshaling engagement: %w", err)
+			}
+			path := filepath.Join(assessDir, engagement.ID+".yaml")
+			if err := os.WriteFile(path, data, 0640); err != nil {
+				return fmt.Errorf("writing engagement: %w", err)
+			}
+
+			fmt.Printf("Assessment engagement created: %s\n", engagement.ID)
+			fmt.Printf("  C3PAO:  %s\n", c3paoOrg)
+			fmt.Printf("  Lead:   %s\n", leadAssessor)
+			fmt.Printf("  Window: %s → %s\n",
+				start.Format("2006-01-02"), end.Format("2006-01-02"))
+			fmt.Printf("  Status: scheduled\n")
+			fmt.Println()
+			fmt.Printf("Prepare evidence package: attest generate cmmc-bundle --assessor %q\n", c3paoOrg)
+			return nil
+		},
+	}
+	createCmd.Flags().String("c3pao", "", "C3PAO organization name (required)")
+	createCmd.Flags().String("lead", "", "Lead assessor name")
+	createCmd.Flags().String("framework", "nist-800-171-r2", "Framework being assessed")
+	createCmd.Flags().String("window-start", "", "Assessment window start date YYYY-MM-DD (required)")
+	createCmd.Flags().String("window-end", "", "Assessment window end date YYYY-MM-DD (required)")
+	createCmd.Flags().String("notes", "", "Notes")
+	_ = createCmd.MarkFlagRequired("c3pao")
+	_ = createCmd.MarkFlagRequired("window-start")
+	_ = createCmd.MarkFlagRequired("window-end")
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List C3PAO assessment engagements",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			entries, err := os.ReadDir(assessDir)
+			if os.IsNotExist(err) {
+				fmt.Println("No assessments recorded. Use 'attest c3pao create' to record an engagement.")
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%-20s %-25s %-12s %-12s %s\n", "ID", "C3PAO", "Window Start", "Status", "SPRS")
+			fmt.Println(strings.Repeat("-", 80))
+			for _, e := range entries {
+				if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+					continue
+				}
+				data, err := os.ReadFile(filepath.Join(assessDir, e.Name()))
+				if err != nil {
+					continue
+				}
+				var eng schema.C3PAOEngagement
+				if err := yaml.Unmarshal(data, &eng); err != nil {
+					continue
+				}
+				sprs := ""
+				if eng.SPRSScore > 0 {
+					sprs = fmt.Sprintf("%d", eng.SPRSScore)
+				}
+				fmt.Printf("%-20s %-25s %-12s %-12s %s\n",
+					eng.ID, eng.C3PAOOrg,
+					eng.WindowStart.Format("2006-01-02"),
+					eng.Status, sprs)
+			}
+			return nil
+		},
+	}
+
+	closeCmd := &cobra.Command{
+		Use:   "close <id> --sprs-score <score>",
+		Short: "Close a C3PAO engagement and record SPRS score",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sprsScore, _ := cmd.Flags().GetInt("sprs-score")
+			path := filepath.Join(assessDir, args[0]+".yaml")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("engagement %s not found", args[0])
+			}
+			var eng schema.C3PAOEngagement
+			if err := yaml.Unmarshal(data, &eng); err != nil {
+				return err
+			}
+			eng.Status = "closed"
+			eng.SPRSScore = sprsScore
+			eng.SPRSSubmitted = time.Now()
+			updated, _ := yaml.Marshal(eng)
+			if err := os.WriteFile(path, updated, 0640); err != nil {
+				return err
+			}
+			fmt.Printf("Assessment %s closed. SPRS score: %d\n", args[0], sprsScore)
+			fmt.Println("Submit score to SPRS: https://piee.eb.mil/ (CAC required)")
+			return nil
+		},
+	}
+	closeCmd.Flags().Int("sprs-score", 0, "Final SPRS score from C3PAO assessment")
+	_ = closeCmd.MarkFlagRequired("sprs-score")
+
+	cmd.AddCommand(createCmd, listCmd, closeCmd)
+	return cmd
+}
+
+// min3 returns the smaller of two ints (avoids importing math).
+func min3(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func ingestCmd() *cobra.Command {

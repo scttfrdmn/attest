@@ -1,0 +1,233 @@
+id: fisma-moderate
+name: FISMA Moderate Baseline (RMF Process Controls)
+version: 'NIST SP 800-37 Rev 2 (2018), 800-53 Rev 5 (2020)'
+assessment_type: self
+assessment_cycle: annual
+source: https://csrc.nist.gov/projects/risk-management
+
+# FISMA Moderate — Risk Management Framework (RMF) Process Controls
+#
+# FISMA (Federal Information Security Modernization Act) applies to:
+#   - Federal agencies
+#   - Universities and research institutions receiving federal grants/contracts
+#     where the institution processes or stores federal information
+#
+# For R1 research universities, FISMA typically applies to:
+#   - Student financial aid systems (Title IV, FSA)
+#   - Federal research data systems (NSF, NIH, DoD data on-premise)
+#   - Systems under federal contracts where the agency has an ATO requirement
+#
+# What this framework covers:
+#   The RMF PROCESS layer — Authorization to Operate (ATO), continuous monitoring
+#   reporting, and agency-specific requirements. Technical controls are covered by:
+#     fedramp-moderate — cloud infrastructure (NIST 800-53 Moderate technical controls)
+#     nist-800-53-r5   — additional NIST 800-53 controls
+#
+# Activate alongside fedramp-moderate for complete FISMA Moderate coverage.
+# Do NOT confuse with FedRAMP — FedRAMP applies to cloud service providers,
+# not to universities. Universities use the FISMA RMF process.
+#
+# FISMA impact levels: Low, Moderate, High (aligned to FIPS 199 categorization)
+# Most research systems are Moderate; classified systems may require High.
+
+controls:
+
+# --- Risk Management Framework (RMF) Process ---
+
+- id: FISMA-RMF-1
+  family: System Categorization
+  title: Security Categorization per FIPS 199
+  responsibility:
+    aws: AWS provides documentation for FIPS 199 categorization of AWS services
+    customer: Categorize the information system per FIPS 199 (confidentiality,
+      integrity, availability); document the categorization in the system security
+      plan; obtain agreement from the authorizing official; review and update
+      categorization when significant changes occur
+  assessment:
+    objectives:
+    - id: FISMA-RMF-1[a]
+      description: System is categorized per FIPS 199 impact levels (Low/Moderate/High)
+      auto_assessable: false
+      evidence_source: manual
+    - id: FISMA-RMF-1[b]
+      description: FIPS 199 categorization is documented in SSP and approved by AO
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: FISMA-RMF-2
+  family: Control Selection
+  title: Security Control Baseline Selection (NIST 800-53B)
+  responsibility:
+    aws: AWS FedRAMP packages document which 800-53 controls AWS implements for the cloud layer
+    customer: Select appropriate NIST 800-53 Rev 5 Moderate baseline controls;
+      document control tailoring decisions; identify compensating controls;
+      obtain authorizing official approval for tailoring
+  assessment:
+    objectives:
+    - id: FISMA-RMF-2[a]
+      description: NIST 800-53 Moderate baseline controls are selected and documented
+      auto_assessable: false
+      evidence_source: manual
+    - id: FISMA-RMF-2[b]
+      description: Control tailoring decisions are documented and justified
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: FISMA-RMF-3
+  family: Authorization to Operate
+  title: Security Assessment and Authorization (ATO)
+  responsibility:
+    aws: AWS FedRAMP P-ATO serves as the ATO for AWS cloud infrastructure;
+      agency-specific ATOs may be required by individual sponsoring agencies
+    customer: Conduct security control assessment; prepare authorization package
+      (SSP, SAR, POA&M); present to authorizing official; obtain written ATO;
+      implement continuous monitoring plan; report significant changes
+  operational:
+  - id: cedar-ato-current
+    description: Federal information systems require current ATO before processing federal data
+    entities: [environment]
+    attributes:
+      environment: [ato_current, ato_expiry_date, authorizing_official, sponsoring_agency]
+    temporal:
+      condition_type: expiry
+      description: ATO must be renewed (typically 3-year term); operations suspended at expiry
+    admin_dependencies:
+    - control_id: FISMA-RMF-3
+      attribute: environment.ato_current
+      consequence: Processing federal information without ATO violates FISMA; agency funding at risk
+  assessment:
+    objectives:
+    - id: FISMA-RMF-3[a]
+      description: Security controls are assessed by qualified independent assessor
+      auto_assessable: false
+      evidence_source: manual
+    - id: FISMA-RMF-3[b]
+      description: Authorization package (SSP, SAR, POA&M) is submitted to AO
+      auto_assessable: false
+      evidence_source: manual
+    - id: FISMA-RMF-3[c]
+      description: Written ATO is obtained from authorizing official
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: triennial
+    trigger: event
+
+- id: FISMA-RMF-4
+  family: Continuous Monitoring
+  title: FISMA Continuous Monitoring and Reporting
+  responsibility:
+    aws: AWS provides monthly vulnerability scan results and configuration monitoring
+      to FedRAMP-authorized customers; AWS Security Hub aggregates findings
+    customer: Implement continuous monitoring strategy; collect and analyze security metrics;
+      report security status to agency CIO/CISO annually (FISMA report); report significant
+      incidents within 1 hour to US-CERT; update SSP and POA&M with monitoring results
+  monitoring:
+  - id: config-security-hub-fisma-score
+    resource_type: AWS::SecurityHub::Hub
+    check: Security Hub enabled with all standards (CIS, FSBP); FISMA-relevant findings tracked
+  - id: config-cloudwatch-fisma-metrics
+    resource_type: AWS::CloudWatch::Dashboard
+    check: Security metrics dashboard configured for FISMA continuous monitoring reporting
+  assessment:
+    objectives:
+    - id: FISMA-RMF-4[a]
+      description: Continuous monitoring strategy is documented and implemented
+      auto_assessable: true
+      evidence_source: config
+    - id: FISMA-RMF-4[b]
+      description: Annual FISMA report submitted to sponsoring agency CISO/CIO
+      auto_assessable: false
+      evidence_source: manual
+    - id: FISMA-RMF-4[c]
+      description: Significant security incidents reported to US-CERT within 1 hour
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: FISMA-RMF-5
+  family: Plan of Action and Milestones
+  title: POA&M Management and Agency Reporting
+  responsibility:
+    aws: AWS maintains POA&M for FedRAMP controls under AWS responsibility
+    customer: Maintain POA&M for all identified weaknesses; report POA&M status
+      to sponsoring agency quarterly; close POA&M items when remediation evidence
+      collected; escalate high-risk items to authorizing official; generate via
+      attest generate poam
+  operational:
+  - id: cedar-poam-active
+    description: FISMA systems require active POA&M tracking with agency reporting cadence
+    entities: [environment]
+    attributes:
+      environment: [poam_tracking_active, poam_last_submitted, sponsoring_agency_contact]
+  monitoring:
+  - id: config-security-hub-poam
+    resource_type: AWS::SecurityHub::Finding
+    check: High/Critical Security Hub findings have associated POA&M entries
+  assessment:
+    objectives:
+    - id: FISMA-RMF-5[a]
+      description: POA&M maintained for all security weaknesses and deficiencies
+      auto_assessable: true
+      evidence_source: config
+    - id: FISMA-RMF-5[b]
+      description: POA&M status reported to sponsoring agency at required frequency
+      auto_assessable: false
+      evidence_source: manual
+
+- id: FISMA-RMF-6
+  family: Privacy Controls
+  title: Privacy Threshold Analysis and Privacy Impact Assessment
+  responsibility:
+    aws: AWS provides Privacy Impact Assessment documentation for AWS services
+    customer: Conduct Privacy Threshold Analysis (PTA) when system handles PII;
+      complete Privacy Impact Assessment (PIA) if PTA indicates privacy risks;
+      publish PIA on agency/institution website; review and update when system changes
+  assessment:
+    objectives:
+    - id: FISMA-RMF-6[a]
+      description: Privacy Threshold Analysis completed for system
+      auto_assessable: false
+      evidence_source: manual
+    - id: FISMA-RMF-6[b]
+      description: Privacy Impact Assessment completed and published if PII present
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: FISMA-RMF-7
+  family: Incident Reporting
+  title: Federal Incident Reporting (US-CERT / CISA)
+  responsibility:
+    aws: AWS reports incidents to US-CERT as required; AWS notifies affected customers
+    customer: Report cybersecurity incidents affecting federal information to:
+      - US-CERT (CISA) within 1 hour for major incidents (CAT 1-3)
+      - Sponsoring agency CISO within 1 hour
+      - Report annually via FISMA OMB reporting
+  monitoring:
+  - id: config-guardduty-incident-detection
+    resource_type: AWS::GuardDuty::Detector
+    check: GuardDuty active for detecting incidents requiring US-CERT notification
+  assessment:
+    objectives:
+    - id: FISMA-RMF-7[a]
+      description: Incident reporting procedures include US-CERT and agency notification
+      auto_assessable: false
+      evidence_source: manual
+    - id: FISMA-RMF-7[b]
+      description: Incidents are categorized per NIST 800-61 categories and timelines
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
