@@ -56,7 +56,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.15.0"
+var version = "0.16.0"
 
 func main() {
 	root := &cobra.Command{
@@ -98,6 +98,7 @@ within it are research environments that inherit the org-level posture.`,
 		sreCmd(),
 		integrateCmd(),
 		enforceCmd(),
+		ingestCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -795,6 +796,16 @@ the raw policy artifacts (coming in v0.5.0).`,
 				fmt.Printf("  IaC output: %s\n", filepath.Join(compiledDir, iacOutput))
 			}
 
+			if genKyverno, _ := cmd.Flags().GetBool("kyverno"); genKyverno {
+				ecrGlob, _ := cmd.Flags().GetString("kyverno-ecr-registry")
+				ciSubject, _ := cmd.Flags().GetString("kyverno-ci-subject")
+				fmt.Println("  Generating Kyverno image signing policy...")
+				if err := iac.GenerateKyverno(sre.OrgID, ecrGlob, ciSubject, compiledDir); err != nil {
+					return fmt.Errorf("generating Kyverno policy: %w", err)
+				}
+				fmt.Printf("  Kyverno: %s\n", filepath.Join(compiledDir, "kyverno", "require-signed-images.yaml"))
+			}
+
 			fmt.Println()
 			fmt.Printf("Compiled artifacts written to %s\n", compiledDir)
 			fmt.Printf("  %d SCP(s)\n", len(scps))
@@ -808,6 +819,9 @@ the raw policy artifacts (coming in v0.5.0).`,
 	cmd.Flags().String("frameworks", "frameworks", "Path to frameworks directory")
 	cmd.Flags().String("output", "", "IaC output format: terraform, cdk")
 	cmd.Flags().String("scp-strategy", "individual", "SCP compilation strategy: individual (one SCP per spec, for inspection) or merged (intelligent bin-packing, for production — fits within 5-per-target limit)")
+	cmd.Flags().Bool("kyverno", false, "Generate Kyverno ClusterPolicy requiring signed container images (satisfies 3.14.2, SI.L3-3.14.3e)")
+	cmd.Flags().String("kyverno-ecr-registry", "", "ECR registry glob for Kyverno image verification (default: *.dkr.ecr.*.amazonaws.com/*)")
+	cmd.Flags().String("kyverno-ci-subject", "", "OIDC subject glob for CI/CD signing identity (default: https://github.com/*)")
 	return cmd
 }
 
@@ -3857,6 +3871,123 @@ Examples:
 	cmd.Flags().String("region", "us-east-1", "AWS region for Bedrock")
 	cmd.Flags().String("type", "procedure", "Document type: procedure, policy, training-plan, template")
 	cmd.Flags().String("out", "", "Directory to write the document (optional)")
+	return cmd
+}
+
+func ingestCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "ingest",
+		Short: "Ingest external compliance evidence (cosign/SLSA, etc.)",
+	}
+	cmd.AddCommand(ingestCosignCmd())
+	return cmd
+}
+
+func ingestCosignCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cosign --image <image>",
+		Short: "Ingest cosign/SLSA attestations as compliance evidence",
+		Long: `Verifies cosign signatures and downloads attestations (SBOM, provenance)
+for a container image, then maps the attestation claims to compliance control
+evidence. Creates attestation draft records in .attest/proposed/.
+
+Satisfies:
+  3.14.2 — malicious code protection (only signed images)
+  3.14.1 — flaw remediation (SBOM provides CVE-trackable component inventory)
+  3.4.1  — configuration baselines (SBOM is software inventory)
+  SI.L3-3.14.3e — software integrity via Sigstore/Rekor provenance
+
+Requires: cosign CLI installed (https://docs.sigstore.dev/cosign/system_config/installation/)
+          AWS credentials for ECR image pull (aws ecr get-login-password)`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			image, _ := cmd.Flags().GetString("image")
+			if image == "" {
+				return fmt.Errorf("--image is required (e.g., 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:latest)")
+			}
+
+			fmt.Printf("Analyzing cosign attestations for: %s\n\n", image)
+
+			ctx := context.Background()
+			att, mappings, err := attestation.IngestCosignAttestation(ctx, image)
+			if err != nil {
+				return fmt.Errorf("cosign ingestion: %w", err)
+			}
+
+			// Print attestation summary.
+			if att.Verified {
+				fmt.Printf("  Signature:    ✓ Verified\n")
+			} else {
+				fmt.Printf("  Signature:    ✗ Not verified — %s\n", att.SignerSubject)
+			}
+			if att.SignerSubject != "" && att.Verified {
+				fmt.Printf("  Signer:       %s\n", att.SignerSubject)
+			}
+			if att.RekorLogID != "" {
+				fmt.Printf("  Rekor entry:  %s\n", att.RekorLogID)
+			}
+			if att.BuildSource != "" {
+				fmt.Printf("  Build source: %s\n", att.BuildSource)
+			}
+			if att.SBOMDigest != "" {
+				fmt.Printf("  SBOM:         %s (%s)\n", att.SBOMFormat, att.SBOMDigest)
+			} else {
+				fmt.Printf("  SBOM:         not attached\n")
+			}
+			fmt.Println()
+
+			// Print control mappings.
+			fmt.Println("Maps to controls:")
+			for _, m := range mappings {
+				icon := "✓"
+				if !m.Satisfied {
+					icon = "✗"
+				}
+				fmt.Printf("  %s %-14s  %s\n", icon, m.ObjectiveID, m.Description)
+			}
+			fmt.Println()
+
+			// Write attestation draft records.
+			proposedDir := filepath.Join(".attest", "proposed")
+			if err := os.MkdirAll(proposedDir, 0750); err != nil {
+				return fmt.Errorf("creating proposed dir: %w", err)
+			}
+
+			// Derive a short image name for the draft ID.
+			imageName := image
+			if idx := strings.LastIndex(image, "/"); idx >= 0 {
+				imageName = image[idx+1:]
+			}
+			imageName = strings.ReplaceAll(imageName, ":", "-")
+			imageName = strings.ReplaceAll(imageName, "@", "-")
+
+			written := 0
+			for _, m := range mappings {
+				if !m.Satisfied {
+					continue
+				}
+				draftID := fmt.Sprintf("ATT-DRAFT-cosign-%s-%s",
+					strings.ReplaceAll(m.ControlID, ".", ""),
+					imageName)
+				draft := fmt.Sprintf("id: %s\ncontrol_id: %s\nobjective_id: %s\ntitle: %s\naffirmed_by: cosign-automated\nevidence: %s\nevidence_type: cosign_attestation\nrekor_log_id: %s\nsbom_digest: %s\nstatus: draft\n",
+					draftID, m.ControlID, m.ObjectiveID, m.Description, m.Evidence,
+					att.RekorLogID, att.SBOMDigest)
+				draftPath := filepath.Join(proposedDir, draftID+".yaml")
+				if err := os.WriteFile(draftPath, []byte(draft), 0640); err != nil {
+					return fmt.Errorf("writing draft: %w", err)
+				}
+				written++
+			}
+
+			if written > 0 {
+				fmt.Printf("Created %d attestation draft(s) in %s\n", written, proposedDir)
+				fmt.Println("Review with: ls .attest/proposed/ATT-DRAFT-cosign-*")
+				fmt.Println("Promote with: attest attest create --from-draft <id>")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().String("image", "", "Container image reference (required)")
+	_ = cmd.MarkFlagRequired("image")
 	return cmd
 }
 
