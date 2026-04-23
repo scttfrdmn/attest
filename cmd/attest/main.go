@@ -894,7 +894,7 @@ Use --approve to skip interactive confirmation.`,
 			if !approve {
 				fmt.Print("Apply these changes to the organization? [y/N] ")
 				var answer string
-				fmt.Scanln(&answer)
+				_, _ = fmt.Scanln(&answer)
 				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
 					fmt.Println("Aborted.")
 					return nil
@@ -998,7 +998,7 @@ Without --to, rolls back to the most recent applied-* snapshot.`,
 				fmt.Printf("This will detach all attest SCPs from the org root and re-apply state from %s.\n", targetTag)
 				fmt.Print("Proceed? [y/N] ")
 				var answer string
-				fmt.Scanln(&answer)
+				_, _ = fmt.Scanln(&answer)
 				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
 					fmt.Println("Aborted.")
 					return nil
@@ -2318,7 +2318,7 @@ Create it first: aws organizations create-organizational-unit --parent-id <root>
 			if !approve {
 				fmt.Print("\nCreate this environment? [y/N] ")
 				var answer string
-				fmt.Scanln(&answer)
+				_, _ = fmt.Scanln(&answer)
 				if strings.ToLower(strings.TrimSpace(answer)) != "y" {
 					fmt.Println("Aborted.")
 					return nil
@@ -2507,7 +2507,7 @@ func parseDuration(s string) time.Duration {
 		return 365 * 24 * time.Hour
 	case strings.HasSuffix(s, "d"):
 		var days int
-		fmt.Sscanf(s, "%dd", &days)
+		_, _ = fmt.Sscanf(s, "%dd", &days)
 		return time.Duration(days) * 24 * time.Hour
 	default:
 		return 90 * 24 * time.Hour
@@ -2764,7 +2764,7 @@ based on attestation records and framework review_schedule definitions.`,
 						indicator = "✗"
 					} else if strings.Contains(status, "days") {
 						days := 0
-						fmt.Sscanf(status, "%d days", &days)
+						_, _ = fmt.Sscanf(status, "%d days", &days)
 						if days <= 30 {
 							indicator = "⚠"
 						}

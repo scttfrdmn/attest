@@ -18,14 +18,6 @@ func newPermitAllPolicySet(t *testing.T) *cedar.PolicySet {
 	return ps
 }
 
-func newForbidAllPolicySet(t *testing.T) *cedar.PolicySet {
-	t.Helper()
-	ps, err := cedar.NewPolicySetFromBytes("test.cedar", []byte(`forbid(principal, action, resource);`))
-	if err != nil {
-		t.Fatalf("parse forbid policy: %v", err)
-	}
-	return ps
-}
 
 func TestEvaluateWithPolicies_Allow(t *testing.T) {
 	ev := NewEvaluator(nil)

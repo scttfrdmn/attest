@@ -268,7 +268,9 @@ func TestLoadCompiledSCPs(t *testing.T) {
 		"attest-scp-b": sampleSCP("scp-b"),
 	})
 	// Write a non-JSON file that should be ignored.
-	os.WriteFile(filepath.Join(dir, "schema.cedarschema"), []byte("entity Test {}"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "schema.cedarschema"), []byte("entity Test {}"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
 
 	scps, err := loadCompiledSCPs(dir)
 	if err != nil {

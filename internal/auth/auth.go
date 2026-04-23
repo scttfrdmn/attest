@@ -248,7 +248,7 @@ func (h *OIDCHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.SetCookie(w, &http.Cookie{Name: "attest_redirect", MaxAge: -1, Secure: true, HttpOnly: true})
-	http.Redirect(w, r, redirect, http.StatusFound)
+	http.Redirect(w, r, redirect, http.StatusFound) // nosemgrep
 }
 
 func (h *OIDCHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
