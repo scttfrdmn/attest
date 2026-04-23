@@ -53,12 +53,12 @@ signs:
     artifacts: checksum
     output: true
 
-sbom:
-  - artifacts: archive
-
 changelog:
-  use: file
-  path: CHANGELOG.md
+  use: git
+  sort: desc
+  filters:
+    exclude:
+      - "^Merge"
 
 release:
   github:
