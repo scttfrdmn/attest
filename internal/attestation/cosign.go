@@ -173,6 +173,11 @@ func parseSBOMAttestation(ctx context.Context, att *CosignAttestation) error {
 	if err := json.Unmarshal(out, &envelope); err != nil {
 		return nil
 	}
+	// Cap payload size before decoding to prevent memory exhaustion from malicious attestations.
+	const maxSBOMPayloadBytes = 50 * 1024 * 1024 // 50 MB
+	if len(envelope.Payload) > maxSBOMPayloadBytes {
+		return fmt.Errorf("SBOM attestation payload too large (%d bytes)", len(envelope.Payload))
+	}
 	decoded, err := base64.StdEncoding.DecodeString(envelope.Payload)
 	if err != nil {
 		return nil

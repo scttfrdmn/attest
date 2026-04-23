@@ -3,6 +3,7 @@ package dashboard
 import (
 	_ "embed"
 	"fmt"
+	"os"
 	"net/http"
 
 	cedar "github.com/cedar-policy/cedar-go"
@@ -101,7 +102,13 @@ func cedarGuard(ps *cedar.PolicySet, next http.Handler) http.Handler {
 			Resource:  resourceUID,
 		}
 
-		decision, _ := cedar.Authorize(ps, entities, req)
+		decision, diag := cedar.Authorize(ps, entities, req)
+		if len(diag.Errors) > 0 {
+			// Log Cedar evaluation errors for security audit trail — these indicate
+			// policy or entity model issues, not authorization failures.
+			fmt.Fprintf(os.Stderr, "dashboard: Cedar authorization error for %s %s: %v\n",
+				r.Method, r.URL.Path, diag.Errors)
+		}
 		if decision != types.Decision(true) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return

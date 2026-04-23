@@ -243,17 +243,15 @@ func generateSCPManifest(storeDir string) string {
 		if !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil {
+		entryPath := filepath.Join(scpDir, e.Name())
+		// Double-check via Lstat to close the TOCTOU window — matches the pattern
+		// used in generateAttestationsIndex and generateWaiversRegister.
+		lfi, err := os.Lstat(entryPath)
+		if err != nil || lfi.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
-		// Skip symlinks — they could point to sensitive files outside .attest/.
-		if info.Mode()&os.ModeSymlink != 0 {
-			continue
-		}
-		size := info.Size()
 		id := strings.TrimSuffix(e.Name(), ".json")
-		sb.WriteString(fmt.Sprintf("| %s | %s | %d chars |\n", id, e.Name(), size))
+		sb.WriteString(fmt.Sprintf("| %s | %s | %d chars |\n", id, e.Name(), lfi.Size()))
 	}
 	return sb.String()
 }

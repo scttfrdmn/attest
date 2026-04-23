@@ -57,7 +57,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.19.0"
+var version = "0.19.1"
 
 func main() {
 	root := &cobra.Command{
@@ -1705,6 +1705,9 @@ Assessment types:
   --level 3   CMMC Level 3 (134 controls, note: DCSA-assessed, not self-reportable)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			level, _ := cmd.Flags().GetInt("level")
+			if level != 1 && level != 2 && level != 3 {
+				return fmt.Errorf("--level must be 1, 2, or 3 (got %d)", level)
+			}
 			_, crosswalk, err := loadGenerateContext()
 			if err != nil {
 				return err
@@ -2970,13 +2973,22 @@ PI personal attestation on Data Use Certifications.`,
 				return fmt.Errorf("invalid --expires date (use YYYY-MM-DD): %w", err)
 			}
 
+			// Validate grant number — used as filename stem and embedded in YAML.
+			// NIH grant format: 1R01GM123456-01 (letter+number+type+IC+serial+suffix).
+			// Allow alphanumeric and hyphens only to prevent path traversal and YAML injection.
+			if !regexp.MustCompile(`^[a-zA-Z0-9\-]+$`).MatchString(grantNum) {
+				return fmt.Errorf("--grant must contain only letters, digits, and hyphens (e.g., R01GM123456)")
+			}
+
 			controlID := "RS.1.003"
 			if ducAccession != "" {
-				controlID = fmt.Sprintf("RS.6.001-%s", strings.ReplaceAll(ducAccession, ".", ""))
+				// Sanitize dbGaP accession used in control ID.
+				safeAccession := regexp.MustCompile(`[^a-zA-Z0-9\-]`).ReplaceAllString(ducAccession, "")
+				controlID = fmt.Sprintf("RS.6.001-%s", safeAccession)
 			}
 			attID := fmt.Sprintf("ATT-PI-%d-%s",
 				time.Now().Year(),
-				strings.ToUpper(strings.ReplaceAll(grantNum, " ", "")))
+				strings.ToUpper(grantNum))
 
 			evidenceDesc := fmt.Sprintf("PI: %s (%s); Grant: %s", piName, piEmail, grantNum)
 			if osrContact != "" {
@@ -4080,12 +4092,23 @@ Assessment types:
 				return fmt.Errorf("invalid --window-end (YYYY-MM-DD): %w", err)
 			}
 
+			// Validate C3PAO org name — it feeds into both the ID (used as a filename)
+			// and the YAML record. Reject newlines and path separators.
+			if strings.ContainsAny(c3paoOrg, "/\\:\n\r") {
+				return fmt.Errorf("--c3pao must not contain path separators, colons, or newlines")
+			}
+
 			if err := os.MkdirAll(assessDir, 0750); err != nil {
 				return fmt.Errorf("creating assessments dir: %w", err)
 			}
 
+			// Build a filesystem-safe ID: strip everything but alphanumeric and hyphens.
+			safeOrgSlug := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(c3paoOrg, "")
+			if len(safeOrgSlug) == 0 {
+				safeOrgSlug = "ORG"
+			}
 			engagement := schema.C3PAOEngagement{
-				ID:           fmt.Sprintf("ASSESS-%d-%s", time.Now().Year(), strings.ToUpper(c3paoOrg[:min3(len(c3paoOrg), 4)])),
+				ID:           fmt.Sprintf("ASSESS-%d-%s", time.Now().Year(), strings.ToUpper(safeOrgSlug[:min3(len(safeOrgSlug), 6)])),
 				C3PAOOrg:     c3paoOrg,
 				LeadAssessor: leadAssessor,
 				FrameworkID:  frameworkID,
@@ -4237,6 +4260,11 @@ Requires: cosign CLI installed (https://docs.sigstore.dev/cosign/system_config/i
 			if image == "" {
 				return fmt.Errorf("--image is required (e.g., 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:latest)")
 			}
+			// Validate image is a well-formed OCI reference: registry/repo:tag or @digest.
+			// Reject newlines and shell metacharacters to prevent command injection via exec.Command.
+			if strings.ContainsAny(image, "\n\r\t ") || !regexp.MustCompile(`^[a-zA-Z0-9._/:@\-]+$`).MatchString(image) {
+				return fmt.Errorf("--image must be a valid OCI image reference (registry/repo:tag or @sha256:...)")
+			}
 
 			fmt.Printf("Analyzing cosign attestations for: %s\n\n", image)
 
@@ -4286,12 +4314,12 @@ Requires: cosign CLI installed (https://docs.sigstore.dev/cosign/system_config/i
 			}
 
 			// Derive a short image name for the draft ID.
+			// Whitelist to alphanumeric, dots, and hyphens only.
 			imageName := image
 			if idx := strings.LastIndex(image, "/"); idx >= 0 {
 				imageName = image[idx+1:]
 			}
-			imageName = strings.ReplaceAll(imageName, ":", "-")
-			imageName = strings.ReplaceAll(imageName, "@", "-")
+			imageName = regexp.MustCompile(`[^a-zA-Z0-9._\-]`).ReplaceAllString(imageName, "-")
 
 			written := 0
 			for _, m := range mappings {
