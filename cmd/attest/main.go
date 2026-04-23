@@ -1186,6 +1186,7 @@ Provide principal, action, resource ARNs and entity attributes as --attr flags.`
 			resourceARN, _ := cmd.Flags().GetString("resource")
 			attrs, _ := cmd.Flags().GetStringSlice("attr")
 			cedarDir, _ := cmd.Flags().GetString("cedar")
+			outputFile, _ := cmd.Flags().GetString("output")
 
 			// Parse attr flags: "entity.attribute=value"
 			attributes := make(map[string]any)
@@ -1253,6 +1254,18 @@ Provide principal, action, resource ARNs and entity attributes as --attr flags.`
 			if decision.WaiverID != "" {
 				fmt.Printf("Waiver:    %s\n", decision.WaiverID)
 			}
+
+			// Append JSON decision record to output file if requested.
+			if outputFile != "" {
+				f, err := os.OpenFile(outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640)
+				if err != nil {
+					return fmt.Errorf("opening output file: %w", err)
+				}
+				defer f.Close()
+				if b, err := json.Marshal(decision); err == nil {
+					_, _ = f.Write(append(b, '\n'))
+				}
+			}
 			return nil
 		},
 	}
@@ -1261,6 +1274,7 @@ Provide principal, action, resource ARNs and entity attributes as --attr flags.`
 	cmd.Flags().String("resource", "", "Resource ARN (required)")
 	cmd.Flags().StringSlice("attr", nil, "Entity attributes: entity.attr=value (repeatable)")
 	cmd.Flags().String("cedar", filepath.Join(".attest", "compiled", "cedar"), "Cedar policies directory")
+	cmd.Flags().String("output", "", "Append decision as JSONL to this file (optional)")
 	cmd.Flags().String("ldap-url", "", "LDAP server URL for principal attribute resolution (optional)")
 	cmd.Flags().String("ldap-base-dn", "", "LDAP base DN (required with --ldap-url)")
 	cmd.Flags().String("region", "us-east-1", "AWS region for SAML/IAM attribute resolution")
