@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/provabl/attest/pkg/schema"
 	"gopkg.in/yaml.v3"
@@ -23,6 +24,22 @@ func NewLoader(frameworkDir string) *Loader {
 
 // Load reads a single framework definition by ID.
 func (l *Loader) Load(id string) (*schema.Framework, error) {
+	// Validate id before path construction — validate() runs after YAML parsing
+	// and checks fw.ID from the file, not the caller-supplied id parameter.
+	// Without this check, id = "../other" would traverse outside frameworkDir.
+	resolved := filepath.Join(l.frameworkDir, id)
+	base, err := filepath.Abs(l.frameworkDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving framework dir: %w", err)
+	}
+	abs, err := filepath.Abs(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("resolving framework path: %w", err)
+	}
+	if !strings.HasPrefix(abs+string(filepath.Separator), base+string(filepath.Separator)) {
+		return nil, fmt.Errorf("framework ID %q escapes framework directory", id)
+	}
+
 	path := filepath.Join(l.frameworkDir, id, "framework.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {

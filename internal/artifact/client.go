@@ -285,5 +285,6 @@ func fetchPresigned(url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("presigned URL returned %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	const maxReportSize = 100 * 1024 * 1024 // 100 MB
+	return io.ReadAll(io.LimitReader(resp.Body, maxReportSize))
 }

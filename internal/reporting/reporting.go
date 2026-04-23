@@ -41,6 +41,8 @@ func NewReporter(historyDir string) *Reporter {
 	return &Reporter{historyDir: historyDir}
 }
 
+const maxHistorySnapshots = 1000
+
 // GenerateTrend produces a trend report over the given time window.
 func (r *Reporter) GenerateTrend(ctx context.Context, window time.Duration) (*TrendReport, error) {
 	entries, err := os.ReadDir(r.historyDir)
@@ -55,6 +57,9 @@ func (r *Reporter) GenerateTrend(ctx context.Context, window time.Duration) (*Tr
 	var snapshots []schema.PostureSnapshot
 
 	for _, e := range entries {
+		if len(snapshots) >= maxHistorySnapshots {
+			break
+		}
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}

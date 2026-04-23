@@ -125,6 +125,12 @@ func (s *Store) Tag(name, message string) error {
 // Diff returns the unified diff between two refs (tags, commits, or branches).
 // Typical use: s.Diff("assessment-2025-q1", "assessment-2026-q1")
 func (s *Store) Diff(from, to string) (string, error) {
+	if err := validateRef(from); err != nil {
+		return "", fmt.Errorf("invalid 'from' ref: %w", err)
+	}
+	if err := validateRef(to); err != nil {
+		return "", fmt.Errorf("invalid 'to' ref: %w", err)
+	}
 	if s.noCommit {
 		return "", fmt.Errorf("store is in no-commit mode")
 	}

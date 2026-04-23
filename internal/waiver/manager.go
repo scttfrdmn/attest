@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,9 @@ import (
 
 	"github.com/provabl/attest/pkg/schema"
 )
+
+// safeIDRE allows only characters safe for use as a filename stem.
+var safeIDRE = regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`)
 
 // Manager handles waiver lifecycle: create, list, expire.
 type Manager struct {
@@ -39,6 +43,9 @@ func (m *Manager) Create(ctx context.Context, w *schema.Waiver) error {
 	}
 	if w.ID == "" {
 		return fmt.Errorf("waiver must have an ID")
+	}
+	if !safeIDRE.MatchString(w.ID) {
+		return fmt.Errorf("waiver ID %q contains unsafe characters (allowed: a-z A-Z 0-9 - _)", w.ID)
 	}
 	if w.ControlID == "" {
 		return fmt.Errorf("waiver must specify a control ID (--control)")
@@ -143,6 +150,9 @@ func (m *Manager) IsWaived(ctx context.Context, controlID, scope string) (*schem
 
 // Expire marks a waiver as expired by updating its status and ExpiresAt.
 func (m *Manager) Expire(ctx context.Context, waiverID string) error {
+	if !safeIDRE.MatchString(waiverID) {
+		return fmt.Errorf("waiver ID %q contains unsafe characters", waiverID)
+	}
 	path := filepath.Join(m.storePath, waiverID+".yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {

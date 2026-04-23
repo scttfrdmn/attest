@@ -62,7 +62,7 @@ func (r *Resolver) Resolve(ctx context.Context, principalARN string) (*schema.Pr
 	for _, src := range r.sources {
 		if err := src.Resolve(ctx, principalARN, attrs); err != nil {
 			// Log but don't fail — missing attributes → Cedar defaults to deny.
-			_ = fmt.Sprintf("warning: source %s could not resolve %s: %v", src.Name(), principalARN, err)
+			fmt.Fprintf(os.Stderr, "warning: principal source %s could not resolve %s: %v\n", src.Name(), principalARN, err)
 		}
 	}
 	return attrs, nil

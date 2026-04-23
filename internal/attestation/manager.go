@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/provabl/attest/pkg/schema"
 )
+
+var safeIDRE = regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`)
 
 // Manager handles attestation lifecycle: create, list, expire.
 type Manager struct {
@@ -38,6 +41,9 @@ func (m *Manager) Create(ctx context.Context, a *schema.Attestation) error {
 	}
 	if a.ID == "" {
 		return fmt.Errorf("attestation must have an ID")
+	}
+	if !safeIDRE.MatchString(a.ID) {
+		return fmt.Errorf("attestation ID %q contains unsafe characters (allowed: a-z A-Z 0-9 - _)", a.ID)
 	}
 	if a.ControlID == "" {
 		return fmt.Errorf("attestation must specify a control ID (--control)")
@@ -133,6 +139,9 @@ func (m *Manager) IsAttested(ctx context.Context, controlID string) (*schema.Att
 
 // Expire marks an attestation as expired.
 func (m *Manager) Expire(ctx context.Context, attestationID string) error {
+	if !safeIDRE.MatchString(attestationID) {
+		return fmt.Errorf("attestation ID %q contains unsafe characters", attestationID)
+	}
 	path := filepath.Join(m.storePath, attestationID+".yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {

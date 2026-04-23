@@ -14,6 +14,7 @@ package dashboard
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -212,7 +213,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.authToken != "" {
 			auth := r.Header.Get("Authorization")
-			if auth != "Bearer "+s.authToken {
+			want := "Bearer " + s.authToken
+			if subtle.ConstantTimeCompare([]byte(auth), []byte(want)) != 1 {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -224,7 +226,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	tmpl, err := template.ParseFS(templateFS, "templates/index.html")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		fmt.Fprintf(os.Stderr, "dashboard: template parse error: %v\n", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html")
@@ -242,7 +245,7 @@ func (s *Server) handlePosture(w http.ResponseWriter, r *http.Request) {
 
 	var cw schema.Crosswalk
 	if err := yaml.Unmarshal(data, &cw); err != nil {
-		jsonResponse(w, map[string]any{"error": err.Error()})
+		jsonResponse(w, map[string]any{"error": "failed to parse posture data"})
 		return
 	}
 
@@ -346,7 +349,7 @@ func (s *Server) handleEnvironments(w http.ResponseWriter, r *http.Request) {
 	}
 	var sre schema.SRE
 	if err := yaml.Unmarshal(data, &sre); err != nil {
-		jsonResponse(w, map[string]any{"environments": []any{}})
+		jsonResponse(w, map[string]any{"environments": []any{}, "error": "failed to parse SRE data"})
 		return
 	}
 	jsonResponse(w, map[string]any{"environments": sre.Environments})
@@ -356,7 +359,7 @@ func (s *Server) handleWaivers(w http.ResponseWriter, r *http.Request) {
 	mgr := waiver.NewManager(filepath.Join(s.storeDir, "waivers"))
 	waivers, err := mgr.List(r.Context())
 	if err != nil {
-		jsonResponse(w, map[string]any{"error": err.Error()})
+		jsonResponse(w, map[string]any{"error": "failed to load waivers"})
 		return
 	}
 	jsonResponse(w, map[string]any{"waivers": waivers})
@@ -366,7 +369,7 @@ func (s *Server) handleIncidents(w http.ResponseWriter, r *http.Request) {
 	mgr := reporting.NewIncidentManager(filepath.Join(s.storeDir, "history"))
 	incidents, err := mgr.List()
 	if err != nil {
-		jsonResponse(w, map[string]any{"error": err.Error()})
+		jsonResponse(w, map[string]any{"error": "failed to load incidents"})
 		return
 	}
 	jsonResponse(w, map[string]any{"incidents": incidents})

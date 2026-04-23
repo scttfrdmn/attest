@@ -83,7 +83,7 @@ hand-written.
 func (s *SSP) Render() (string, error) {
 	funcMap := template.FuncMap{
 		"join":  strings.Join,
-		"title": strings.Title, //nolint:staticcheck
+		"title": titleCase,
 		"or2": func(a, b string) string {
 			if a != "" {
 				return a
@@ -152,4 +152,16 @@ func (s *SSP) Render() (string, error) {
 		return "", fmt.Errorf("rendering SSP template: %w", err)
 	}
 	return b.String(), nil
+}
+
+// titleCase capitalizes the first letter of each word, replacing the
+// deprecated strings.Title (which is locale-unaware).
+func titleCase(s string) string {
+	words := strings.Fields(s)
+	for i, w := range words {
+		if len(w) > 0 {
+			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	return strings.Join(words, " ")
 }

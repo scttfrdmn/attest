@@ -6,6 +6,7 @@ import (
 	"fmt"
 	neturl "net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -174,7 +175,7 @@ func (e *Evaluator) StartWithSQS(ctx context.Context, sqsSvc *sqs.Client, queueU
 	if err := os.MkdirAll(historyDir, 0750); err != nil {
 		return fmt.Errorf("creating history dir: %w", err)
 	}
-	logFile, err := os.OpenFile(historyDir+"/cedar-decisions.jsonl",
+	logFile, err := os.OpenFile(filepath.Join(historyDir, "cedar-decisions.jsonl"),
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640)
 	if err != nil {
 		return fmt.Errorf("opening decision log: %w", err)
