@@ -1,0 +1,65 @@
+id: cmmc-level-2
+name: CMMC Level 2 — Advanced (alias for nist-800-171-r2)
+version: '2.0 (32 CFR Part 170, effective Dec 2024)'
+assessment_type: c3pao
+assessment_cycle: triennial
+source: https://dodcio.defense.gov/CMMC/
+
+# CMMC Level 2 — Advanced Cyber Hygiene
+# Assessment: C3PAO (Third-Party Assessment Organization) — required for critical programs
+#             Self-assessment permitted for non-critical programs
+#
+# CMMC Level 2 IS NIST SP 800-171 Rev 2 — all 110 practices, all 14 families.
+# This framework is an alias/discovery entry. The authoritative control definitions
+# are in nist-800-171-r2. Activate that framework for actual enforcement.
+#
+# Why this entry exists:
+#   - Users searching for "cmmc-level-2" find it immediately
+#   - The framework catalog clearly shows the CMMC level structure
+#   - Assessment metadata (c3pao, triennial) is correctly documented here
+#
+# Structure:
+#   Level 1 (15 practices)  → cmmc-level-1 framework
+#   Level 2 (110 practices) → THIS ENTRY → activate nist-800-171-r2
+#   Level 3 (134 practices) → nist-800-171-r2 + cmmc-level-3 (delta)
+#
+# SPRS scoring: DoD methodology (-203 to +110 scale, starting at 110)
+# Assessment: C3PAO for programs on the CMMC Level 2 Critical list;
+#             self-assessment permitted for non-critical DoD contracts
+# Certification: valid for 3 years
+#
+# To activate CMMC Level 2 in attest:
+#   attest frameworks add nist-800-171-r2
+#   attest compile --scp-strategy merged
+#   attest generate cmmc-bundle --assessor "<C3PAO org name>"
+#   attest generate sprs --level 2
+#   attest c3pao create --c3pao "<assessor>" --window-start ... --window-end ...
+#
+# NOTE: This file contains one representative control to satisfy the framework
+# loader (minimum 1 control required). The actual 110 controls are in nist-800-171-r2.
+# Do not add controls here — maintain nist-800-171-r2 as the authoritative source.
+
+controls:
+
+- id: CMMC-L2-REF
+  family: Reference
+  title: CMMC Level 2 = NIST SP 800-171 Rev 2 (110 practices)
+  responsibility:
+    aws: See nist-800-171-r2 framework for full AWS/customer responsibility mapping
+    customer: Activate nist-800-171-r2 for all 110 CMMC Level 2 practices.
+      This entry exists for discoverability. All SCP, Cedar, and Config enforcement
+      for CMMC Level 2 is defined in nist-800-171-r2.
+  assessment:
+    objectives:
+    - id: CMMC-L2-REF[a]
+      description: "Activate nist-800-171-r2 for CMMC Level 2 enforcement: attest frameworks add nist-800-171-r2"
+      auto_assessable: false
+      evidence_source: manual
+    - id: CMMC-L2-REF[b]
+      description: C3PAO assessment completed and SPRS score submitted to PIEE (piee.eb.mil)
+      auto_assessable: false
+      evidence_source: manual
+    - id: CMMC-L2-REF[c]
+      description: POA&M addresses all gaps; attest generate poam
+      auto_assessable: false
+      evidence_source: manual

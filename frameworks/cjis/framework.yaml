@@ -1,0 +1,264 @@
+id: cjis
+name: CJIS Security Policy — Criminal Justice Information Services
+version: '5.9.5 (October 2024)'
+assessment_type: self
+assessment_cycle: triennial
+source: https://www.fbi.gov/services/cjis/cjis-security-policy-resource-center
+
+# FBI CJIS Security Policy v5.9.5
+# Administered by: FBI Criminal Justice Information Services Division
+#
+# Applies to research institutions when:
+#   - Partnering with law enforcement agencies on criminology/criminal justice research
+#   - Accessing criminal history records, fingerprint data, or sex offender registries
+#   - Processing NCIC (National Crime Information Center) data
+#   - Conducting research with FBI or state criminal justice agency data access
+#
+# Access types:
+#   - Direct (electronic) access to CJI systems
+#   - Indirect access via a criminal justice agency partner
+#
+# Key requirements:
+#   - Personnel security screening (fingerprint-based background check)
+#   - CJIS Security Awareness Training within 6 months of access, annually thereafter
+#   - MFA required as of October 2024
+#   - Encryption: FIPS 140-2 validated, AES-256 minimum
+#   - Audit logs: all CJI access, retained for minimum 3 years
+#   - Physical and logical access controls
+#   - Triennial formal CJIS audit
+#
+# Activate alongside nist-800-171-r2 for complete technical baseline.
+
+controls:
+
+- id: CJIS-5.5
+  family: Policy Area 5 — Access Control
+  title: Access Control for CJI Systems
+  responsibility:
+    aws: IAM provides identity-based access controls; GovCloud available for highest-sensitivity
+    customer: Implement access controls limiting CJI to authorized and adequately
+      screened personnel only; use unique user accounts; terminate access immediately
+      upon personnel departure; review access quarterly
+  structural:
+  - id: scp-cjis-access-control
+    description: Deny CJI data access to principals without CJIS authorization tag
+    actions:
+    - s3:GetObject
+    - s3:PutObject
+    conditions:
+    - aws:PrincipalTag/cjis-authorized != true
+    effect: Deny
+  operational:
+  - id: cedar-cjis-access
+    description: Access to CJI requires current authorization and completed background check
+    entities: [principal, resource]
+    attributes:
+      principal: [cjis_authorized, cjis_training_current, background_check_complete]
+      resource: [data_classification, cjis_controlled]
+  assessment:
+    objectives:
+    - id: CJIS-5.5[a]
+      description: Access to CJI limited to authorized, screened personnel only
+      auto_assessable: true
+      evidence_source: scp
+    - id: CJIS-5.5[b]
+      description: User accounts unique; shared accounts prohibited
+      auto_assessable: false
+      evidence_source: manual
+
+- id: CJIS-5.6
+  family: Policy Area 6 — Identification and Authentication
+  title: MFA for CJI System Access (Required October 2024)
+  responsibility:
+    aws: IAM MFA and STS enforce authentication requirements
+    customer: Implement MFA for all access to systems containing CJI;
+      hardware or software MFA tokens acceptable; MFA required before
+      accessing any CJI regardless of network location
+  structural:
+  - id: scp-require-mfa-cjis
+    description: MFA required for all access to systems containing CJI
+    actions:
+    - '*'
+    conditions:
+    - aws:MultiFactorAuthPresent != true
+    - aws:PrincipalType == IAMUser
+    effect: Deny
+  assessment:
+    objectives:
+    - id: CJIS-5.6[a]
+      description: MFA implemented for all CJI system access (October 2024 requirement)
+      auto_assessable: true
+      evidence_source: scp
+
+- id: CJIS-5.7
+  family: Policy Area 7 — Configuration Management
+  title: CJI System Configuration Baseline
+  responsibility:
+    aws: AWS Config and SSM maintain configuration state; Security Hub checks baselines
+    customer: Maintain documented configuration baselines for CJI systems;
+      document all changes via change management process; use only approved
+      configurations; disable unnecessary services and ports
+  monitoring:
+  - id: config-cjis-config-baseline
+    resource_type: AWS::Config::ConfigRule
+    check: AWS Config conformance packs active for CJI system environments
+  assessment:
+    objectives:
+    - id: CJIS-5.7[a]
+      description: Configuration baselines documented and maintained for CJI systems
+      auto_assessable: true
+      evidence_source: config
+
+- id: CJIS-5.8
+  family: Policy Area 8 — Media Protection
+  title: CJI Media Protection and Sanitisation
+  responsibility:
+    aws: AWS handles physical media destruction; customer handles data disposal
+    customer: Protect digital media containing CJI; sanitize media before disposal
+      per NIST SP 800-88; use cryptographic erasure via KMS CMK deletion for
+      cloud storage; document all sanitization actions
+  assessment:
+    objectives:
+    - id: CJIS-5.8[a]
+      description: CJI media sanitized before disposal per NIST SP 800-88
+      auto_assessable: false
+      evidence_source: manual
+
+- id: CJIS-5.9
+  family: Policy Area 9 — Physical Protection
+  title: Physical Protection of CJI Processing Locations
+  responsibility:
+    aws: AWS datacenter physical security; customer responsible for their facilities
+    customer: Physically secure all locations where CJI is accessed or processed;
+      require visitor escort; log physical access; screen all non-escorted personnel
+  assessment:
+    objectives:
+    - id: CJIS-5.9[a]
+      description: Physical access to CJI processing locations controlled and logged
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: CJIS-5.10
+  family: Policy Area 10 — System and Communications Protection and Encryption
+  title: CJI Encryption (FIPS 140-2, AES-256 Minimum)
+  responsibility:
+    aws: AWS KMS provides FIPS 140-2 validated AES-256 encryption; TLS 1.2+ for transit
+    customer: Encrypt all CJI using FIPS 140-2 validated AES-256 at rest;
+      encrypt all CJI in transit using TLS 1.2+ with FIPS cipher suites;
+      use only AWS regions within the United States
+  structural:
+  - id: scp-cjis-fips-encryption
+    description: Require FIPS-validated encryption for CJI data at rest and in transit
+    actions:
+    - '*'
+    conditions:
+    - aws:SecureTransport == false
+    effect: Deny
+  - id: scp-cjis-us-only
+    description: Restrict CJI to US regions only (CJIS prohibits non-US storage)
+    actions:
+    - s3:CreateBucket
+    - s3:PutObject
+    conditions:
+    - aws:RequestedRegion not in [us-east-1, us-east-2, us-west-1, us-west-2]
+    effect: Deny
+  monitoring:
+  - id: config-cjis-encryption
+    resource_type: AWS::S3::Bucket
+    check: Buckets tagged cjis:controlled use KMS AES-256 encryption
+  assessment:
+    objectives:
+    - id: CJIS-5.10[a]
+      description: CJI encrypted at rest with FIPS 140-2 validated AES-256
+      auto_assessable: true
+      evidence_source: scp
+    - id: CJIS-5.10[b]
+      description: CJI in transit encrypted with TLS 1.2+ FIPS cipher suites
+      auto_assessable: true
+      evidence_source: scp
+
+- id: CJIS-5.11
+  family: Policy Area 11 — Formal Audits
+  title: Triennial CJIS Audit Compliance
+  responsibility:
+    aws: AWS provides CloudTrail, Config, and Security Hub for audit evidence
+    customer: Cooperate with triennial formal CJIS audit conducted by FBI CJIS Division;
+      maintain audit logs for minimum 3 years; provide all requested documentation;
+      remediate findings within specified timeframes
+  monitoring:
+  - id: config-cloudtrail-cjis-retention
+    resource_type: AWS::CloudTrail::Trail
+    check: CloudTrail logs retained for minimum 3 years for CJI environments
+  assessment:
+    objectives:
+    - id: CJIS-5.11[a]
+      description: Audit logs retained for minimum 3 years
+      auto_assessable: true
+      evidence_source: config
+    - id: CJIS-5.11[b]
+      description: Institution prepared for triennial CJIS formal audit
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: triennial
+    trigger: calendar
+
+- id: CJIS-AT-1
+  family: Security Awareness Training
+  title: CJIS Security Awareness Training (6-Month Requirement)
+  responsibility:
+    aws: AWS provides training resources; CJIS-specific training is agency-provided
+    customer: All personnel with access to CJI must complete CJIS Security Awareness
+      Training within 6 months of receiving access and annually thereafter;
+      training must be CJIS Division-compliant; maintain training records
+  operational:
+  - id: cedar-cjis-training
+    description: CJI access requires current CJIS Security Awareness Training
+    entities: [principal]
+    attributes:
+      principal: [cjis_training_current, cjis_training_date, background_check_complete]
+    temporal:
+      condition_type: expiry
+      description: CJIS training expires annually; access blocked until renewed
+    admin_dependencies:
+    - control_id: CJIS-AT-1
+      attribute: principal.cjis_training_current
+      consequence: CJI access blocked when CJIS training lapses
+  assessment:
+    objectives:
+    - id: CJIS-AT-1[a]
+      description: All CJI users complete CJIS training within 6 months and annually
+      auto_assessable: false
+      evidence_source: manual
+    - id: CJIS-AT-1[b]
+      description: Training records maintained and available for CJIS audit
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: CJIS-PS-1
+  family: Personnel Security
+  title: Personnel Screening — Fingerprint Background Check
+  responsibility:
+    aws: AWS datacenter personnel screened by AWS; customer responsible for their staff
+    customer: All personnel with access to CJI undergo fingerprint-based background check;
+      check submitted through state CJIS Systems Agency (CSA) before access granted;
+      re-screen if gap in employment or adverse information discovered
+  assessment:
+    objectives:
+    - id: CJIS-PS-1[a]
+      description: Fingerprint-based background check completed before CJI access granted
+      auto_assessable: false
+      evidence_source: manual
+    - id: CJIS-PS-1[b]
+      description: Background check records maintained per CJIS requirements
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event

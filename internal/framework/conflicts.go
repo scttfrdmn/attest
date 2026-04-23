@@ -138,6 +138,19 @@ func DetectConflicts(frameworks []*schema.Framework) []Conflict {
 		})
 	}
 
+	// CMMC Level 2 alias without nist-800-171-r2: the alias has no enforcement controls.
+	if has("cmmc-level-2") && !has("nist-800-171-r2") {
+		conflicts = append(conflicts, Conflict{
+			Type:       "info",
+			Severity:   "warning",
+			Frameworks: []string{"cmmc-level-2"},
+			ControlIDs: []string{"CMMC-L2-REF"},
+			Description: "cmmc-level-2 is a discovery alias — it contains no enforcement controls. " +
+				"Activate nist-800-171-r2 to get all 110 CMMC Level 2 practices with SCP, Cedar, and Config enforcement.",
+			Resolution: "Run: attest frameworks add nist-800-171-r2",
+		})
+	}
+
 	// CMMC Level 3 without Level 2 (nist-800-171-r2): Level 3 is a delta framework.
 	// Without Level 2, the 110 foundational Level 2 practices are unenforced.
 	if has("cmmc-level-3") && !has("nist-800-171-r2") {

@@ -1,0 +1,308 @@
+id: itar
+name: ITAR — International Traffic in Arms Regulations
+version: '22 CFR Parts 120-130 (USML)'
+assessment_type: self
+assessment_cycle: annual
+source: https://www.pmddtc.state.gov/ddtc_public/ddtc_public?id=ddtc_public_portal_itar_landing
+
+# International Traffic in Arms Regulations (ITAR)
+# Administered by: DDTC (Directorate of Defense Trade Controls), Dept. of State
+# Related: EAR (Export Administration Regulations), 15 CFR Parts 730-774
+#
+# Applies to:
+#   - Research universities handling USML (United States Munitions List) items
+#   - Defense-funded research with export-controlled technical data
+#   - University programs with foreign national researchers and ITAR technology
+#   - Manufacturing, modification, or technical assistance with defense articles
+#
+# KEY CONCEPTS:
+#   - Deemed Export: sharing ITAR technology with a foreign person in the US
+#     is treated as an "export" to that person's home country
+#   - Fundamental Research Exemption: applies ONLY if NO publication restrictions
+#     and NO sponsor rights to approve/disapprove publications
+#   - Technology Control Plan (TCP): required for all non-exempt ITAR research
+#   - US Person: US citizens, permanent residents, or otherwise protected individuals
+#
+# CRITICAL: ITAR violations carry criminal penalties (up to 20 years/$1M per violation).
+# Always consult Export Controls Office before handling ITAR-controlled data.
+#
+# Cloud hosting: ITAR data may NOT be stored in commercial cloud unless:
+#   - Cloud provider has ITAR-compliant deployment (e.g., AWS GovCloud + ITAR agreement)
+#   - Access restricted to US persons only
+#   - Encryption meets FIPS 140-2 standards
+#
+# CONFLICT: ITAR requires GovCloud (us-gov-*); activating with NIST 800-171 creates
+# a region conflict (see conflicts.go). Separate SRE required for ITAR workloads.
+
+controls:
+
+# --- Access Control (ITAR-AC) ---
+
+- id: ITAR-AC-1
+  family: Access Control
+  title: US Person Access Restriction
+  responsibility:
+    aws: AWS GovCloud is US-only operated; AWS IAM enables identity-based access controls
+    customer: Restrict access to ITAR-controlled technical data to US persons only;
+      define US person status in IAM tags; deny access to foreign nationals;
+      document each user's US person status; obtain deemed export licenses where
+      required for foreign national access
+  structural:
+  - id: scp-itar-us-persons-only
+    description: Deny ITAR-data operations to principals not tagged as US persons
+    actions:
+    - s3:GetObject
+    - s3:PutObject
+    conditions:
+    - aws:PrincipalTag/us-person-verified != true
+    effect: Deny
+  operational:
+  - id: cedar-itar-access
+    description: ITAR technical data access requires verified US person status
+    entities: [principal, resource]
+    attributes:
+      principal: [us_person_verified, export_license_number, clearance_level]
+      resource: [itar_controlled, usml_category, itar_authorized]
+  assessment:
+    objectives:
+    - id: ITAR-AC-1[a]
+      description: Access to ITAR technical data limited to verified US persons
+      auto_assessable: true
+      evidence_source: scp
+    - id: ITAR-AC-1[b]
+      description: US person verification documented for each authorized user
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: ITAR-AC-2
+  family: Access Control
+  title: Export License Tracking
+  responsibility:
+    aws: AWS does not validate export licenses; customer is responsible
+    customer: Obtain DSP-5 (permanent export) or DSP-73 (temporary export) licenses
+      before sharing ITAR technical data with foreign nationals or exporting
+      defense articles; track license expiry and authorized recipients;
+      maintain license records for 5 years post-expiry
+  operational:
+  - id: cedar-export-license
+    description: Sharing ITAR data with foreign persons requires valid export license
+    entities: [principal, resource]
+    attributes:
+      principal: [export_license_number, export_license_expiry, foreign_national_country]
+      resource: [itar_controlled, usml_category]
+    temporal:
+      condition_type: expiry
+      description: Export licenses expire; access blocked when license expires without renewal
+  assessment:
+    objectives:
+    - id: ITAR-AC-2[a]
+      description: Valid export licenses obtained for all foreign national access to ITAR data
+      auto_assessable: false
+      evidence_source: manual
+    - id: ITAR-AC-2[b]
+      description: Export license records maintained for 5 years
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+# --- Data Protection (ITAR-DP) ---
+
+- id: ITAR-DP-1
+  family: Data Protection
+  title: ITAR Data Encryption and Storage
+  responsibility:
+    aws: AWS GovCloud provides FIPS 140-2 validated encryption; US-only operated
+    customer: Store ITAR technical data only in FIPS 140-2 compliant encrypted storage;
+      use GovCloud or ITAR-compliant cloud only; restrict to US-based storage;
+      prohibit ITAR data on non-compliant systems, personal devices, or public cloud
+  structural:
+  - id: scp-itar-govcloud-only
+    description: Restrict ITAR data storage to approved regions (GovCloud required)
+    actions:
+    - s3:PutObject
+    - s3:CreateBucket
+    conditions:
+    - aws:RequestedRegion not in [us-gov-east-1, us-gov-west-1]
+    - aws:PrincipalTag/itar-data-authorized == true
+    effect: Deny
+  monitoring:
+  - id: config-itar-encryption
+    resource_type: AWS::S3::Bucket
+    check: Buckets tagged itar:controlled use FIPS 140-2 KMS CMK encryption in GovCloud
+  assessment:
+    objectives:
+    - id: ITAR-DP-1[a]
+      description: ITAR technical data stored only in FIPS-compliant, US-only systems
+      auto_assessable: true
+      evidence_source: scp
+    - id: ITAR-DP-1[b]
+      description: ITAR data NOT stored in commercial (non-GovCloud) systems
+      auto_assessable: true
+      evidence_source: config
+
+- id: ITAR-DP-2
+  family: Data Protection
+  title: Technology Control Plan (TCP)
+  responsibility:
+    aws: AWS supports TCP requirements through IAM, CloudTrail, and GovCloud access controls
+    customer: Develop and implement a Technology Control Plan for each ITAR program;
+      TCP must define: controlled items, authorized persons, storage locations,
+      access controls, shipping/transport procedures, and audit requirements;
+      submit TCP to Export Controls Office; update when program changes
+  operational:
+  - id: cedar-tcp-active
+    description: ITAR research environments require an active, current Technology Control Plan
+    entities: [environment]
+    attributes:
+      environment: [tcp_active, tcp_program_number, tcp_expiry_date, export_controls_office_approved]
+    admin_dependencies:
+    - control_id: ITAR-DP-2
+      attribute: environment.tcp_active
+      consequence: ITAR research blocked without approved TCP; violation risk
+  assessment:
+    objectives:
+    - id: ITAR-DP-2[a]
+      description: Technology Control Plan developed for each ITAR-controlled program
+      auto_assessable: false
+      evidence_source: manual
+    - id: ITAR-DP-2[b]
+      description: TCP approved by Export Controls Office and updated annually
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: ITAR-DP-3
+  family: Data Protection
+  title: ITAR Data Classification and Marking
+  responsibility:
+    aws: AWS resource tags support ITAR classification marking
+    customer: Mark all ITAR-controlled technical data with appropriate markings;
+      use attest:data-class=ITAR tag on all AWS resources containing ITAR data;
+      include ITAR markings in file headers, email subjects, and document footers;
+      train personnel on marking requirements
+  structural:
+  - id: scp-require-itar-tags
+    description: Require ITAR classification tags on resources containing controlled data
+    actions:
+    - s3:CreateBucket
+    - s3:PutObject
+    conditions:
+    - aws:RequestTag/itar:controlled != true
+    - aws:PrincipalTag/itar-data-authorized == true
+    effect: Deny
+  monitoring:
+  - id: config-itar-tagging-compliance
+    resource_type: AWS::S3::Bucket
+    check: All buckets with ITAR data are tagged itar:controlled=true
+  assessment:
+    objectives:
+    - id: ITAR-DP-3[a]
+      description: ITAR technical data is marked with appropriate classification markings
+      auto_assessable: true
+      evidence_source: config
+
+# --- Audit and Monitoring (ITAR-AU) ---
+
+- id: ITAR-AU-1
+  family: Audit and Accountability
+  title: ITAR Data Access Audit Trail
+  responsibility:
+    aws: CloudTrail logs all S3 data events; CloudWatch enables audit alerting
+    customer: Maintain comprehensive audit trail of all access to ITAR technical data;
+      audit logs must be tamper-proof and retained for 5 years;
+      include in annual DDTC compliance review
+  structural:
+  - id: scp-protect-itar-audit-trail
+    description: Deny modification or deletion of CloudTrail audit records for ITAR data
+    actions:
+    - cloudtrail:DeleteTrail
+    - cloudtrail:StopLogging
+    - cloudtrail:UpdateTrail
+    conditions: []
+    effect: Deny
+  monitoring:
+  - id: config-cloudtrail-itar-data-events
+    resource_type: AWS::CloudTrail::Trail
+    check: Data events enabled for all S3 buckets containing ITAR-controlled data
+  assessment:
+    objectives:
+    - id: ITAR-AU-1[a]
+      description: All access to ITAR technical data is logged with user identity and timestamp
+      auto_assessable: true
+      evidence_source: scp
+    - id: ITAR-AU-1[b]
+      description: Audit logs retained for 5 years and protected from modification
+      auto_assessable: true
+      evidence_source: config
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+# --- Incident and Violation Reporting (ITAR-IR) ---
+
+- id: ITAR-IR-1
+  family: Incident Response
+  title: ITAR Violation Reporting
+  responsibility:
+    aws: AWS provides logging and notification infrastructure; AWS is not a regulatory reporter
+    customer: Report ITAR violations to DDTC via Voluntary Disclosure within 60 days;
+      investigate potential violations immediately; notify General Counsel and Export
+      Controls Office within 24 hours of discovery; document investigation findings
+  assessment:
+    objectives:
+    - id: ITAR-IR-1[a]
+      description: ITAR violation reporting procedures documented (DDTC Voluntary Disclosure)
+      auto_assessable: false
+      evidence_source: manual
+    - id: ITAR-IR-1[b]
+      description: Potential violations reported to Export Controls Office within 24 hours
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+# --- Training (ITAR-AT) ---
+
+- id: ITAR-AT-1
+  family: Awareness and Training
+  title: Export Controls Training
+  responsibility:
+    aws: AWS provides documentation on GovCloud ITAR compliance
+    customer: Train all personnel with access to ITAR-controlled data on:
+      ITAR requirements, deemed export rules, US person requirements,
+      marking and handling procedures, violation consequences (criminal penalties);
+      training required before access and annually thereafter
+  operational:
+  - id: cedar-itar-training
+    description: ITAR data access requires current export controls training
+    entities: [principal]
+    attributes:
+      principal: [itar_training_current, itar_training_date, us_person_verified]
+    temporal:
+      condition_type: expiry
+      description: Export controls training expires annually
+    admin_dependencies:
+    - control_id: ITAR-AT-1
+      attribute: principal.itar_training_current
+      consequence: ITAR data access blocked until annual training completed
+  assessment:
+    objectives:
+    - id: ITAR-AT-1[a]
+      description: All personnel with ITAR data access complete export controls training
+      auto_assessable: false
+      evidence_source: manual
+    - id: ITAR-AT-1[b]
+      description: Training completed before access granted and annually thereafter
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar

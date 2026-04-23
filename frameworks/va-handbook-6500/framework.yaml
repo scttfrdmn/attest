@@ -1,0 +1,177 @@
+id: va-handbook-6500
+name: VA Handbook 6500 — VA Information Security Program
+version: '2019 (VA Directive 6500)'
+assessment_type: self
+assessment_cycle: annual
+source: https://www.va.gov/vapubs/viewPublication.asp?Pub_ID=1255
+
+# VA Handbook 6500 — Information Security Program
+# Administered by: VA Office of Information Security (OIS)
+#
+# Applies to research institutions when:
+#   - Conducting VA-affiliated research with VA patient data
+#   - Operating as a VA Research and Development (R&D) affiliate
+#   - Accessing VA data systems under Cooperative Research and Development Agreements (CRADAs)
+#   - Partnering with VA Medical Centers (VAMCs) on clinical research
+#
+# Based on NIST 800-53 with VA-specific requirements.
+# Activate alongside nist-800-171-r2 or nist-800-53-r5 for complete coverage.
+#
+# VA research programs affected:
+#   - MVEC (Multi-site VA/DoD clinical trials)
+#   - MVP (Million Veteran Program) genomic research
+#   - HSR&D (Health Services Research and Development)
+#   - Cooperative Studies Program (CSP)
+
+controls:
+
+- id: VA-6500-1
+  family: Enterprise Research Data Security
+  title: Enterprise Research Data Security Plan (ERDSP)
+  responsibility:
+    aws: AWS infrastructure supports ERDSP technical requirements
+    customer: Develop an Enterprise Research Data Security Plan documenting:
+      data inventory, access controls, storage locations, transmission methods,
+      disposal procedures, incident response; submit to VA OIS for approval;
+      update annually and upon significant changes
+  operational:
+  - id: cedar-erdsp-current
+    description: VA research environments require an approved, current ERDSP
+    entities: [environment]
+    attributes:
+      environment: [erdsp_current, erdsp_va_approved, erdsp_approval_date]
+    admin_dependencies:
+    - control_id: VA-6500-1
+      attribute: environment.erdsp_current
+      consequence: VA data access suspended without approved ERDSP
+  assessment:
+    objectives:
+    - id: VA-6500-1[a]
+      description: ERDSP developed and approved by VA OIS
+      auto_assessable: false
+      evidence_source: manual
+    - id: VA-6500-1[b]
+      description: ERDSP updated annually and upon significant changes
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: VA-6500-2
+  family: Data Use Agreements
+  title: VA Data Use Agreement (DUA/CRADA)
+  responsibility:
+    aws: AWS DPA covers AWS processing; VA DUA governs VA data use
+    customer: Execute VA Data Use Agreement or CRADA before accessing any VA research data;
+      DUA specifies: permitted uses, security requirements, data handling, breach notification,
+      retention and destruction; annual renewal; CRADA requires VA Director approval
+  operational:
+  - id: cedar-va-dua-current
+    description: VA research data access requires current executed DUA or CRADA
+    entities: [environment]
+    attributes:
+      environment: [va_dua_current, crada_number, dua_expiry_date]
+    temporal:
+      condition_type: expiry
+      description: VA DUAs expire annually; access suspended pending renewal
+  assessment:
+    objectives:
+    - id: VA-6500-2[a]
+      description: Executed VA DUA or CRADA in place before accessing VA research data
+      auto_assessable: false
+      evidence_source: manual
+    - id: VA-6500-2[b]
+      description: DUA renewed annually and updated when research scope changes
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: VA-6500-3
+  family: Technical Controls
+  title: VA Data Encryption and Access Controls
+  responsibility:
+    aws: AWS KMS, IAM, and CloudTrail provide technical controls matching VA Handbook requirements
+    customer: Encrypt all VA research data at rest (AES-256, FIPS 140-2) and in transit (TLS 1.2+);
+      implement role-based access controls; audit all VA data access;
+      use US-only cloud storage for VA data
+  structural:
+  - id: scp-va-encryption
+    description: VA research data must use FIPS-validated encryption
+    actions:
+    - '*'
+    conditions:
+    - aws:SecureTransport == false
+    effect: Deny
+  monitoring:
+  - id: config-va-data-encryption
+    resource_type: AWS::S3::Bucket
+    check: Buckets tagged va:research-data use KMS AES-256 CMK encryption
+  - id: config-cloudtrail-va-access
+    resource_type: AWS::CloudTrail::Trail
+    check: Data events enabled for all S3 buckets containing VA research data
+  assessment:
+    objectives:
+    - id: VA-6500-3[a]
+      description: VA research data encrypted at rest and in transit per FIPS standards
+      auto_assessable: true
+      evidence_source: scp
+    - id: VA-6500-3[b]
+      description: All access to VA research data logged and auditable
+      auto_assessable: true
+      evidence_source: config
+
+- id: VA-6500-4
+  family: Incident Response
+  title: VA Breach Notification (1-Hour Requirement)
+  responsibility:
+    aws: GuardDuty and Macie detect anomalous access to VA research data
+    customer: Report data breaches involving VA research data to VA Privacy Officer
+      within 1 hour of discovery; complete VA Incident Report within 72 hours;
+      notify affected Veterans as appropriate; cooperate with VA OIS investigation
+  monitoring:
+  - id: config-guardduty-va-data
+    resource_type: AWS::GuardDuty::Detector
+    check: GuardDuty enabled for environments containing VA research data
+  assessment:
+    objectives:
+    - id: VA-6500-4[a]
+      description: VA breach notification procedures documented (1-hour VA Privacy Officer notification)
+      auto_assessable: false
+      evidence_source: manual
+    - id: VA-6500-4[b]
+      description: VA Incident Report submitted within 72 hours of breach discovery
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: VA-6500-5
+  family: Personnel Requirements
+  title: VA Research Staff Privacy Training
+  responsibility:
+    aws: AWS provides training resources; VA-specific training comes from VA OIS
+    customer: All staff accessing VA research data must complete VA Privacy and
+      Information Security Awareness Training annually; training must be documented;
+      non-VA employees accessing VA data must complete equivalent training
+  operational:
+  - id: cedar-va-training
+    description: VA research data access requires current VA Privacy and Security training
+    entities: [principal]
+    attributes:
+      principal: [va_privacy_training_current, va_training_date]
+    temporal:
+      condition_type: expiry
+      description: VA training expires annually
+  assessment:
+    objectives:
+    - id: VA-6500-5[a]
+      description: All staff with VA data access complete annual VA Privacy and Security training
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar

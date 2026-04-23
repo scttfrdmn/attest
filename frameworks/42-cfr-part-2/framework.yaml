@@ -1,0 +1,185 @@
+id: 42-cfr-part-2
+name: 42 CFR Part 2 — Substance Abuse Confidentiality
+version: '2024 Final Rule (effective February 16, 2026)'
+assessment_type: self
+assessment_cycle: annual
+source: https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2
+
+# 42 CFR Part 2 — Confidentiality of Substance Use Disorder Patient Records
+# Administered by: SAMHSA (Substance Abuse and Mental Health Services Administration)
+#
+# STRICTER THAN HIPAA for substance use disorder (SUD) patient records:
+#   - HIPAA permits disclosure for TPO (treatment, payment, operations) without consent
+#   - 42 CFR Part 2 requires WRITTEN CONSENT for nearly all disclosures
+#   - Exception: medical emergency, research with IRB oversight, court order
+#   - Prohibition on use in criminal prosecution without patient consent
+#
+# Applies to:
+#   - Research programs treating or referring patients with substance use disorders
+#   - Addiction research using clinical records
+#   - Programs receiving federal assistance that provide SUD treatment
+#   - Clinical research linking SUD treatment records with other data sources
+#
+# 2024 Final Rule changes (effective February 16, 2026):
+#   - Permits disclosure with a single written consent (vs. program-specific)
+#   - HIPAA-aligned breach notification requirements
+#   - ADDED: Multi-factor authentication requirement
+#   - ADDED: Enhanced incident response procedures
+#
+# Activate alongside hipaa and nist-800-171-r2 for complete SUD research coverage.
+# For NIH-funded SUD research, also activate nih-research-security.
+
+controls:
+
+# --- Consent and Disclosure Controls (P2-DC) ---
+
+- id: P2-DC-1
+  family: Disclosure Controls
+  title: Written Patient Consent for Disclosure
+  responsibility:
+    aws: AWS provides logging and access controls; consent management is application-layer
+    customer: Obtain written patient consent before disclosing Part 2 records;
+      consent must specify: name of program, name/title of recipient,
+      purpose of disclosure, type of information, patient signature/date,
+      statement that consent may be revoked; store executed consents securely
+  operational:
+  - id: cedar-part2-consent
+    description: Access to Part 2 SUD records requires documented patient consent
+    entities: [principal, resource]
+    attributes:
+      principal: [part2_access_authorized, consent_on_file, research_protocol_approved]
+      resource: [data_classification, part2_protected, consent_scope]
+  assessment:
+    objectives:
+    - id: P2-DC-1[a]
+      description: Written patient consent obtained before any Part 2 record disclosure
+      auto_assessable: false
+      evidence_source: manual
+    - id: P2-DC-1[b]
+      description: Consent documents meet all required elements
+      auto_assessable: false
+      evidence_source: manual
+
+- id: P2-DC-2
+  family: Disclosure Controls
+  title: Research Exception — IRB-Approved Protocol
+  responsibility:
+    aws: IRB protocol numbers can be tracked as Cedar attributes for access gating
+    customer: Research using Part 2 records requires IRB protocol approval with
+      explicit authorization for SUD record access; IRB must document that
+      research uses safeguards to protect patient privacy; prohibit further
+      disclosure without additional patient consent; use data use agreements
+  operational:
+  - id: cedar-part2-research-exception
+    description: Research access to Part 2 records requires current IRB approval and protocol
+    entities: [principal]
+    attributes:
+      principal: [irb_active, irb_protocol_number, part2_research_protocol_approved]
+    temporal:
+      condition_type: event
+      description: IRB protocol must specifically authorize Part 2 access; re-approval required for amendments
+  assessment:
+    objectives:
+    - id: P2-DC-2[a]
+      description: IRB protocol explicitly authorizes Part 2 SUD record access for research
+      auto_assessable: false
+      evidence_source: manual
+    - id: P2-DC-2[b]
+      description: Prohibition on re-disclosure documented and enforced
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+# --- Technical Security (P2-SEC) — New 2024 Final Rule Requirements ---
+
+- id: P2-SEC-1
+  family: Technical Security
+  title: Multi-Factor Authentication for SUD Record Systems
+  responsibility:
+    aws: IAM supports MFA for all access; STS provides short-lived credentials
+    customer: Implement MFA for all system access to Part 2 records per 2024 Final Rule;
+      no exceptions for SUD record systems; MFA required at authentication, not just
+      for elevated operations
+  structural:
+  - id: scp-require-mfa-part2
+    description: MFA required for all access to systems containing Part 2 SUD records
+    actions:
+    - '*'
+    conditions:
+    - aws:MultiFactorAuthPresent != true
+    - aws:PrincipalType == IAMUser
+    effect: Deny
+  monitoring:
+  - id: config-mfa-part2-systems
+    resource_type: AWS::IAM::User
+    check: All users with access to Part 2 SUD record systems have MFA enrolled
+  assessment:
+    objectives:
+    - id: P2-SEC-1[a]
+      description: MFA implemented for all Part 2 SUD record system access (2024 Final Rule)
+      auto_assessable: true
+      evidence_source: scp
+
+- id: P2-SEC-2
+  family: Technical Security
+  title: Access Controls and Minimum Necessary Information
+  responsibility:
+    aws: IAM permission boundaries and resource policies enforce minimum necessary access
+    customer: Limit SUD record access to minimum necessary for research purpose;
+      role-based access limiting researchers to approved protocol data only;
+      prohibit access to re-identifiable SUD records by unauthorized researchers;
+      audit all SUD record access
+  structural:
+  - id: scp-part2-minimum-necessary
+    description: Restrict SUD record access to researchers with documented authorization
+    actions:
+    - s3:GetObject
+    - s3:ListBucket
+    conditions:
+    - aws:PrincipalTag/part2-authorized != true
+    effect: Deny
+  monitoring:
+  - id: config-cloudtrail-part2-access
+    resource_type: AWS::CloudTrail::Trail
+    check: Data events enabled for S3 buckets containing Part 2 SUD records
+  assessment:
+    objectives:
+    - id: P2-SEC-2[a]
+      description: Access to SUD records limited to minimum necessary for authorized purpose
+      auto_assessable: true
+      evidence_source: scp
+    - id: P2-SEC-2[b]
+      description: All SUD record access logged and auditable
+      auto_assessable: true
+      evidence_source: config
+
+# --- Breach Notification (P2-BN) ---
+
+- id: P2-BN-1
+  family: Breach Notification
+  title: SUD Record Breach Notification (HIPAA-Aligned, 2024 Final Rule)
+  responsibility:
+    aws: GuardDuty and Macie detect anomalous access to sensitive records
+    customer: 2024 Final Rule aligns breach notification with HIPAA timelines:
+      notify affected patients without unreasonable delay (within 60 days);
+      notify HHS within 60 days for breaches involving 500+ patients;
+      document all breaches; enhanced incident response procedures required
+  monitoring:
+  - id: config-macie-sud-records
+    resource_type: AWS::Macie::Session
+    check: Macie enabled on buckets containing SUD patient records
+  assessment:
+    objectives:
+    - id: P2-BN-1[a]
+      description: Breach notification procedures documented for Part 2 SUD record breaches
+      auto_assessable: false
+      evidence_source: manual
+    - id: P2-BN-1[b]
+      description: HHS notification sent within 60 days for breaches of 500+ patient records
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event

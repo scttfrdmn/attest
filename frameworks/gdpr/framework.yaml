@@ -1,0 +1,290 @@
+id: gdpr
+name: GDPR — General Data Protection Regulation (EU) 2016/679
+version: '2018 (with amendments to 2024)'
+assessment_type: self
+assessment_cycle: annual
+source: https://gdpr-info.eu/
+
+# EU General Data Protection Regulation — Research University Applicability
+#
+# GDPR applies to US research universities when:
+#   - Collecting data from individuals physically located in the EU/EEA
+#   - Conducting multi-national research with EU-based participants or sites
+#   - Processing personal data of EU citizens (regardless of where data is stored)
+#   - Operating EU branch campuses, satellite offices, or partner institutions
+#   - Running clinical trials with EU research sites
+#
+# Scientific Research Exemption (Article 89): GDPR permits research use of personal
+# data with reduced consent requirements IF appropriate safeguards are in place
+# (pseudonymisation, encryption, data minimisation). This does NOT eliminate
+# data security requirements — only some individual rights obligations.
+#
+# Key differences from HIPAA/FERPA:
+#   - Broader scope (all personal data, not just health or education records)
+#   - Right to erasure ("right to be forgotten") — research exemption applies
+#   - Data Protection Officer (DPO) required for large-scale systematic processing
+#   - Data Protection Impact Assessments (DPIA) required for high-risk processing
+#   - Breach notification: 72 hours to supervisory authority, without undue delay to subjects
+#   - International data transfers: Standard Contractual Clauses (SCCs) or adequacy decision
+#
+# Activate alongside hipaa and/or nist-800-171-r2 for complete EU research coverage.
+
+controls:
+
+# --- Lawful Basis and Consent (GDPR-LB) ---
+
+- id: GDPR-LB-1
+  family: Lawful Basis for Processing
+  title: Research Lawful Basis Documentation (Article 89)
+  responsibility:
+    aws: AWS processes data as a data processor; institution is the data controller
+    customer: Document lawful basis for processing EU personal data in research;
+      for research: Article 89 (scientific research) with appropriate safeguards;
+      include basis in privacy notices and informed consent; maintain processing records
+  assessment:
+    objectives:
+    - id: GDPR-LB-1[a]
+      description: Lawful basis documented for each category of EU personal data processed
+      auto_assessable: false
+      evidence_source: manual
+    - id: GDPR-LB-1[b]
+      description: Article 89 safeguards implemented for research processing
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: GDPR-LB-2
+  family: Lawful Basis for Processing
+  title: Data Subject Rights Management
+  responsibility:
+    aws: S3 tagging and versioning support data subject request workflows
+    customer: Implement procedures for: access requests (30 days), rectification,
+      erasure (research exemption applies), restriction, portability;
+      document responses; note scientific research exemptions to erasure
+      and restriction rights (Article 89)
+  assessment:
+    objectives:
+    - id: GDPR-LB-2[a]
+      description: Procedures in place to respond to data subject requests within 30 days
+      auto_assessable: false
+      evidence_source: manual
+    - id: GDPR-LB-2[b]
+      description: Research exemptions to erasure rights documented and applied appropriately
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Data Protection by Design (GDPR-PBD) ---
+
+- id: GDPR-PBD-1
+  family: Data Protection by Design
+  title: Pseudonymisation and Data Minimisation
+  responsibility:
+    aws: AWS Glue, Macie, and Lambda support pseudonymisation pipelines;
+      KMS enables encryption of pseudonymisation keys separate from data
+    customer: Pseudonymise personal data where possible (separate identifiers from
+      research data; store key separately with restricted access);
+      collect only minimum necessary data (Article 5 data minimisation);
+      use separate KMS keys for identifier mapping vs. research data
+  structural:
+  - id: scp-require-kms-gdpr
+    description: Require separate KMS CMK encryption for EU personal data and pseudonymisation keys
+    actions:
+    - s3:PutObject
+    conditions:
+    - aws:RequestedRegion in [us-east-1, us-east-2, eu-west-1, eu-west-2, eu-central-1]
+    effect: Deny
+  monitoring:
+  - id: config-macie-eu-personal-data
+    resource_type: AWS::Macie::Session
+    check: Macie enabled to detect EU personal data (passports, national IDs, IBAN numbers)
+  operational:
+  - id: cedar-gdpr-pseudonymisation
+    description: EU personal data access requires pseudonymised data pathway
+    entities: [principal, resource]
+    attributes:
+      principal: [gdpr_training_current, dpa_authorized, data_steward_role]
+      resource: [data_classification, pseudonymised, eu_personal_data]
+  assessment:
+    objectives:
+    - id: GDPR-PBD-1[a]
+      description: Personal data pseudonymised where technically feasible
+      auto_assessable: true
+      evidence_source: config
+    - id: GDPR-PBD-1[b]
+      description: Data minimisation applied — only necessary fields collected
+      auto_assessable: false
+      evidence_source: manual
+
+- id: GDPR-PBD-2
+  family: Data Protection by Design
+  title: Data Protection Impact Assessment (DPIA)
+  responsibility:
+    aws: AWS provides DPIA-ready documentation and security controls reference
+    customer: Conduct DPIA before high-risk processing: large-scale systematic
+      monitoring, processing special categories (health, biometric, genetic),
+      automated decision-making; consult DPO before starting; document and
+      update when processing changes
+  assessment:
+    objectives:
+    - id: GDPR-PBD-2[a]
+      description: DPIA conducted for all high-risk EU personal data processing
+      auto_assessable: false
+      evidence_source: manual
+    - id: GDPR-PBD-2[b]
+      description: DPO consulted and DPIA documented before high-risk processing begins
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+# --- Data Security (GDPR-SEC) ---
+
+- id: GDPR-SEC-1
+  family: Data Security
+  title: Technical and Organisational Measures (Article 32)
+  responsibility:
+    aws: AWS provides encryption at rest (KMS), in transit (TLS), and access control
+      infrastructure as technical measures
+    customer: Implement appropriate technical and organisational measures including:
+      pseudonymisation, encryption, ongoing confidentiality/integrity/availability,
+      ability to restore data, regular testing and evaluation of measures;
+      document all measures as evidence for Article 32 compliance
+  structural:
+  - id: scp-require-encryption-gdpr
+    description: Require encryption for all EU personal data at rest and in transit
+    actions:
+    - '*'
+    conditions:
+    - aws:SecureTransport == false
+    effect: Deny
+  monitoring:
+  - id: config-gdpr-encryption-at-rest
+    resource_type: AWS::S3::Bucket
+    check: Buckets tagged gdpr:personal-data use KMS encryption at rest
+  - id: config-gdpr-access-logging
+    resource_type: AWS::S3::Bucket
+    check: CloudTrail data events enabled for buckets containing EU personal data
+  assessment:
+    objectives:
+    - id: GDPR-SEC-1[a]
+      description: Encryption implemented for EU personal data at rest and in transit
+      auto_assessable: true
+      evidence_source: scp
+    - id: GDPR-SEC-1[b]
+      description: Access to EU personal data logged and monitored
+      auto_assessable: true
+      evidence_source: config
+
+- id: GDPR-SEC-2
+  family: Data Security
+  title: Breach Notification (72-Hour Supervisory Authority Notification)
+  responsibility:
+    aws: GuardDuty and Macie detect anomalous access; CloudWatch enables alerting
+    customer: Notify relevant EU supervisory authority within 72 hours of discovering
+      a personal data breach likely to result in risk to individuals;
+      notify affected EU data subjects without undue delay for high-risk breaches;
+      document all breaches (including low-risk) internally; implement breach
+      response procedures specific to EU supervisory authorities
+  monitoring:
+  - id: config-macie-breach-detection
+    resource_type: AWS::Macie::Session
+    check: Macie monitoring enabled for EU personal data buckets with alerting configured
+  - id: config-guardduty-eu-data
+    resource_type: AWS::GuardDuty::Detector
+    check: GuardDuty enabled for environments processing EU personal data
+  assessment:
+    objectives:
+    - id: GDPR-SEC-2[a]
+      description: Breach notification procedures documented for 72-hour supervisory authority notification
+      auto_assessable: false
+      evidence_source: manual
+    - id: GDPR-SEC-2[b]
+      description: All personal data breaches documented (even low-risk)
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+# --- International Data Transfers (GDPR-IDT) ---
+
+- id: GDPR-IDT-1
+  family: International Data Transfers
+  title: Lawful Data Transfer Mechanism to Non-EEA Countries
+  responsibility:
+    aws: AWS provides Standard Contractual Clauses (SCCs) and Data Processing Addendum;
+      AWS regions are covered by SCCs for EU-to-US data transfers
+    customer: Ensure lawful transfer mechanism for EU personal data to US:
+      Standard Contractual Clauses (SCCs) with AWS (signed via AWS DPA);
+      document transfer mechanism for each transfer; monitor adequacy decisions;
+      note: EU-US Data Privacy Framework covers certified US organisations
+  assessment:
+    objectives:
+    - id: GDPR-IDT-1[a]
+      description: AWS Data Processing Agreement (DPA) and SCCs executed for EU personal data
+      auto_assessable: false
+      evidence_source: manual
+    - id: GDPR-IDT-1[b]
+      description: Lawful transfer mechanism documented for each EU→US data transfer
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+# --- Governance (GDPR-GOV) ---
+
+- id: GDPR-GOV-1
+  family: Governance
+  title: Data Protection Officer (DPO) Appointment
+  responsibility:
+    aws: AWS does not require DPO appointment for customers
+    customer: Appoint a DPO if: large-scale systematic monitoring of data subjects,
+      or large-scale processing of special categories of data (health, genetic,
+      biometric); most R1 universities conducting large-scale health research
+      are likely required to appoint DPO; register DPO with supervisory authority
+  assessment:
+    objectives:
+    - id: GDPR-GOV-1[a]
+      description: DPO appointed (or determination made that DPO not required, with rationale)
+      auto_assessable: false
+      evidence_source: manual
+    - id: GDPR-GOV-1[b]
+      description: DPO registered with relevant EU supervisory authority
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: GDPR-GOV-2
+  family: Governance
+  title: Records of Processing Activities (Article 30)
+  responsibility:
+    aws: AWS provides documentation of AWS processing activities in DPA
+    customer: Maintain records of processing activities (ROPA) for all EU personal
+      data processing: purposes, categories, recipients, transfers, retention,
+      security measures; update when processing changes; make available to
+      supervisory authority on request
+  operational:
+  - id: cedar-ropa-current
+    description: EU personal data environments require current Records of Processing Activities
+    entities: [environment]
+    attributes:
+      environment: [ropa_current, ropa_last_updated, dpo_reviewed]
+  assessment:
+    objectives:
+    - id: GDPR-GOV-2[a]
+      description: Records of Processing Activities maintained for all EU personal data processing
+      auto_assessable: false
+      evidence_source: manual
+    - id: GDPR-GOV-2[b]
+      description: ROPA updated when processing activities change
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
