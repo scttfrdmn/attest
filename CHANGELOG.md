@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-04-23
+
+### Added
+
+- **`attest ingest cosign --image <image>`**: Verifies cosign/SLSA signatures,
+  downloads SBOM attestations (CycloneDX/SPDX), and maps claims to compliance
+  control evidence (3.14.2, 3.14.1, 3.4.1, SI.L3-3.14.3e). Writes draft
+  attestation records to `.attest/proposed/` for human review and promotion.
+  Requires cosign CLI; fails gracefully with installation guidance if not present.
+- **`attest compile --kyverno`**: Generates a Kyverno ClusterPolicy requiring
+  keyless cosign-verified container images from ECR. Satisfies NIST 800-171
+  §3.14.2 (malicious code) and CMMC SI.L3-3.14.3e (software integrity).
+  `--kyverno-ecr-registry` and `--kyverno-ci-subject` allow customisation.
+  Output: `.attest/compiled/kyverno/require-signed-images.yaml`.
+- `internal/attestation/cosign.go`: `IngestCosignAttestation()`,
+  `CosignAttestation`, `ControlMapping` types.
+- `internal/iac/output.go`: `GenerateKyverno()`.
+
 ## [0.15.0] - 2026-04-23
 
 ### Added
