@@ -42,6 +42,7 @@ import (
 	compilerscp "github.com/provabl/attest/internal/compiler/scp"
 	"github.com/provabl/attest/internal/deploy"
 	assessmentpkg "github.com/provabl/attest/internal/document/assessment"
+	"github.com/provabl/attest/internal/document/dmsp"
 	osalexport "github.com/provabl/attest/internal/document/oscal"
 	"github.com/provabl/attest/internal/document/poam"
 	"github.com/provabl/attest/internal/document/ssp"
@@ -56,7 +57,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.16.0"
+var version = "0.17.0"
 
 func main() {
 	root := &cobra.Command{
@@ -1335,7 +1336,7 @@ func generateCmd() *cobra.Command {
 		Use:   "generate",
 		Short: "Generate compliance documents from compiled crosswalk",
 	}
-	cmd.AddCommand(generateSSPCmd(), generatePOAMCmd(), generateAssessCmd(), generateOSCALCmd(), generateCMMCBundleCmd(), generateSPRSCmd())
+	cmd.AddCommand(generateSSPCmd(), generatePOAMCmd(), generateAssessCmd(), generateOSCALCmd(), generateCMMCBundleCmd(), generateSPRSCmd(), generateDMSPCmd())
 	return cmd
 }
 
@@ -1810,6 +1811,99 @@ Assessment types:
 		},
 	}
 	cmd.Flags().Int("level", 2, "CMMC level for SPRS scoring (1, 2, or 3)")
+	return cmd
+}
+
+func generateDMSPCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "dmsp",
+		Short: "Generate NIH Data Management and Security Plan",
+		Long: `Generates a Data Management and Security Plan (DMSP) for NIH grant submissions.
+Required for all NIH-funded research since January 25, 2023 (NIH DMS Policy).
+Must be submitted with grant applications, updated annually, and included in
+progress reports.
+
+The DMSP is generated from live SRE state — environments, data classifications,
+active frameworks, and compliance posture. All security statements are derived
+from deployed artifacts, not aspirational policy.
+
+Output: .attest/documents/dmsp.md`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			piName, _ := cmd.Flags().GetString("pi")
+			piEmail, _ := cmd.Flags().GetString("pi-email")
+			grantNum, _ := cmd.Flags().GetString("grant")
+			institution, _ := cmd.Flags().GetString("institution")
+			projectTitle, _ := cmd.Flags().GetString("title")
+			icCode, _ := cmd.Flags().GetString("ic")
+
+			sre, crosswalk, err := loadGenerateContext()
+			if err != nil {
+				return err
+			}
+
+			// Default institution from SRE name if available.
+			if institution == "" && sre.Name != "" {
+				institution = sre.Name
+			}
+			if institution == "" {
+				institution = "Research Institution"
+			}
+			if projectTitle == "" {
+				projectTitle = "NIH-Funded Research Project"
+			}
+
+			plan := &dmsp.Plan{
+				SRE:             sre,
+				Crosswalk:        crosswalk,
+				PIName:           piName,
+				PIEmail:          piEmail,
+				GrantNumber:      grantNum,
+				InstitutionName:  institution,
+				ProjectTitle:     projectTitle,
+				FundingICCode:    icCode,
+				GeneratedAt:      time.Now(),
+				// Default repositories for NIH research.
+				Repositories: []dmsp.Repository{
+					{Name: "dbGaP", URL: "https://www.ncbi.nlm.nih.gov/gap/", Access: "controlled", NIHDesignated: true},
+					{Name: "GEO", URL: "https://www.ncbi.nlm.nih.gov/geo/", Access: "open", NIHDesignated: true},
+					{Name: "Zenodo", URL: "https://zenodo.org/", Access: "open", NIHDesignated: false},
+				},
+			}
+
+			doc, err := plan.Generate()
+			if err != nil {
+				return fmt.Errorf("generating DMSP: %w", err)
+			}
+
+			docsDir := filepath.Join(".attest", "documents")
+			if err := os.MkdirAll(docsDir, 0750); err != nil {
+				return fmt.Errorf("creating documents dir: %w", err)
+			}
+			outPath := filepath.Join(docsDir, "dmsp.md")
+			if err := os.WriteFile(outPath, []byte(doc), 0640); err != nil {
+				return fmt.Errorf("writing DMSP: %w", err)
+			}
+			fmt.Printf("DMSP written to %s\n", outPath)
+			fmt.Println()
+			fmt.Println("Review and complete the following before submission:")
+			fmt.Println("  1. Add project-specific data types (Section 1)")
+			fmt.Println("  2. Add tools and software used for data analysis (Section 2)")
+			fmt.Println("  3. Confirm repository selections match your data sharing plan (Section 4)")
+			fmt.Println("  4. PI and Institutional Signing Official must sign Section 7")
+			fmt.Println()
+			fmt.Println("Supporting documents:")
+			fmt.Println("  attest generate ssp --framework nist-800-171-r2  → SSP")
+			fmt.Println("  attest generate poam                              → POA&M")
+			fmt.Println("  attest generate sprs --level 2                   → SPRS score")
+			return nil
+		},
+	}
+	cmd.Flags().String("pi", "", "Principal Investigator full name")
+	cmd.Flags().String("pi-email", "", "Principal Investigator email address")
+	cmd.Flags().String("grant", "", "NIH grant number (e.g., R01GM123456)")
+	cmd.Flags().String("institution", "", "Institution name (default: SRE name from sre.yaml)")
+	cmd.Flags().String("title", "", "Project title (default: 'NIH-Funded Research Project')")
+	cmd.Flags().String("ic", "", "NIH Institute/Center code (e.g., NCI, NIGMS, NHGRI)")
 	return cmd
 }
 
@@ -2851,7 +2945,84 @@ administrative controls (training, risk assessments, IR testing, etc.).`,
 		},
 	}
 
-	cmd.AddCommand(createCmd, listCmd, expireCmd)
+	// PI Institutional Attestation — for NIH dbGaP DUC submissions.
+	piSignCmd := &cobra.Command{
+		Use:   "pi-sign",
+		Short: "Record PI institutional attestation (NIH dbGaP DUC / NIST 800-171)",
+		Long: `Records a Principal Investigator institutional attestation affirming
+NIST SP 800-171 compliance for NIH Data Use Certification (DUC) submissions.
+
+Satisfies NIH requirements for dbGaP controlled-access data access,
+NIH Research Security Program certification (NOT-OD-26-017), and
+PI personal attestation on Data Use Certifications.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			piName, _ := cmd.Flags().GetString("pi")
+			piEmail, _ := cmd.Flags().GetString("pi-email")
+			grantNum, _ := cmd.Flags().GetString("grant")
+			ducAccession, _ := cmd.Flags().GetString("dbgap-accession")
+			osrContact, _ := cmd.Flags().GetString("osr-contact")
+			expiresStr, _ := cmd.Flags().GetString("expires")
+
+			expires, err := time.Parse("2006-01-02", expiresStr)
+			if err != nil {
+				return fmt.Errorf("invalid --expires date (use YYYY-MM-DD): %w", err)
+			}
+
+			controlID := "RS.1.003"
+			if ducAccession != "" {
+				controlID = fmt.Sprintf("RS.6.001-%s", strings.ReplaceAll(ducAccession, ".", ""))
+			}
+			attID := fmt.Sprintf("ATT-PI-%d-%s",
+				time.Now().Year(),
+				strings.ToUpper(strings.ReplaceAll(grantNum, " ", "")))
+
+			evidenceDesc := fmt.Sprintf("PI: %s (%s); Grant: %s", piName, piEmail, grantNum)
+			if osrContact != "" {
+				evidenceDesc += fmt.Sprintf("; OSR: %s", osrContact)
+			}
+			if ducAccession != "" {
+				evidenceDesc += fmt.Sprintf("; dbGaP: %s", ducAccession)
+			}
+
+			a := &schema.Attestation{
+				ID:             attID,
+				ControlID:      controlID,
+				Title:          fmt.Sprintf("PI NIST 800-171 Attestation — %s", grantNum),
+				AffirmedBy:     piName,
+				ExpiresAt:      expires,
+				EvidenceRef:    evidenceDesc,
+				EvidenceType:   "pi_institutional_attestation",
+				ReviewSchedule: "annual",
+			}
+			if err := mgr.Create(ctx, a); err != nil {
+				return err
+			}
+			fmt.Printf("PI Attestation recorded: %s\n", a.ID)
+			fmt.Printf("  PI:      %s (%s)\n", piName, piEmail)
+			fmt.Printf("  Grant:   %s\n", grantNum)
+			fmt.Printf("  Expires: %s\n", expires.Format("2006-01-02"))
+			if ducAccession != "" {
+				fmt.Printf("  dbGaP:   %s\n", ducAccession)
+			}
+			fmt.Println()
+			fmt.Println("Generate DMSP with this attestation:")
+			fmt.Printf("  attest generate dmsp --pi %q --grant %s\n", piName, grantNum)
+			return nil
+		},
+	}
+	piSignCmd.Flags().String("pi", "", "Principal Investigator full name (required)")
+	piSignCmd.Flags().String("pi-email", "", "PI email address (required)")
+	piSignCmd.Flags().String("grant", "", "NIH grant number, e.g. R01GM123456 (required)")
+	piSignCmd.Flags().String("expires", "", "Attestation expiry YYYY-MM-DD (required; typically 1 year)")
+	piSignCmd.Flags().String("dbgap-accession", "", "dbGaP study accession, e.g. phs000001.v1.p1 (optional)")
+	piSignCmd.Flags().String("osr-contact", "", "Office of Sponsored Research co-attestor name (optional)")
+	_ = piSignCmd.MarkFlagRequired("pi")
+	_ = piSignCmd.MarkFlagRequired("pi-email")
+	_ = piSignCmd.MarkFlagRequired("grant")
+	_ = piSignCmd.MarkFlagRequired("expires")
+
+	cmd.AddCommand(createCmd, listCmd, expireCmd, piSignCmd)
 	return cmd
 }
 

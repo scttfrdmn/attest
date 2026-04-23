@@ -1,0 +1,495 @@
+id: nih-research-security
+name: NIH Research Security Program (NOT-OD-26-017)
+version: '2026 (NOT-OD-26-017, NOT-OD-25-159, GDS Policy)'
+assessment_type: self
+assessment_cycle: annual
+source: https://grants.nih.gov/grants/guide/notice-files/NOT-OD-26-017.html
+
+# NIH Research Security Program Requirements for R1 Research Universities
+#
+# Applies to: Institutions receiving >$50M federal R&D support per year
+# (most R1 research universities). Required for ALL key personnel on NIH grants.
+#
+# This framework covers requirements BEYOND NIST SP 800-171 (nist-800-171-r2):
+#   NOT-OD-26-017  — Research Security Training (effective January 25, 2026)
+#   NOT-OD-25-159  — NIH Controlled-Access Data Repository security standards
+#   NIH GDS Policy — Genomic Data Sharing (dbGaP, effective January 25, 2025)
+#   NIH DMS Policy — Data Management and Sharing (effective January 25, 2023)
+#   NIHGPS 2.3.12  — Protecting Sensitive Data in Research
+#
+# Activate alongside nist-800-171-r2 for complete NIH compliance coverage.
+# NIH requires NIST 800-171 as the technical baseline; this framework adds the
+# governance, training, data management, and institutional program requirements.
+#
+# Control ID convention: RS.<element>.<seq>
+#   RS.1 = Research Security Program
+#   RS.2 = Cybersecurity Element
+#   RS.3 = Foreign Travel Security Element
+#   RS.4 = Insider Threat Element
+#   RS.5 = Export Controls Element
+#   RS.6 = Genomic Data / dbGaP Requirements
+#   RS.7 = Data Management and Sharing Policy
+
+controls:
+
+# --- Research Security Program (RS.1) ---
+
+- id: RS.1.001
+  family: Research Security Program
+  title: Institutional Research Security Program Established
+  responsibility:
+    aws: AWS infrastructure supports the technical controls of the research security program
+    customer: Designate a Research Security Point of Contact (RSPC); establish a written
+      research security program covering all four required elements (cybersecurity, foreign
+      travel, insider threat, export controls); certify program on all applicable NIH grant
+      applications and renewals
+  operational:
+  - id: cedar-research-security-program
+    description: Research environments must have an active research security program documented
+    entities: [environment]
+    attributes:
+      environment: [research_security_program_active, rspc_designated, institution_certified]
+    admin_dependencies:
+    - control_id: RS.1.001
+      attribute: environment.research_security_program_active
+      consequence: NIH grant eligibility at risk without active research security certification
+  assessment:
+    objectives:
+    - id: RS.1.001[a]
+      description: A Research Security Point of Contact is designated at the institution
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.1.001[b]
+      description: Written research security program is established covering all four elements
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.1.001[c]
+      description: Program is certified on NIH grant applications as required
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: RS.1.002
+  family: Research Security Program
+  title: Key Personnel Research Security Training
+  responsibility:
+    aws: AWS provides training documentation and e-learning resources for security awareness
+    customer: Ensure all key personnel complete research security training within 12 months
+      prior to grant application or renewal; training must cover cybersecurity, foreign
+      travel security, insider threats, and export controls; retain training records
+  operational:
+  - id: cedar-research-security-training
+    description: Principal Investigators and key personnel must have current research security training
+    entities: [principal]
+    attributes:
+      principal: [research_security_training_current, training_completion_date, role_type]
+    temporal:
+      condition_type: expiry
+      description: Research security training required within 12 months of grant application/renewal
+    admin_dependencies:
+    - control_id: RS.1.002
+      attribute: principal.research_security_training_current
+      consequence: Key personnel cannot be listed on NIH applications without current training
+  assessment:
+    objectives:
+    - id: RS.1.002[a]
+      description: All key personnel have completed research security training within 12 months
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.1.002[b]
+      description: Training records are retained and available for NIH review
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: RS.1.003
+  family: Research Security Program
+  title: NIST 800-171 Institutional Attestation
+  responsibility:
+    aws: AWS provides SOC 2 Type II, ISO 27001, and FedRAMP documentation for the AWS side
+      of shared responsibility; the NIH-required PI attestation covers the customer side
+    customer: Principal Investigator personally attests to institutional NIST 800-171
+      compliance when submitting Data Use Certification (DUC) for controlled-access data;
+      Institutional Signing Official or OSR co-attests; attestation is per-grant and
+      must be renewed with each DUC renewal
+  operational:
+  - id: cedar-pi-attestation-current
+    description: PI attestation of institutional NIST 800-171 compliance must be current
+    entities: [principal]
+    attributes:
+      principal: [pi_nist_attestation_current, pi_attestation_date, grant_number]
+    admin_dependencies:
+    - control_id: RS.1.003
+      attribute: principal.pi_nist_attestation_current
+      consequence: dbGaP data access blocked without current PI NIST 800-171 attestation
+  assessment:
+    objectives:
+    - id: RS.1.003[a]
+      description: PI has signed current NIST 800-171 attestation for all active DUCs
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.1.003[b]
+      description: Institutional Signing Official has co-attested compliance
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+# --- Cybersecurity Element (RS.2) ---
+
+- id: RS.2.001
+  family: Cybersecurity Element
+  title: Institutional Cybersecurity Program
+  responsibility:
+    aws: AWS provides NIST 800-171-aligned infrastructure via FedRAMP-authorized services
+    customer: Implement a cybersecurity program meeting NIST SP 800-171 Rev 2 requirements
+      as the technical baseline; document program in the DMSP and SSP; conduct annual
+      self-assessment and submit score to SPRS; engage C3PAO for Level 2 certification
+      if required for DoD-funded research
+  assessment:
+    objectives:
+    - id: RS.2.001[a]
+      description: Cybersecurity program implemented per NIST SP 800-171 Rev 2
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.2.001[b]
+      description: Annual self-assessment completed and SPRS score submitted (DoD grants)
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.2.001[c]
+      description: System Security Plan (SSP) documents cybersecurity implementation
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: RS.2.002
+  family: Cybersecurity Element
+  title: Incident Reporting to NIH
+  responsibility:
+    aws: AWS provides CloudTrail and GuardDuty for incident detection; AWS notifies
+      customers of relevant security incidents via AWS Health
+    customer: Report cybersecurity incidents affecting NIH-funded research data to NIH
+      within 1 hour of discovery (for controlled-access data breaches); follow NIH
+      incident reporting procedures; notify affected data subjects per applicable laws
+  operational:
+  - id: cedar-nih-incident-reporting
+    description: NIH-funded research environments must have NIH incident reporting procedure documented
+    entities: [environment]
+    attributes:
+      environment: [nih_incident_reporting_procedure_active, nih_reporting_contact_email]
+  assessment:
+    objectives:
+    - id: RS.2.002[a]
+      description: NIH incident reporting procedure is documented and personnel are trained
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.2.002[b]
+      description: Cybersecurity incidents affecting NIH data are reported within required timeframes
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Foreign Travel Security Element (RS.3) ---
+
+- id: RS.3.001
+  family: Foreign Travel Security Element
+  title: Foreign Travel Risk Assessment and Briefing
+  responsibility:
+    aws: AWS systems and data are accessible from approved locations; VPN + MFA
+      enforced regardless of travel location
+    customer: Brief key personnel on foreign travel security risks before international travel;
+      assess risks of carrying research data on foreign travel; use loaner devices (no
+      research data) when traveling to high-risk countries; debrief after return from
+      countries of concern
+  assessment:
+    objectives:
+    - id: RS.3.001[a]
+      description: Pre-travel security briefings provided to key personnel before international travel
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.3.001[b]
+      description: High-risk country travel requires enhanced security measures (loaner devices)
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: event
+    trigger: event
+
+- id: RS.3.002
+  family: Foreign Travel Security Element
+  title: Research Data Protection During Foreign Travel
+  responsibility:
+    aws: AWS Mobile Access controls, CloudFront geo-restrictions, and VPN enforcements
+      protect data during remote access
+    customer: Prohibit travel with devices containing unencrypted controlled research data;
+      use encrypted devices with remote wipe capability; enforce MFA for all remote access;
+      review and approve data access from foreign locations
+  structural:
+  - id: scp-require-mfa-travel
+    description: MFA required for all access regardless of location (enforced globally)
+    actions:
+    - '*'
+    conditions:
+    - aws:MultiFactorAuthPresent != true
+    - aws:PrincipalType == IAMUser
+    effect: Deny
+  assessment:
+    objectives:
+    - id: RS.3.002[a]
+      description: Devices with research data are encrypted and remote-wipe capable
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Insider Threat Element (RS.4) ---
+
+- id: RS.4.001
+  family: Insider Threat Element
+  title: Insider Threat Awareness Program
+  responsibility:
+    aws: AWS provides GuardDuty behavioral analytics for detecting anomalous access patterns
+    customer: Establish insider threat awareness program; train personnel to recognize and
+      report insider threat indicators; define reporting procedures; conduct background
+      checks for personnel with access to sensitive research data
+  monitoring:
+  - id: config-guardduty-insider-threat
+    resource_type: AWS::GuardDuty::Detector
+    check: GuardDuty enabled with behavioral analytics for detecting anomalous research data access
+  assessment:
+    objectives:
+    - id: RS.4.001[a]
+      description: Insider threat awareness training provided to research staff
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.4.001[b]
+      description: Procedures for reporting insider threat indicators are documented
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+- id: RS.4.002
+  family: Insider Threat Element
+  title: Access Monitoring for Research Data
+  responsibility:
+    aws: CloudTrail logs all S3, RDS, and Lambda access; GuardDuty detects credential
+      exfiltration and unusual data access patterns
+    customer: Monitor research data access for unusual patterns; review CloudTrail logs
+      for unexpected bulk downloads or off-hours access; implement automated alerting
+      for anomalous access to controlled-access research data
+  monitoring:
+  - id: config-cloudtrail-data-events
+    resource_type: AWS::CloudTrail::Trail
+    check: Data events enabled for S3 buckets containing NIH-funded research data
+  - id: config-guardduty-s3-protection
+    resource_type: AWS::GuardDuty::Detector
+    check: GuardDuty S3 protection enabled for research data buckets
+  assessment:
+    objectives:
+    - id: RS.4.002[a]
+      description: Research data access is logged and monitored for anomalous patterns
+      auto_assessable: true
+      evidence_source: config
+
+# --- Export Controls Element (RS.5) ---
+
+- id: RS.5.001
+  family: Export Controls Element
+  title: Export Control Compliance Program
+  responsibility:
+    aws: AWS GovCloud and regional deployments support export control requirements;
+      AWS ITAR compliance documentation available
+    customer: Implement export control compliance program (EAR/ITAR as applicable);
+      identify research projects involving export-controlled technology; train personnel
+      on export control obligations; obtain required licenses before sharing controlled
+      technology with foreign nationals
+  assessment:
+    objectives:
+    - id: RS.5.001[a]
+      description: Export control compliance program is established
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.5.001[b]
+      description: Personnel with access to export-controlled research are trained
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
+
+# --- Genomic Data / dbGaP Requirements (RS.6) ---
+
+- id: RS.6.001
+  family: Genomic Data Security
+  title: dbGaP Data Use Certification Compliance
+  responsibility:
+    aws: AWS provides HIPAA-eligible services, encryption at rest and in transit for
+      genomic data; AWS GovCloud available for highest-sensitivity genomic research
+    customer: Complete and maintain current NIH dbGaP Data Use Certification (DUC) for
+      each study being accessed; DUC must be renewed annually; PI and institutional
+      official must both attest to NIST 800-171 compliance on each DUC
+  operational:
+  - id: cedar-dbgap-duc-current
+    description: Environments processing dbGaP controlled-access data require current DUC
+    entities: [environment]
+    attributes:
+      environment: [dbgap_duc_current, dbgap_study_accession, duc_expiry_date]
+    temporal:
+      condition_type: expiry
+      description: dbGaP DUC must be renewed annually; access blocked after expiry
+    admin_dependencies:
+    - control_id: RS.6.001
+      attribute: environment.dbgap_duc_current
+      consequence: Processing dbGaP data without current DUC violates NIH Genomic Data Sharing Policy
+  assessment:
+    objectives:
+    - id: RS.6.001[a]
+      description: Active, current DUC exists for each dbGaP study being accessed
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.6.001[b]
+      description: DUC renewal submitted before expiry for ongoing studies
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: RS.6.002
+  family: Genomic Data Security
+  title: Controlled-Access Genomic Data Segregation
+  responsibility:
+    aws: VPC isolation, S3 bucket policies, and KMS CMKs segregate controlled-access
+      genomic data from open-access or unpublished research data
+    customer: Store dbGaP and other controlled-access genomic data in isolated environments;
+      do not mix with open-access or unapproved data; encrypt with study-specific KMS keys;
+      tag all controlled-access data with attest:data-class=PHI or attest:data-class=CUI
+  structural:
+  - id: scp-require-kms-genomic
+    description: Require KMS encryption for all S3 buckets tagged with controlled genomic data
+    actions:
+    - s3:PutObject
+    conditions:
+    - aws:RequestedRegion in [us-east-1, us-east-2, us-west-1, us-west-2]
+    effect: Deny
+  - id: scp-block-genomic-public-access
+    description: Block public access on all buckets containing controlled genomic data
+    actions:
+    - s3:PutBucketPublicAccessBlock
+    conditions:
+    - s3:PublicAccessBlockAmazonS3 != true
+    effect: Deny
+  monitoring:
+  - id: config-s3-genomic-encryption
+    resource_type: AWS::S3::Bucket
+    check: S3 buckets tagged attest:data-class=PHI or genomic-controlled use KMS CMK encryption
+  - id: config-s3-genomic-no-public
+    resource_type: AWS::S3::Bucket
+    check: No controlled-access genomic data buckets are publicly accessible
+  assessment:
+    objectives:
+    - id: RS.6.002[a]
+      description: Controlled-access genomic data is isolated in dedicated environments
+      auto_assessable: true
+      evidence_source: scp
+    - id: RS.6.002[b]
+      description: Controlled-access genomic data is encrypted with study-specific keys
+      auto_assessable: true
+      evidence_source: config
+
+- id: RS.6.003
+  family: Genomic Data Security
+  title: Genomic Data Breach Reporting
+  responsibility:
+    aws: GuardDuty and Macie detect anomalous access to sensitive genomic data
+    customer: Report any breach or suspected breach of controlled-access NIH genomic data
+      to NIH within 1 hour of discovery; notify dbGaP Data Access Committee (DAC);
+      notify affected participants per applicable state and federal breach notification laws;
+      NIH may suspend or revoke data access pending investigation
+  monitoring:
+  - id: config-macie-enabled-genomic
+    resource_type: AWS::Macie::Session
+    check: Macie enabled and configured to scan S3 buckets containing controlled genomic data
+  assessment:
+    objectives:
+    - id: RS.6.003[a]
+      description: Genomic data breach reporting procedures documented (1-hour NIH notification)
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.6.003[b]
+      description: Macie monitors controlled-access genomic data buckets for sensitive data exposure
+      auto_assessable: true
+      evidence_source: config
+
+# --- Data Management and Sharing Policy (RS.7) ---
+
+- id: RS.7.001
+  family: Data Management and Sharing
+  title: Data Management and Security Plan (DMSP)
+  responsibility:
+    aws: AWS provides the technical infrastructure; DMSP documents how that infrastructure
+      is used to manage and protect research data
+    customer: Develop and maintain a DMSP for all NIH-funded research; submit DMSP with
+      grant applications (required since January 25, 2023); update DMSP when research
+      scope changes; include in annual progress reports; generate via attest generate dmsp
+  operational:
+  - id: cedar-dmsp-current
+    description: NIH-funded research environments must have a current, approved DMSP
+    entities: [environment]
+    attributes:
+      environment: [dmsp_current, dmsp_approved_date, grant_number]
+    temporal:
+      condition_type: event
+      description: DMSP must be updated on significant scope changes and at each annual reporting period
+    admin_dependencies:
+    - control_id: RS.7.001
+      attribute: environment.dmsp_current
+      consequence: NIH non-compliance risk without current DMSP; may affect grant renewal
+  assessment:
+    objectives:
+    - id: RS.7.001[a]
+      description: Current DMSP exists for all active NIH grants
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.7.001[b]
+      description: DMSP accurately reflects current data management practices
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.7.001[c]
+      description: DMSP includes 6 required sections (types, tools, standards, preservation, access, oversight)
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: event
+
+- id: RS.7.002
+  family: Data Management and Sharing
+  title: Certificate of Confidentiality Compliance
+  responsibility:
+    aws: AWS encryption and access controls protect data covered by Certificates of
+      Confidentiality from unauthorized disclosure
+    customer: Understand that NIH-funded research involving identifiable sensitive information
+      receives automatic Certificates of Confidentiality (CoC); inform research subjects
+      of CoC protections and limitations during informed consent; comply with CoC
+      restrictions — protected information cannot be disclosed without subject consent
+  assessment:
+    objectives:
+    - id: RS.7.002[a]
+      description: Research subjects informed of Certificate of Confidentiality protections during consent
+      auto_assessable: false
+      evidence_source: manual
+    - id: RS.7.002[b]
+      description: Protected research data is not disclosed in response to subpoenas or legal demands
+        without proper CoC authority review
+      auto_assessable: false
+      evidence_source: manual
+  review_schedule:
+    frequency: annual
+    trigger: calendar
