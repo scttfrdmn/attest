@@ -161,29 +161,6 @@ func TestRandomStateUniqueness(t *testing.T) {
 	}
 }
 
-// TestIsLocalAddr verifies localhost detection for Secure cookie flag.
-func TestIsLocalAddr(t *testing.T) {
-	local := []string{
-		"localhost:8080", "127.0.0.1:8080", "::1", "127.0.0.1",
-		"http://localhost:8080/callback",
-	}
-	remote := []string{
-		"0.0.0.0:8080", "dashboard.university.edu:8080",
-		"https://dashboard.university.edu/callback",
-		":8080",
-	}
-	for _, addr := range local {
-		if !isLocalAddr(addr) {
-			t.Errorf("isLocalAddr(%q) = false, want true", addr)
-		}
-	}
-	for _, addr := range remote {
-		if isLocalAddr(addr) {
-			t.Errorf("isLocalAddr(%q) = true, want false", addr)
-		}
-	}
-}
-
 // TestStaticTokenMiddleware verifies the static token middleware.
 func TestStaticTokenMiddleware(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

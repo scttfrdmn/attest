@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -125,7 +124,8 @@ func (h *OIDCHandler) Middleware(next http.Handler) http.Handler {
 
 		cookie, err := r.Cookie(sessionCookieName)
 		if err != nil {
-			http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.Path), http.StatusFound) // nosemgrep: go.lang.security.injection.open-redirect.open-redirect
+			h.setRedirectCookie(w, r.URL.Path)
+			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
 
@@ -137,7 +137,8 @@ func (h *OIDCHandler) Middleware(next http.Handler) http.Handler {
 			h.mu.Lock()
 			delete(h.sessions, cookie.Value)
 			h.mu.Unlock()
-			http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.Path), http.StatusFound) // nosemgrep: go.lang.security.injection.open-redirect.open-redirect
+			h.setRedirectCookie(w, r.URL.Path)
+			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
 
@@ -152,12 +153,12 @@ func (h *OIDCHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Store state in a short-lived cookie to prevent CSRF.
-	http.SetCookie(w, &http.Cookie{ // nosemgrep: go.lang.security.audit.net.cookie-missing-secure
+	http.SetCookie(w, &http.Cookie{
 		Name:     "oidc_state",
 		Value:    state,
 		MaxAge:   300, // 5 minutes
 		HttpOnly: true,
-		Secure:   !isLocalAddr(h.oauth2.RedirectURL),
+		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, h.oauth2.AuthCodeURL(state), http.StatusFound)
@@ -173,12 +174,12 @@ func (h *OIDCHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid state", http.StatusBadRequest)
 		return
 	}
-	// Clear state cookie — flags must match the original for browsers to honour the deletion.
-	http.SetCookie(w, &http.Cookie{ // nosemgrep: go.lang.security.audit.net.cookie-missing-secure
+	// Clear state cookie.
+	http.SetCookie(w, &http.Cookie{
 		Name:     "oidc_state",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   !isLocalAddr(h.oauth2.RedirectURL),
+		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -228,24 +229,25 @@ func (h *OIDCHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 	h.sessions[sessionToken] = user
 	h.mu.Unlock()
 
-	// Set session cookie. Secure flag is true when not on localhost.
-	http.SetCookie(w, &http.Cookie{ // nosemgrep: go.lang.security.audit.net.cookie-missing-secure
+	// Set session cookie.
+	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    sessionToken,
 		MaxAge:   int(sessionMaxAge.Seconds()),
 		HttpOnly: true,
-		Secure:   !isLocalAddr(h.oauth2.RedirectURL),
+		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	// Validate redirect — only accept relative paths to prevent open redirect.
+	// Restore requested path from redirect cookie, then clear it.
 	redirect := "/"
-	if raw := r.URL.Query().Get("redirect"); raw != "" &&
-		strings.HasPrefix(raw, "/") &&
-		!strings.Contains(raw, "://") &&
-		!strings.HasPrefix(raw, "//") {
-		redirect = raw
+	if rc, err := r.Cookie("attest_redirect"); err == nil && rc.Value != "" {
+		raw := rc.Value
+		if strings.HasPrefix(raw, "/") && !strings.Contains(raw, "://") && !strings.HasPrefix(raw, "//") {
+			redirect = raw
+		}
 	}
+	http.SetCookie(w, &http.Cookie{Name: "attest_redirect", MaxAge: -1, Secure: true, HttpOnly: true})
 	http.Redirect(w, r, redirect, http.StatusFound)
 }
 
@@ -255,11 +257,11 @@ func (h *OIDCHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		delete(h.sessions, cookie.Value)
 		h.mu.Unlock()
 	}
-	http.SetCookie(w, &http.Cookie{ // nosemgrep: go.lang.security.audit.net.cookie-missing-secure
+	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   !isLocalAddr(h.oauth2.RedirectURL),
+		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, "/login", http.StatusFound)
@@ -298,12 +300,18 @@ func (h *OIDCHandler) resolveRole(claims map[string]any) Role {
 	return RoleAuditor
 }
 
-// isLocalAddr reports whether an address string refers to a loopback/localhost
-// endpoint. Used to decide whether session cookies should be Secure-only.
-func isLocalAddr(addr string) bool {
-	return strings.Contains(addr, "localhost") ||
-		strings.Contains(addr, "127.0.0.1") ||
-		strings.Contains(addr, "::1")
+// setRedirectCookie stores the requested path in a short-lived cookie so that
+// handleCallback can restore the user's destination after login, without
+// embedding user-controlled data in a redirect URL.
+func (h *OIDCHandler) setRedirectCookie(w http.ResponseWriter, path string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "attest_redirect",
+		Value:    path,
+		MaxAge:   300,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 // --- context helpers ---

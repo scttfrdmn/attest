@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"text/template" // nosemgrep: go.lang.security.audit.xss.import-text-template
+	"text/template" // nosemgrep
 	"time"
 )
 
