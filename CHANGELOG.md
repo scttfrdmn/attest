@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-04-23
+
+### Security
+
+Board-wide audit — 14 findings across all packages fixed.
+
+- **CRITICAL fixed**: Framework loader path traversal — `Load(id)` used the
+  caller-supplied `id` directly in `filepath.Join` before path confinement check;
+  `validate()` only checked `fw.ID` from the YAML file, not the input param.
+  Added `filepath.Abs` confinement to reject IDs that escape `frameworkDir`.
+- **CRITICAL fixed**: Cedar policy code injection — `spec.Description` embedded
+  raw in a `//` comment; a newline would close the comment and inject Cedar policy
+  statements. New `sanitizeCedarComment()` strips `\n`/`\r` before embedding.
+- **CRITICAL fixed**: Cedar entity/attribute name injection — entity and attribute
+  names from framework YAML embedded directly in generated Cedar policy text.
+  New `isValidCedarIdentifier()` rejects names containing non-identifier characters.
+- **HIGH fixed**: Waiver ID path traversal — `w.ID` used as a filename stem without
+  validation; IDs derived from `--control` CLI flag which could contain `/` or `..`.
+  Added `safeIDRE` (`[a-zA-Z0-9_-]+`) validation in `Create()` and `Expire()`.
+- **HIGH fixed**: Attestation ID path traversal — same issue and fix as waiver.
+- **HIGH fixed**: Git ref injection in `store.Diff()` — `Tag()` and `Checkout()`
+  validated refs via `validateRef()` but `Diff(from, to)` did not; added validation.
+- **HIGH fixed**: Template parse error exposed to HTTP clients in dashboard
+  `handleIndex` — `err.Error()` returned verbatim; now logs server-side and returns
+  generic "Internal Server Error".
+- **HIGH fixed**: Bearer token timing attack in dashboard `authMiddleware` — string
+  equality replaced with `subtle.ConstantTimeCompare()`.
+- **HIGH fixed**: YAML parse error details returned to authenticated dashboard clients
+  (`handlePosture`, `handleWaivers`, `handleIncidents`) — now return generic messages.
+- **HIGH fixed**: `fetchPresigned()` in artifact client had no response size limit;
+  `io.ReadAll` replaced with `io.LimitReader` capped at 100 MB.
+- **MEDIUM fixed**: Principal resolver silently discarded source errors
+  (`_ = fmt.Sprintf(...)`) — now logs to stderr for operational visibility.
+- **MEDIUM fixed**: `evaluator/sqs.go` used string concatenation for history log
+  path — replaced with `filepath.Join()`.
+- **MEDIUM fixed**: `GenerateTrend()` loaded all history snapshots without a count
+  limit; added 1 000-snapshot cap to prevent memory exhaustion.
+- **LOW fixed**: `strings.Title` (deprecated) in SSP renderer replaced with
+  inline `titleCase()` helper.
+
 ## [0.12.0] - 2026-04-20
 
 ### Added
