@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-04-23
+
+### Added
+
+- **CMMC Level 1** — `frameworks/cmmc-level-1/framework.yaml`: all 15 FAR 52.204-21
+  foundational practices (annual self-assessment → SPRS). Covers all practice families
+  including Physical Protection (PE) as admin-only controls with Cedar attestation
+  patterns and annual review schedules. Email security (DMARC/SPF/DKIM, SES malware
+  filtering) integrated into SC.L1-3.13.1 and SI.L1-3.14.2.
+- **CMMC Level 3** — `frameworks/cmmc-level-3/framework.yaml`: 24 enhanced practices
+  from NIST SP 800-172 (delta — activate alongside `nist-800-171-r2`). DCSA
+  government-led assessment, triennial cycle. Covers AC/AT/AU/CM/IA/IR/RA/SA/SC/SI
+  families including SOC requirements, behavioral analytics, and FIPS cryptography.
+- **Email security monitoring** in `nist-800-171-r2`: DMARC, SPF, SES DKIM, and
+  SES receipt filter rules added to controls 3.13.1 and 3.14.2.
+- **`attest generate sprs`**: SPRS score report using DoD NIST 800-171A methodology.
+  `--level 1` (pass/fail on 15 practices), `--level 2` (start-at-110 scoring),
+  `--level 3` (DCSA process guidance). Includes SPRS portal link for submission.
+- **Schema**: `Framework.AssessmentType` and `Framework.AssessmentCycle` fields.
+- **Conflict detection**: `cmmc-level-3` without `nist-800-171-r2` → blocking;
+  `cmmc-level-1` + `nist-800-171-r2` together → info (deduplication note).
+
 ## [0.14.0] - 2026-04-23
 
 ### Added
