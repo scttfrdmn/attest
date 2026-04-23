@@ -169,6 +169,61 @@ func TestFormatConflicts_NonEmpty(t *testing.T) {
 	}
 }
 
+func TestDetectConflicts_FedRAMPHighWithoutModerate(t *testing.T) {
+	fws := []*schema.Framework{
+		{ID: "fedramp-high", Controls: []schema.Control{{ID: "AU-10", Title: "Non-repudiation"}}},
+		{ID: "nist-800-171-r2", Controls: []schema.Control{{ID: "3.1.1", Title: "Access control"}}},
+	}
+	conflicts := DetectConflicts(fws)
+	found := false
+	for _, c := range conflicts {
+		for _, fw := range c.Frameworks {
+			if fw == "fedramp-high" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("expected warning conflict when fedramp-high active without fedramp-moderate")
+	}
+}
+
+func TestDetectConflicts_FedRAMPHighWithModerate_NoGap(t *testing.T) {
+	fws := []*schema.Framework{
+		{ID: "fedramp-moderate", Controls: []schema.Control{{ID: "AC-2", Title: "Account Management"}}},
+		{ID: "fedramp-high", Controls: []schema.Control{{ID: "AU-10", Title: "Non-repudiation"}}},
+	}
+	conflicts := DetectConflicts(fws)
+	for _, c := range conflicts {
+		for _, fw := range c.Frameworks {
+			if fw == "fedramp-high" && c.Severity == "warning" {
+				t.Error("unexpected fedramp-high gap warning when fedramp-moderate is also active")
+			}
+		}
+	}
+}
+
+func TestDetectConflicts_FedRAMPAndITAR(t *testing.T) {
+	fws := []*schema.Framework{
+		{ID: "fedramp-moderate", Controls: []schema.Control{{ID: "AC-2", Title: "Account Management"}}},
+		{ID: "itar", Controls: []schema.Control{{ID: "ITAR-1", Title: "Export control"}}},
+	}
+	conflicts := DetectConflicts(fws)
+	foundInfo := false
+	for _, c := range conflicts {
+		for _, fw := range c.Frameworks {
+			if fw == "fedramp-moderate" || fw == "fedramp-high" {
+				if c.Severity == "info" {
+					foundInfo = true
+				}
+			}
+		}
+	}
+	if !foundInfo {
+		t.Error("expected info conflict for fedramp + itar combination")
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsHelper(s, sub))
 }

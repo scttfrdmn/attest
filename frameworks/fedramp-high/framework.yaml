@@ -1,0 +1,350 @@
+id: fedramp-high
+name: FedRAMP High Baseline (delta)
+version: 'Rev 5 (2024)'
+source: https://www.fedramp.gov/baselines/
+artifact_reports:
+- series: FedRAMP Authorization
+  category: Compliance
+
+# FedRAMP High is a strict superset of FedRAMP Moderate (NIST SP 800-53 Rev 5).
+# This framework is a DELTA — it contains only the controls that are in the
+# High baseline but NOT in fedramp-moderate. Activate BOTH fedramp-moderate AND
+# fedramp-high together for complete FedRAMP High coverage.
+#
+# High baseline adds stricter requirements in these areas:
+#   - Stronger MFA (hardware tokens, per-device authentication)
+#   - Non-repudiation (signing certificates for all privileged operations)
+#   - Longer audit retention (1 year vs 90 days)
+#   - Hardware-enforced cryptographic integrity (FIPS 140-2 Level 2+)
+#   - Privileged access management (PAM, SSM-only maintenance)
+#   - Supply chain protections (signed images, validated deployments)
+#
+# FedRAMP High is required for:
+#   - Systems processing classified or highly sensitive federal data
+#   - DoD IL4/IL5 workloads
+#   - Law enforcement, national security, emergency services systems
+
+controls:
+
+# --- Access Control (AC) — High additions ---
+
+- id: AC-2(13)
+  family: Access Control
+  title: Account Management — Disable Accounts for High-Risk Individuals
+  responsibility:
+    aws: IAM supports programmatic account suspension via tag-based SCPs and automation
+    customer: Define high-risk criteria; automate account suspension within 1 hour of identification
+  structural:
+  - id: scp-suspend-high-risk-accounts
+    description: Deny all actions from accounts tagged as high-risk-suspended
+    actions:
+    - '*'
+    conditions:
+    - aws:PrincipalTag/account-risk-level == high-suspended
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AC-2(13)(a)
+      description: High-risk accounts disabled within 1 hour of identification
+      auto_assessable: true
+      evidence_source: scp
+
+- id: AC-6(1)
+  family: Access Control
+  title: Least Privilege — Authorize Access to Security Functions
+  responsibility:
+    aws: IAM permission boundaries and SCPs restrict security function access
+    customer: Explicitly authorize security function access; deny iam:PassRole without approval tag
+  structural:
+  - id: scp-restrict-passrole
+    description: Deny iam:PassRole without explicit security-function-authorized tag
+    actions:
+    - iam:PassRole
+    conditions:
+    - aws:RequestTag/security-function-authorized != true
+    - aws:PrincipalOrgPaths != /*/security-admin/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AC-6(1)(a)
+      description: Access to security functions authorized explicitly and separately
+      auto_assessable: true
+      evidence_source: scp
+
+# --- Audit and Accountability (AU) — High additions ---
+
+- id: AU-9(3)
+  family: Audit and Accountability
+  title: Protection of Audit Information — Cryptographically Protected Audit Records
+  responsibility:
+    aws: CloudTrail supports log file integrity validation via SHA-256 hash chaining
+    customer: Enable CloudTrail log file validation; verify digest files periodically
+  structural:
+  - id: scp-require-cloudtrail-integrity
+    description: Deny disabling CloudTrail log file validation on existing trails
+    actions:
+    - cloudtrail:UpdateTrail
+    conditions:
+    - cloudtrail:LogFileValidationEnabled != true
+    effect: Deny
+  assessment:
+    objectives:
+    - id: AU-9(3)(a)
+      description: Hardware write-once media or cryptographic protection used for audit records
+      auto_assessable: true
+      evidence_source: scp
+
+- id: AU-10
+  family: Audit and Accountability
+  title: Non-Repudiation
+  responsibility:
+    aws: CloudTrail provides signed, tamper-evident logs; IAM provides principal attribution
+    customer: Use signing certificates for privileged operations; verify CloudTrail digest chains
+  operational:
+  - id: cedar-non-repudiation
+    description: Privileged operations require verified signing certificate for non-repudiation
+    entities: [principal]
+    attributes:
+      principal: [has_signing_cert, signing_cert_valid, admin_level]
+  assessment:
+    objectives:
+    - id: AU-10(a)
+      description: Individuals cannot deny having performed system actions
+      auto_assessable: false
+      evidence_source: manual
+
+- id: AU-11
+  family: Audit and Accountability
+  title: Audit Record Retention
+  responsibility:
+    aws: CloudWatch Logs and S3 support configurable retention; Glacier for long-term storage
+    customer: Retain audit logs for at least 1 year (High baseline); 3 years recommended
+  monitoring:
+  - id: config-cloudwatch-logs-retention-high
+    resource_type: AWS::Logs::LogGroup
+    check: CloudWatch Log Groups holding audit records have retention ≥ 365 days
+  - id: config-s3-audit-retention
+    resource_type: AWS::S3::Bucket
+    check: S3 buckets holding CloudTrail logs have lifecycle policies retaining objects ≥ 365 days
+  assessment:
+    objectives:
+    - id: AU-11(a)
+      description: Audit records retained for at least 1 year
+      auto_assessable: true
+      evidence_source: config
+
+# --- Identification and Authentication (IA) — High additions ---
+
+- id: IA-2(1)
+  family: Identification and Authentication
+  title: Identification and Authentication — MFA for Privileged Network Access
+  responsibility:
+    aws: IAM supports hardware MFA tokens (FIDO2, TOTP hardware devices) for privileged accounts
+    customer: Require hardware MFA tokens for all privileged (admin) access; reject software tokens
+  structural:
+  - id: scp-require-hardware-mfa-admins
+    description: Deny privileged actions from admin principals without hardware MFA
+    actions:
+    - iam:*
+    - organizations:*
+    - cloudtrail:*
+    conditions:
+    - aws:MultiFactorAuthPresent != true
+    - aws:PrincipalOrgPaths == /*/admin/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: IA-2(1)(a)
+      description: Hardware MFA implemented for privileged network access
+      auto_assessable: true
+      evidence_source: scp
+
+- id: IA-2(6)
+  family: Identification and Authentication
+  title: Identification and Authentication — MFA via Separate Physical Device
+  responsibility:
+    aws: IAM supports FIDO2 security keys (hardware tokens) as MFA devices
+    customer: Issue hardware security keys to all personnel with privileged access
+  operational:
+  - id: cedar-hardware-mfa
+    description: Privileged operations require hardware MFA device (not software authenticator)
+    entities: [principal]
+    attributes:
+      principal: [mfa_device_type, admin_level]
+  assessment:
+    objectives:
+    - id: IA-2(6)(a)
+      description: MFA authentication uses separate physical device
+      auto_assessable: false
+      evidence_source: manual
+
+- id: IA-5(1)
+  family: Identification and Authentication
+  title: Authenticator Management — Password-Based Authentication
+  responsibility:
+    aws: IAM account password policy enforces complexity and rotation
+    customer: Configure IAM password policy meeting High baseline requirements
+  structural:
+  - id: scp-require-password-policy
+    description: Deny modification of IAM password policy to weaken requirements
+    actions:
+    - iam:UpdateAccountPasswordPolicy
+    - iam:DeleteAccountPasswordPolicy
+    conditions:
+    - aws:PrincipalOrgPaths != /*/security-admin/*
+    effect: Deny
+  monitoring:
+  - id: config-iam-password-policy-high
+    resource_type: AWS::IAM::AccountPasswordPolicy
+    check: "Password policy: min 15 chars, uppercase, lowercase, numbers, symbols, 60-day rotation, no reuse (24)"
+  assessment:
+    objectives:
+    - id: IA-5(1)(a)
+      description: Passwords meet complexity and length requirements
+      auto_assessable: true
+      evidence_source: config
+
+# --- System and Communications Protection (SC) — High additions ---
+
+- id: SC-8(1)
+  family: System and Communications Protection
+  title: Transmission Confidentiality and Integrity — Cryptographic Implementation
+  responsibility:
+    aws: AWS FIPS 140-2 endpoints available in all commercial and GovCloud regions
+    customer: Use FIPS endpoints; enforce TLS 1.2 minimum; deny SSLv3/TLS1.0/TLS1.1
+  structural:
+  - id: scp-require-tls12-minimum
+    description: Deny API calls not using TLS 1.2 or higher (SecureTransport strict)
+    actions:
+    - s3:*
+    - elasticloadbalancing:*
+    - apigateway:*
+    conditions:
+    - aws:SecureTransport == false
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SC-8(1)(a)
+      description: FIPS-validated cryptography implemented for transmission protection
+      auto_assessable: true
+      evidence_source: scp
+
+- id: SC-12(1)
+  family: System and Communications Protection
+  title: Cryptographic Key Establishment and Management — Availability
+  responsibility:
+    aws: AWS KMS provides automatic annual key rotation and multi-region key support
+    customer: Enable automatic KMS key rotation; deny disabling rotation on CMKs
+  structural:
+  - id: scp-require-kms-rotation
+    description: Deny disabling automatic KMS key rotation for customer-managed keys
+    actions:
+    - kms:DisableKeyRotation
+    - kms:ScheduleKeyDeletion
+    conditions:
+    - aws:PrincipalOrgPaths != /*/security-admin/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SC-12(1)(a)
+      description: Cryptographic keys available when needed
+      auto_assessable: true
+      evidence_source: scp
+
+- id: SC-28(1)
+  family: System and Communications Protection
+  title: Protection of Information at Rest — Cryptographic Protection
+  responsibility:
+    aws: KMS provides FIPS 140-2 validated encryption for 100+ services
+    customer: Require KMS ViaService condition on all data storage; deny unencrypted operations
+  structural:
+  - id: scp-require-kms-viaservice
+    description: Deny data storage operations without KMS encryption via the originating service
+    actions:
+    - s3:PutObject
+    - ebs:CreateVolume
+    - rds:CreateDBInstance
+    - dynamodb:CreateTable
+    - secretsmanager:CreateSecret
+    conditions:
+    - aws:ViaAWSService != true
+    - kms:ViaService == ''
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SC-28(1)(a)
+      description: Cryptographic mechanisms implemented for protection at rest
+      auto_assessable: true
+      evidence_source: scp
+
+# --- System and Information Integrity (SI) — High additions ---
+
+- id: SI-7(1)
+  family: System and Information Integrity
+  title: Software, Firmware, and Information Integrity — Integrity Checks
+  responsibility:
+    aws: ECR image scanning, CloudTrail digest validation, and CodePipeline provide integrity checks
+    customer: Enable ECR image scanning on push; enforce signed images; validate CloudTrail digests
+  monitoring:
+  - id: config-ecr-image-scanning
+    resource_type: AWS::ECR::Repository
+    check: ECR repositories have image scanning on push enabled
+  - id: config-cloudtrail-integrity-validation
+    resource_type: AWS::CloudTrail::Trail
+    check: CloudTrail log file integrity validation enabled on all trails
+  assessment:
+    objectives:
+    - id: SI-7(1)(a)
+      description: Integrity verification tools employed to detect unauthorized changes
+      auto_assessable: true
+      evidence_source: config
+
+- id: SI-7(6)
+  family: System and Information Integrity
+  title: Software, Firmware, and Information Integrity — Cryptographic Protection
+  responsibility:
+    aws: AWS Signer provides code signing for Lambda, ECR images, and IoT devices
+    customer: Sign all container images and Lambda packages; enforce signature verification
+  structural:
+  - id: scp-require-signed-images
+    description: Deny ECR image pulls that do not pass image signature verification
+    actions:
+    - ecr:BatchGetImage
+    - lambda:UpdateFunctionCode
+    conditions:
+    - ecr:ImageTag != latest
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SI-7(6)(a)
+      description: Cryptographic mechanisms used for software and firmware integrity protection
+      auto_assessable: true
+      evidence_source: scp
+
+# --- Maintenance (MA) — High requirement ---
+
+- id: MA-4
+  family: Maintenance
+  title: Nonlocal Maintenance
+  responsibility:
+    aws: AWS Systems Manager Session Manager provides browser-based shell access without SSH
+    customer: Deny direct SSH/RDP; route all maintenance access through SSM Session Manager
+  structural:
+  - id: scp-require-ssm-maintenance
+    description: Deny EC2 SSH/RDP security group rules; require SSM Session Manager for maintenance
+    actions:
+    - ec2:AuthorizeSecurityGroupIngress
+    conditions:
+    - ec2:FromPort in [22, 3389]
+    - aws:PrincipalOrgPaths != /*/security-admin/*
+    effect: Deny
+  assessment:
+    objectives:
+    - id: MA-4(a)
+      description: Nonlocal maintenance approvals obtained before sessions established
+      auto_assessable: false
+      evidence_source: manual
+    - id: MA-4(b)
+      description: All nonlocal maintenance sessions performed via cryptographically protected channel
+      auto_assessable: true
+      evidence_source: scp

@@ -195,6 +195,11 @@ func (c *Client) DetectFrameworkActivations(ctx context.Context) (map[string]Agr
 			activations["hipaa"] = a
 		case "ITAR":
 			activations["itar"] = a
+		// FedRAMP Moderate and High frameworks are NOT auto-activated via AWS Artifact
+		// agreements. FedRAMP Authorization (P-ATO) is an ATO process managed via
+		// agency JAB/sponsorship, not a customer-signed agreement like the HIPAA BAA.
+		// FedRAMP frameworks must be activated explicitly by the operator:
+		//   attest frameworks activate fedramp-moderate fedramp-high
 		}
 	}
 	return activations, nil

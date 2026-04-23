@@ -556,3 +556,316 @@ controls:
       description: Integrity verification tools used to detect unauthorized changes
       auto_assessable: true
       evidence_source: scp
+
+# --- Awareness and Training (AT) ---
+
+- id: AT-2
+  family: Awareness and Training
+  title: Security Awareness Training
+  responsibility:
+    aws: AWS provides security training resources and documentation
+    customer: Mandate and track annual security awareness training for all personnel
+  operational:
+  - id: cedar-security-awareness
+    description: Access to CUI environments requires current security awareness training
+    entities: [principal]
+    attributes:
+      principal: [security_awareness_current, security_awareness_expiry]
+    temporal:
+      condition_type: expiry
+      description: Security awareness training expires annually; access denied after expiry
+    admin_dependencies:
+    - control_id: AT-2
+      attribute: security_awareness_current
+      consequence: CUI environment access blocked until training renewed
+  assessment:
+    objectives:
+    - id: AT-2(a)
+      description: Security awareness training provided to all personnel
+      auto_assessable: false
+      evidence_source: manual
+    - id: AT-2(b)
+      description: Training updated when changes occur and annually
+      auto_assessable: false
+      evidence_source: manual
+
+- id: AT-3
+  family: Awareness and Training
+  title: Role-Based Security Training
+  responsibility:
+    aws: AWS provides service-specific training and certification paths
+    customer: Provide role-specific security training for personnel with privileged access
+  operational:
+  - id: cedar-role-based-training
+    description: Privileged access requires current role-based security training
+    entities: [principal]
+    attributes:
+      principal: [role_based_training_current, admin_level]
+    admin_dependencies:
+    - control_id: AT-3
+      attribute: role_based_training_current
+      consequence: Privileged operations blocked until role-based training completed
+  assessment:
+    objectives:
+    - id: AT-3(a)
+      description: Role-based security training provided before access granted
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Security Assessment and Authorization (CA) ---
+
+- id: CA-7
+  family: Security Assessment and Authorization
+  title: Continuous Monitoring
+  responsibility:
+    aws: AWS Config, Security Hub, and GuardDuty provide continuous configuration and threat monitoring
+    customer: Define monitoring strategy; review Config compliance reports; respond to Security Hub findings
+  monitoring:
+  - id: config-security-hub-enabled
+    resource_type: AWS::SecurityHub::Hub
+    check: Security Hub enabled and receiving findings from Config, GuardDuty, and Inspector
+  - id: config-config-recorder-active
+    resource_type: AWS::Config::ConfigurationRecorder
+    check: AWS Config recorder active in all regions with all resource types recorded
+  assessment:
+    objectives:
+    - id: CA-7(a)
+      description: Continuous monitoring strategy addresses monitoring of controls
+      auto_assessable: false
+      evidence_source: manual
+    - id: CA-7(b)
+      description: Ongoing assessments of control effectiveness conducted
+      auto_assessable: true
+      evidence_source: config
+
+# --- Contingency Planning (CP) ---
+
+- id: CP-9
+  family: Contingency Planning
+  title: System Backup
+  responsibility:
+    aws: AWS Backup provides centralized backup management; S3 provides durable object storage
+    customer: Configure backup plans for all CUI data stores; test restoration periodically
+  structural:
+  - id: scp-protect-backups
+    description: Deny deletion of backup vaults and recovery points for CUI accounts
+    actions:
+    - backup:DeleteBackupVault
+    - backup:DeleteRecoveryPoint
+    - s3:DeleteBucketReplication
+    conditions: []
+    effect: Deny
+  monitoring:
+  - id: config-backup-vault-exists
+    resource_type: AWS::Backup::BackupVault
+    check: At least one backup vault exists and backup plans cover CUI data stores
+  - id: config-s3-versioning-enabled
+    resource_type: AWS::S3::Bucket
+    check: S3 versioning enabled on buckets holding CUI data
+  assessment:
+    objectives:
+    - id: CP-9(a)
+      description: User-level information backed up at defined frequency
+      auto_assessable: false
+      evidence_source: manual
+    - id: CP-9(b)
+      description: System-level information backed up at defined frequency
+      auto_assessable: true
+      evidence_source: config
+
+# --- Incident Response (IR) ---
+
+- id: IR-4
+  family: Incident Response
+  title: Incident Handling
+  responsibility:
+    aws: GuardDuty provides threat detection; Security Hub aggregates findings; CloudWatch for alerting
+    customer: Define and test incident response procedures; integrate GuardDuty findings into IR workflow
+  monitoring:
+  - id: config-guardduty-active
+    resource_type: AWS::GuardDuty::Detector
+    check: GuardDuty detector active in all regions covering CUI accounts
+  assessment:
+    objectives:
+    - id: IR-4(a)
+      description: Incident handling capability implemented for security incidents
+      auto_assessable: false
+      evidence_source: manual
+    - id: IR-4(b)
+      description: Incident handling coordinated with contingency planning
+      auto_assessable: false
+      evidence_source: manual
+
+- id: IR-6
+  family: Incident Response
+  title: Incident Reporting
+  responsibility:
+    aws: AWS provides security bulletins and notifies customers of relevant incidents
+    customer: Report incidents to appropriate authorities within defined timeframes; maintain IR contacts
+  operational:
+  - id: cedar-incident-contact-configured
+    description: Environments must have an incident response contact configured before CUI operations
+    entities: [environment]
+    attributes:
+      environment: [incident_response_contact, security_contact_email]
+  assessment:
+    objectives:
+    - id: IR-6(a)
+      description: Personnel report suspected incidents within defined timeframe
+      auto_assessable: false
+      evidence_source: manual
+
+# --- Risk Assessment (RA) ---
+
+- id: RA-5
+  family: Risk Assessment
+  title: Vulnerability Monitoring and Scanning
+  responsibility:
+    aws: Amazon Inspector continuously scans EC2 and containers; AWS publishes CVE information
+    customer: Enable Inspector; configure SSM Patch Manager; remediate findings within SLA
+  monitoring:
+  - id: config-inspector-enabled
+    resource_type: AWS::Inspector::AssessmentTarget
+    check: Amazon Inspector enabled and scanning EC2 instances and container images
+  - id: config-ssm-patch-compliance
+    resource_type: AWS::SSM::PatchCompliance
+    check: EC2 instances compliant with patch baseline; no critical findings unresolved
+  assessment:
+    objectives:
+    - id: RA-5(a)
+      description: Vulnerability scanning conducted at defined frequency
+      auto_assessable: true
+      evidence_source: config
+    - id: RA-5(b)
+      description: Vulnerability scan results analyzed and remediated
+      auto_assessable: false
+      evidence_source: manual
+
+# --- System and Services Acquisition (SA) ---
+
+- id: SA-9
+  family: System and Services Acquisition
+  title: External System Services
+  responsibility:
+    aws: AWS publishes its FedRAMP authorization packages and shared responsibility documentation
+    customer: Approve and document all external service dependencies; verify FedRAMP status
+  operational:
+  - id: cedar-vendor-approved
+    description: External service integrations require documented approval before use
+    entities: [principal, resource]
+    attributes:
+      principal: [authorization_current]
+      resource: [vendor_approved, fedramp_authorized]
+  assessment:
+    objectives:
+    - id: SA-9(a)
+      description: External service providers comply with security requirements
+      auto_assessable: false
+      evidence_source: manual
+
+- id: SA-10
+  family: System and Services Acquisition
+  title: Developer Configuration Management
+  responsibility:
+    aws: CodePipeline, CodeBuild, and CodeCommit support configuration management practices
+    customer: Enforce code review gates; require approval tags on pipeline deployments
+  structural:
+  - id: scp-require-pipeline-approval
+    description: Deny CodePipeline execution without deployment approval tag
+    actions:
+    - codepipeline:StartPipelineExecution
+    conditions:
+    - aws:RequestTag/deployment-approved != true
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SA-10(a)
+      description: Configuration management plan for system developed and implemented
+      auto_assessable: false
+      evidence_source: manual
+
+# --- SC additions (Secure Name Resolution) ---
+
+- id: SC-20
+  family: System and Communications Protection
+  title: Secure Name/Address Resolution Service (Authoritative Source)
+  responsibility:
+    aws: Route 53 supports DNSSEC signing for hosted zones
+    customer: Enable DNSSEC on all Route 53 hosted zones serving CUI applications
+  structural:
+  - id: scp-require-dnssec
+    description: Deny creation of Route 53 hosted zones without DNSSEC enabled
+    actions:
+    - route53:CreateHostedZone
+    conditions:
+    - route53:DNSSECEnabled != true
+    effect: Deny
+  assessment:
+    objectives:
+    - id: SC-20(a)
+      description: Authoritative name resolution service provides additional data origin and integrity
+      auto_assessable: true
+      evidence_source: scp
+
+- id: SC-21
+  family: System and Communications Protection
+  title: Secure Name/Address Resolution Service (Recursive or Caching Resolver)
+  responsibility:
+    aws: Route 53 Resolver supports DNSSEC validation for recursive resolution
+    customer: Enable DNSSEC validation on Route 53 Resolver; use Route 53 Resolver instead of custom DNS
+  monitoring:
+  - id: config-route53-resolver-dnssec
+    resource_type: AWS::Route53Resolver::ResolverConfig
+    check: Route 53 Resolver DNSSEC validation enabled in all CUI VPCs
+  assessment:
+    objectives:
+    - id: SC-21(a)
+      description: Recursive DNS requests validated for data origin and integrity
+      auto_assessable: true
+      evidence_source: config
+
+# --- SI additions ---
+
+- id: SI-4
+  family: System and Information Integrity
+  title: System Monitoring
+  responsibility:
+    aws: CloudWatch, GuardDuty, Security Hub, and CloudTrail provide comprehensive monitoring
+    customer: Configure CloudWatch alarms for anomalous activity; enable GuardDuty threat detection
+  operational:
+  - id: cedar-monitoring-active
+    description: CUI environments must have active system monitoring before operations permitted
+    entities: [environment]
+    attributes:
+      environment: [monitoring_enabled, guardduty_active]
+  monitoring:
+  - id: config-guardduty-enabled
+    resource_type: AWS::GuardDuty::Detector
+    check: GuardDuty enabled and active; findings routed to Security Hub
+  assessment:
+    objectives:
+    - id: SI-4(a)
+      description: System monitored to detect attacks and indicators of potential attacks
+      auto_assessable: true
+      evidence_source: config
+    - id: SI-4(b)
+      description: Monitoring includes inbound and outbound communications
+      auto_assessable: false
+      evidence_source: manual
+
+- id: SI-12
+  family: System and Information Integrity
+  title: Information Management and Retention
+  responsibility:
+    aws: CloudWatch Logs supports configurable retention periods; S3 Lifecycle manages object retention
+    customer: Define and enforce retention periods for CUI data; configure CloudWatch Logs retention
+  monitoring:
+  - id: config-cloudwatch-logs-retention
+    resource_type: AWS::Logs::LogGroup
+    check: CloudWatch Log Groups holding CUI-scope logs have retention ≥ 90 days
+  assessment:
+    objectives:
+    - id: SI-12(a)
+      description: Information managed and retained per applicable laws and policies
+      auto_assessable: true
+      evidence_source: config
