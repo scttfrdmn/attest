@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-04-20
+
+### Added
+
+- `attest evaluate --output <file>` — appends the Cedar decision as a JSONL
+  record to the specified file, enabling decision log collection across runs
+  (closes #22 remaining acceptance criterion)
+- 9 unit tests for the Cedar evaluator (`internal/evaluator/evaluator_test.go`):
+  allow, deny, forbid-overrides-permit, attribute-gated evaluation, concurrent
+  stats counting, and `buildAttributes` edge cases
+- `golangci/golangci-lint-action@v6` step in CI workflow (closes #28)
+
+### Fixed
+
+- Go stdlib CVEs resolved by bumping to `go1.25.9`:
+  - GO-2026-4947, GO-2026-4946: `crypto/x509` inefficient policy validation
+  - GO-2026-4870: `crypto/tls` TLS 1.3 KeyUpdate DoS
+  - GO-2026-4865: `html/template` XSS (JsBraceDepth context tracking)
+  - GO-2026-4603: `html/template` URL escaping in meta content attribute
+  - GO-2026-4602: `os` FileInfo escape from Root
+  - GO-2026-4601: `net/url` parsing vulnerability
+- Release pipeline: pin `cosign-installer@v3.9.1` (floating `@v3` tag broken
+  on current ubuntu-24.04 runners); remove deprecated `COSIGN_EXPERIMENTAL`
+
 ## [0.11.3] - 2026-04-18
 
 ### Security
