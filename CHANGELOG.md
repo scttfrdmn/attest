@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-04-23
+
+### Added
+
+- **NIST 800-171 Rev 3 delta** (`frameworks/nist-800-171-r3`): 3 new families from
+  Rev 3 — Planning (PL), System & Services Acquisition (SA), Supply Chain Risk
+  Management (SR/03.17). SR formalizes cosign/SBOM/provenance controls already
+  present. Activate alongside `nist-800-171-r2`; CMMC 2.0 still uses Rev 2.
+
+- **FISMA Moderate** (`frameworks/fisma-moderate`): RMF process layer — FIPS 199
+  categorization, 800-53B control selection, ATO lifecycle (Cedar 3-year temporal),
+  continuous monitoring reporting, POA&M agency reporting, PIA, US-CERT/CISA
+  incident reporting. Delegates technical controls to `fedramp-moderate`.
+
+- **Translational Medicine** (`frameworks/translational-medicine`): 11 controls
+  covering clinical research: 21 CFR Part 11 (FDA electronic records, system
+  validation, audit trails, S3 Object Lock, e-signatures), IRB/Common Rule (protocol
+  approval, consent storage), ClinicalTrials.gov registration (21-day Cedar
+  operational), HIPAA de-identification (Safe Harbor + Expert Determination), DUA
+  management.
+
+- **FERPA cloud expansion**: 4 new controls — cloud provider as school official,
+  KMS encryption for FERPA records, FERPA/HIPAA student health record intersection,
+  FERPA scope determination for student research data.
+
+- **`attest c3pao`**: C3PAO engagement lifecycle — `create`, `list`, `close`.
+  Records C3PAO org, lead assessor, audit window. `close` records SPRS score and
+  links to PIEE submission.
+
+- **`schema.C3PAOEngagement`** type and `AssessmentObjective.MaturityLevel` (NIST
+  800-171A L1–L3).
+
 ## [0.17.0] - 2026-04-23
 
 ### Added
