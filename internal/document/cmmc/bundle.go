@@ -273,11 +273,14 @@ func generateAttestationsIndex(storeDir string) string {
 		if !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil || info.Mode()&os.ModeSymlink != 0 {
-			continue // skip symlinks
+		entryPath := filepath.Join(attDir, e.Name())
+		// Double-check via Lstat to close the TOCTOU window between os.ReadDir
+		// and os.ReadFile — a symlink could be swapped in between the two calls.
+		lfi, err := os.Lstat(entryPath)
+		if err != nil || lfi.Mode()&os.ModeSymlink != 0 {
+			continue
 		}
-		data, err := os.ReadFile(filepath.Join(attDir, e.Name()))
+		data, err := os.ReadFile(entryPath)
 		if err != nil {
 			continue
 		}
@@ -306,11 +309,12 @@ func generateWaiversRegister(storeDir string) string {
 		if !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil || info.Mode()&os.ModeSymlink != 0 {
-			continue // skip symlinks
+		entryPath := filepath.Join(waiverDir, e.Name())
+		lfi, err := os.Lstat(entryPath)
+		if err != nil || lfi.Mode()&os.ModeSymlink != 0 {
+			continue
 		}
-		data, err := os.ReadFile(filepath.Join(waiverDir, e.Name()))
+		data, err := os.ReadFile(entryPath)
 		if err != nil {
 			continue
 		}

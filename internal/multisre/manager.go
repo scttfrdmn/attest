@@ -86,6 +86,7 @@ type SREPosture struct {
 type Manager struct {
 	registryPath string // .attest/sres.yaml
 	storeRoot    string // .attest/
+	mu           sync.Mutex
 }
 
 // NewManager creates a manager rooted at the given .attest/ directory.
@@ -154,6 +155,8 @@ func (m *Manager) Add(entry SREEntry) error {
 		entry.Region = "us-east-1"
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	reg, err := m.Load()
 	if err != nil {
 		return err
@@ -169,6 +172,8 @@ func (m *Manager) Add(entry SREEntry) error {
 
 // Remove deregisters an SRE by ID (does not delete its .attest/<id>/ directory).
 func (m *Manager) Remove(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	reg, err := m.Load()
 	if err != nil {
 		return err

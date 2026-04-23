@@ -56,7 +56,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.12.1"
+var version = "0.12.2"
 
 func main() {
 	root := &cobra.Command{
@@ -487,10 +487,22 @@ func runVerification(ctx context.Context, region string, sre *schema.SRE) {
 // applyClassificationScheme reads a classification scheme YAML and maps
 // institutional data classification tags on accounts to attest data classes.
 func applyClassificationScheme(schemeName string, sre *schema.SRE) error {
-	schemeFile := filepath.Join("classification-schemes", schemeName+".yaml")
+	const schemeDir = "classification-schemes"
+	base, err := filepath.Abs(schemeDir)
+	if err != nil {
+		return fmt.Errorf("resolving scheme directory: %w", err)
+	}
+	abs, err := filepath.Abs(filepath.Join(schemeDir, schemeName))
+	if err != nil {
+		return fmt.Errorf("resolving scheme path: %w", err)
+	}
+	if !strings.HasPrefix(abs+string(filepath.Separator), base+string(filepath.Separator)) {
+		return fmt.Errorf("classification scheme %q escapes allowed directory", schemeName)
+	}
+	schemeFile := abs + ".yaml"
 	data, err := os.ReadFile(schemeFile)
 	if err != nil {
-		return fmt.Errorf("reading scheme %s: %w", schemeFile, err)
+		return fmt.Errorf("reading scheme %s: %w", schemeName, err)
 	}
 	var scheme schema.ClassificationScheme
 	if err := yaml.Unmarshal(data, &scheme); err != nil {
