@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-04-23
+
+### Added
+
+- **NIH Research Security framework** (`frameworks/nih-research-security/framework.yaml`):
+  15 controls across 7 program elements covering NOT-OD-26-017 (research security
+  training), NIH Genomic Data Sharing Policy (dbGaP DUC, effective Jan 2025),
+  NIH DMS Policy (DMSP), foreign travel security, insider threat, and export
+  controls. Cedar temporal constraints enforce annual training expiry and DUC
+  renewal. SCP + Config enforcement on genomic data segregation and access monitoring.
+
+- **`attest generate dmsp`**: Generates a 7-section NIH Data Management and Security
+  Plan from live SRE state. Sections: data types (from environment data classes),
+  tools (AWS + attest stack), standards (active frameworks), preservation and
+  repositories (dbGaP, GEO, Zenodo), access considerations, oversight with posture
+  summary, and a signed attestation section ready for PI review. Required for all
+  NIH grant applications since January 25, 2023.
+
+- **`attest attest pi-sign`**: Records a Principal Investigator institutional
+  attestation affirming NIST SP 800-171 compliance for NIH Data Use Certification
+  (DUC) submissions. Produces a dated attestation record with PI name/email, grant
+  number, optional dbGaP accession, and OSR co-attestor. Referenced in DMSP Section 7.
+
 ## [0.16.0] - 2026-04-23
 
 ### Added
