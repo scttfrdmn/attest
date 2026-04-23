@@ -101,7 +101,13 @@ attest frameworks add nist-800-171-r2
 # If you have a signed HIPAA BAA with AWS:
 attest frameworks add hipaa
 
-# List available frameworks
+# FedRAMP Moderate (cloud-native SCP + Cedar + Config enforcement):
+attest frameworks add fedramp-moderate
+
+# FedRAMP High (delta — activate alongside fedramp-moderate for full High baseline):
+attest frameworks add fedramp-high
+
+# List available frameworks and their status
 attest frameworks list
 ```
 
@@ -177,12 +183,6 @@ Preview what will happen:
 AWS_PROFILE=your-profile attest apply --dry-run --region us-east-1
 ```
 
-Before deploying, create a manual checkpoint (recommended until v0.8.0):
-
-```bash
-git -C .attest tag -a "before-apply-$(date +%Y%m%d)" -m "Pre-apply checkpoint"
-```
-
 Deploy to your organization:
 
 ```bash
@@ -190,13 +190,16 @@ AWS_PROFILE=your-profile attest apply --approve --region us-east-1
 ```
 
 This creates and attaches SCPs to the org root. Every account inherits them immediately.
+Each deployment is automatically tagged in the `.attest/` git store.
 
-> **State and rollback**: `attest apply` records the deployed artifact state in
-> `.attest/.git` but does not yet auto-tag each deployment. There is no `attest rollback`
-> command in v0.7.x. To undo a deployment, detach and delete the attest SCPs manually
-> via the AWS CLI or console. See [Rollback and State Management](operations/rollback.md)
-> for step-by-step instructions. Automatic checkpointing (#69) and `attest rollback`
-> (#70) are planned for v0.8.0.
+To list snapshots or revert to a prior deployment:
+
+```bash
+attest rollback --list
+attest rollback --to applied-20260401-143022
+```
+
+See [Rollback and State Management](operations/rollback.md) for details.
 
 ---
 
@@ -282,7 +285,7 @@ The `demo/` directory contains a realistic walkthrough for Meridian Research Uni
 
 ## Next steps
 
-- [Rollback and State Management](operations/rollback.md) — how to undo an apply today; v0.8.0 roadmap
+- [Rollback and State Management](operations/rollback.md) — list snapshots, revert deployments
 - [Framework authoring guide](../frameworks/CONTRIBUTING.md) — contribute a new framework
 - [Architecture docs](architecture/) — multi-framework, principal attributes, ITAR
 - [GitHub Issues](https://github.com/provabl/attest/issues) — report bugs, request features

@@ -122,6 +122,8 @@ attest generate poam     # Plan of Action & Milestones
 attest generate oscal    # OSCAL 1.1.2 for GRC tools
 ```
 
+→ Full step-by-step walkthrough: [docs/quickstart.md](docs/quickstart.md)
+
 ---
 
 ## What you get from `attest generate ssp`
@@ -197,15 +199,19 @@ attest ai analyze [--window 30d]   Detect anomalies in Cedar decision log
 
 Community-maintained YAML definitions in `frameworks/`. Each control carries the full vertical: shared responsibility split, SCP specs, Cedar policy specs, Config rules, assessment objectives, and administrative review schedules.
 
-| Framework | Controls | Status |
+| Framework | Controls | Notes |
 |-----------|---------|--------|
-| `nist-800-171-r2` | 110 | Complete |
-| `hipaa` | 23 | Complete |
-| `ferpa` | — | Planned |
-| `nist-800-53-r5` | — | Planned |
-| `itar` | — | Planned |
+| `nist-800-171-r2` | 110 | CMMC Level 2 basis |
+| `hipaa` | 23 | Activated via AWS Artifact BAA |
+| `fedramp-moderate` | 36 | FedRAMP Moderate baseline |
+| `fedramp-high` | 15 | Delta — activate with `fedramp-moderate` |
+| `nist-800-53-r5` | 32 | FedRAMP/High base controls |
+| `ferpa` | 13 | — |
+| `iso27001-2022` | 36 | — |
+| `uk-cyber-essentials` | 11 | — |
+| `asd-essential-eight` | 8 | — |
 
-Framework contributions welcome — see `frameworks/CONTRIBUTING.md`.
+Framework contributions welcome — see [`frameworks/CONTRIBUTING.md`](frameworks/CONTRIBUTING.md).
 
 ---
 

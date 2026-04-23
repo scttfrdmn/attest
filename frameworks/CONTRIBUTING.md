@@ -65,18 +65,25 @@ structural:
 
 ### Condition string syntax
 
-| Pattern | IAM operator |
-|---|---|
-| `key != true` | `Bool: "false"` |
-| `key == true` | `Bool: "true"` |
-| `key == value` | `StringEquals` |
-| `key != value` | `StringNotEquals` |
-| `arn-key != arn:...*...` | `ArnNotLike` |
-| `arn-key == arn:...*...` | `ArnLike` |
-| `key not in [v1, v2]` | `StringNotEquals` (array) |
-| `key in [v1, v2]` | `StringEquals` (array) |
-| `key does not contain str` | `StringNotLike` (`*str*`) |
-| `key contains str` | `StringLike` (`*str*`) |
+| Pattern | Example | IAM operator |
+|---|---|---|
+| `key != true` | `aws:MultiFactorAuthPresent != true` | `Bool: "false"` |
+| `key == true` | `aws:MultiFactorAuthPresent == true` | `Bool: "true"` |
+| `key == false` | `aws:SecureTransport == false` | `Bool: "false"` |
+| `key != false` | `aws:SecureTransport != false` | `Bool: "true"` |
+| `key == value` | `aws:RequestedRegion == us-east-1` | `StringEquals` |
+| `key != value` | `aws:RequestedRegion != us-east-1` | `StringNotEquals` |
+| `key in [v1, v2, ...]` | `aws:PrincipalType in [IAMUser, IAMRole]` | `StringEquals` (multi-value) |
+| `key not in [v1, v2, ...]` | `aws:RequestedRegion not in [us-east-1, us-west-2]` | `StringNotEquals` (multi-value) |
+| `key contains str` | `aws:username contains Admin` | `StringLike` (`*str*`) |
+| `key does not contain str` | `aws:username does not contain Admin` | `StringNotLike` (`*str*`) |
+| `arn-key == arn:...*...` (wildcard) | `aws:PrincipalArn == arn:aws:iam::*:role/*` | `ArnLike` |
+| `arn-key != arn:...*...` (wildcard) | `aws:PrincipalArn != arn:aws:iam::*:root` | `ArnNotLike` |
+| `arn-key == arn:...` (exact) | `aws:PrincipalArn == arn:aws:iam::123456789012:role/Admin` | `ArnEquals` |
+| `arn-key != arn:...` (exact) | `aws:PrincipalArn != arn:aws:iam::123456789012:root` | `ArnNotEquals` |
+
+**Detection rule**: keys containing `arn` (case-insensitive) or values starting with `arn:`
+use ARN operators. Values containing `*` or `?` use wildcard variants (ArnLike/ArnNotLike).
 
 **Important**: Only `aws:*` condition keys are reliably supported in SCPs. Service-specific
 keys (`ec2:*`, `lambda:*`) may be rejected by AWS Organizations. Test with
@@ -200,6 +207,35 @@ controls:
           auto_assessable: true
           evidence_source: "scp"
 ```
+
+---
+
+## Delta frameworks
+
+Some compliance baselines are strict supersets of others. Rather than duplicating
+controls across files, write a *delta* framework that contains only the additions
+and activate both together:
+
+```bash
+attest frameworks add fedramp-moderate   # base (23+ controls)
+attest frameworks add fedramp-high       # delta — High-specific controls only
+```
+
+The merged SCP compiler deduplicates conditions across all active frameworks
+automatically. A delta framework costs zero additional SCP budget for conditions
+already covered by its base.
+
+`frameworks/fedramp-high/framework.yaml` is a reference implementation. Key conventions:
+
+1. Name the framework to make the dependency clear:
+   ```yaml
+   name: "My Framework (delta — activate with base-framework)"
+   ```
+
+2. Include only controls that are genuinely new — not present in the base.
+
+3. Add a conflict check in `internal/framework/conflicts.go` so users get a warning
+   if they activate the delta without the base.
 
 ---
 
