@@ -40,6 +40,19 @@ type ControlMapping struct {
 	Evidence    string
 }
 
+// SanitizeTerminalOutput strips control characters and ANSI escape codes from
+// cosign output fields before they are printed to the terminal. A malicious
+// attestation could embed ANSI sequences to corrupt terminal display.
+func SanitizeTerminalOutput(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= 32 && r != 127 { // printable ASCII and Unicode; reject control chars
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // IngestCosignAttestation verifies cosign signatures and attestations for an
 // OCI image, returning parsed provenance data and the compliance control mappings
 // it satisfies.
@@ -173,10 +186,15 @@ func parseSBOMAttestation(ctx context.Context, att *CosignAttestation) error {
 	if err := json.Unmarshal(out, &envelope); err != nil {
 		return nil
 	}
-	// Cap payload size before decoding to prevent memory exhaustion from malicious attestations.
-	const maxSBOMPayloadBytes = 50 * 1024 * 1024 // 50 MB
-	if len(envelope.Payload) > maxSBOMPayloadBytes {
-		return fmt.Errorf("SBOM attestation payload too large (%d bytes)", len(envelope.Payload))
+	// Cap both the base64-encoded size and the estimated decoded size.
+	// Base64 expands ~33%: 50 MB encoded → ~37.5 MB decoded.
+	const maxEncodedBytes = 50 * 1024 * 1024  // 50 MB encoded
+	const maxDecodedBytes = 30 * 1024 * 1024  // 30 MB decoded
+	if len(envelope.Payload) > maxEncodedBytes {
+		return fmt.Errorf("SBOM attestation payload too large (%d bytes encoded)", len(envelope.Payload))
+	}
+	if estimatedDecoded := (len(envelope.Payload) * 3) / 4; estimatedDecoded > maxDecodedBytes {
+		return fmt.Errorf("SBOM attestation payload too large (~%d bytes decoded)", estimatedDecoded)
 	}
 	decoded, err := base64.StdEncoding.DecodeString(envelope.Payload)
 	if err != nil {

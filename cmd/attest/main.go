@@ -4194,10 +4194,15 @@ Assessment types:
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sprsScore, _ := cmd.Flags().GetInt("sprs-score")
-			path := filepath.Join(assessDir, args[0]+".yaml")
+			// Validate assessment ID before using as a filename.
+			assessID := args[0]
+			if !regexp.MustCompile(`^[A-Za-z0-9_\-]+$`).MatchString(assessID) {
+				return fmt.Errorf("invalid assessment ID %q: must be alphanumeric/hyphens/underscores only", assessID)
+			}
+			path := filepath.Join(assessDir, assessID+".yaml")
 			data, err := os.ReadFile(path)
 			if err != nil {
-				return fmt.Errorf("engagement %s not found", args[0])
+				return fmt.Errorf("engagement %s not found", assessID)
 			}
 			var eng schema.C3PAOEngagement
 			if err := yaml.Unmarshal(data, &eng); err != nil {
@@ -4275,19 +4280,22 @@ Requires: cosign CLI installed (https://docs.sigstore.dev/cosign/system_config/i
 			}
 
 			// Print attestation summary.
+			// Sanitize cosign-sourced fields before printing — a malicious attestation
+			// could embed ANSI escape sequences to corrupt terminal display.
 			if att.Verified {
 				fmt.Printf("  Signature:    ✓ Verified\n")
 			} else {
-				fmt.Printf("  Signature:    ✗ Not verified — %s\n", att.SignerSubject)
+				fmt.Printf("  Signature:    ✗ Not verified — %s\n",
+					attestation.SanitizeTerminalOutput(att.SignerSubject))
 			}
 			if att.SignerSubject != "" && att.Verified {
-				fmt.Printf("  Signer:       %s\n", att.SignerSubject)
+				fmt.Printf("  Signer:       %s\n", attestation.SanitizeTerminalOutput(att.SignerSubject))
 			}
 			if att.RekorLogID != "" {
-				fmt.Printf("  Rekor entry:  %s\n", att.RekorLogID)
+				fmt.Printf("  Rekor entry:  %s\n", attestation.SanitizeTerminalOutput(att.RekorLogID))
 			}
 			if att.BuildSource != "" {
-				fmt.Printf("  Build source: %s\n", att.BuildSource)
+				fmt.Printf("  Build source: %s\n", attestation.SanitizeTerminalOutput(att.BuildSource))
 			}
 			if att.SBOMDigest != "" {
 				fmt.Printf("  SBOM:         %s (%s)\n", att.SBOMFormat, att.SBOMDigest)
@@ -4329,11 +4337,28 @@ Requires: cosign CLI installed (https://docs.sigstore.dev/cosign/system_config/i
 				draftID := fmt.Sprintf("ATT-DRAFT-cosign-%s-%s",
 					strings.ReplaceAll(m.ControlID, ".", ""),
 					imageName)
-				draft := fmt.Sprintf("id: %s\ncontrol_id: %s\nobjective_id: %s\ntitle: %s\naffirmed_by: cosign-automated\nevidence: %s\nevidence_type: cosign_attestation\nrekor_log_id: %s\nsbom_digest: %s\nstatus: draft\n",
-					draftID, m.ControlID, m.ObjectiveID, m.Description, m.Evidence,
-					att.RekorLogID, att.SBOMDigest)
+				// Use yaml.Marshal to safely encode all cosign-sourced fields —
+				// SignerSubject, BuildSource, and Evidence are attacker-controlled
+				// (come from the signed image's attestation) and must not be
+				// interpolated into a raw YAML string.
+				draftRecord := map[string]string{
+					"id":             draftID,
+					"control_id":     m.ControlID,
+					"objective_id":   m.ObjectiveID,
+					"title":          m.Description,
+					"affirmed_by":    "cosign-automated",
+					"evidence":       m.Evidence,
+					"evidence_type":  "cosign_attestation",
+					"rekor_log_id":   att.RekorLogID,
+					"sbom_digest":    att.SBOMDigest,
+					"status":         "draft",
+				}
+				draftBytes, err := yaml.Marshal(draftRecord)
+				if err != nil {
+					return fmt.Errorf("marshaling draft: %w", err)
+				}
 				draftPath := filepath.Join(proposedDir, draftID+".yaml")
-				if err := os.WriteFile(draftPath, []byte(draft), 0640); err != nil {
+				if err := os.WriteFile(draftPath, draftBytes, 0640); err != nil {
 					return fmt.Errorf("writing draft: %w", err)
 				}
 				written++

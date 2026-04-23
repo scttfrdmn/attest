@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-04-23
+
+### Security
+
+Full codebase audit — 12 findings fixed across new code added since v0.12.2.
+
+- **CRITICAL fixed**: Prompt injection in `ai.IngestDocument()` — `</document_content>`
+  in a document closes the content delimiter and allows injecting LLM instructions.
+  Escape closing tag before embedding. Also sanitize `activeFrameworks[]` parameter.
+- **HIGH fixed**: Cedar `spec.ID` embedded as `// comment` without `sanitizeCedarComment()`
+  — newline in an operational spec ID injects Cedar policy code.
+- **HIGH fixed**: `generateSCPManifest()` used `e.Info()` for symlink check without
+  `os.Lstat()` re-verification — TOCTOU window. Matches fix pattern from v0.12.1.
+- **HIGH fixed**: `GenerateKyverno()` embedded `orgID`/`ecrRegistry`/`ciSubjectGlob`
+  into YAML without newline rejection — newlines break YAML structure.
+- **HIGH fixed**: C3PAO org name used as filename stem without stripping path
+  separators — `../../etc` would escape the assessments directory.
+- **HIGH fixed**: `attest ingest cosign --image` passed to `exec.Command(cosign)`
+  without OCI reference format validation.
+- **MEDIUM fixed**: DMSP generator embedded PI name, institution, project title
+  raw in Markdown — Markdown injection possible. New `escapeMarkdown()` helper.
+- **MEDIUM fixed**: `--grant` in `attest attest pi-sign` used as filename stem
+  without sanitization — require `[a-zA-Z0-9-]+` pattern.
+- **MEDIUM fixed**: Derived image name in `attest ingest cosign` not whitelisted
+  after path/tag strip — regex whitelist applied.
+- **MEDIUM fixed**: Cedar `Authorize()` errors silently discarded in dashboard
+  guard — now logged to stderr for security audit trail.
+- **LOW fixed**: `attest generate sprs --level` accepted any integer — validate 1/2/3.
+- **LOW fixed**: SBOM attestation base64 payload decoded without size cap — 50 MB limit.
+
 ## [0.19.0] - 2026-04-23
 
 ### Added
