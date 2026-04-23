@@ -57,7 +57,22 @@ func (m *IncidentManager) List() ([]*Incident, error) {
 }
 
 // Create records a new incident and saves it.
+const (
+	maxIncidentTitleLen    = 512
+	maxIncidentNotesLen    = 10_000
+	maxIncidentControlIDs  = 100
+)
+
 func (m *IncidentManager) Create(title, severity, source, notes string, controlIDs []string) (*Incident, error) {
+	if len(title) > maxIncidentTitleLen {
+		return nil, fmt.Errorf("incident title too long (max %d chars)", maxIncidentTitleLen)
+	}
+	if len(notes) > maxIncidentNotesLen {
+		return nil, fmt.Errorf("incident notes too long (max %d chars)", maxIncidentNotesLen)
+	}
+	if len(controlIDs) > maxIncidentControlIDs {
+		return nil, fmt.Errorf("too many control IDs (max %d)", maxIncidentControlIDs)
+	}
 	incidents, err := m.List()
 	if err != nil {
 		return nil, err

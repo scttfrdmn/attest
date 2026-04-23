@@ -304,6 +304,12 @@ func (h *OIDCHandler) resolveRole(claims map[string]any) Role {
 // handleCallback can restore the user's destination after login, without
 // embedding user-controlled data in a redirect URL.
 func (h *OIDCHandler) setRedirectCookie(w http.ResponseWriter, path string) {
+	// Cap redirect path length — cookies have a 4KB browser limit and an
+	// unbounded path could silently truncate, causing a redirect to a partial path.
+	const maxRedirectPathLen = 2000
+	if len(path) > maxRedirectPathLen {
+		path = "/"
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "attest_redirect",
 		Value:    path,

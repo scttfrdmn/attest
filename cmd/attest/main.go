@@ -2990,12 +2990,19 @@ PI personal attestation on Data Use Certifications.`,
 				time.Now().Year(),
 				strings.ToUpper(grantNum))
 
-			evidenceDesc := fmt.Sprintf("PI: %s (%s); Grant: %s", piName, piEmail, grantNum)
-			if osrContact != "" {
-				evidenceDesc += fmt.Sprintf("; OSR: %s", osrContact)
+			// Sanitize all fields embedded in evidenceDesc — the string is stored
+			// as a YAML value via yaml.Marshal, but applying consistent sanitization
+			// prevents control characters from leaking into stored records.
+			safePI := regexp.MustCompile(`[\x00-\x1f\x7f]`).ReplaceAllString(piName, "")
+			safePIEmail := regexp.MustCompile(`[\x00-\x1f\x7f]`).ReplaceAllString(piEmail, "")
+			safeOSR := regexp.MustCompile(`[\x00-\x1f\x7f]`).ReplaceAllString(osrContact, "")
+			evidenceDesc := fmt.Sprintf("PI: %s (%s); Grant: %s", safePI, safePIEmail, grantNum)
+			if safeOSR != "" {
+				evidenceDesc += fmt.Sprintf("; OSR: %s", safeOSR)
 			}
 			if ducAccession != "" {
-				evidenceDesc += fmt.Sprintf("; dbGaP: %s", ducAccession)
+				safeAccessionDisplay := regexp.MustCompile(`[^a-zA-Z0-9\-.]`).ReplaceAllString(ducAccession, "")
+				evidenceDesc += fmt.Sprintf("; dbGaP: %s", safeAccessionDisplay)
 			}
 
 			a := &schema.Attestation{
@@ -4167,7 +4174,13 @@ Assessment types:
 				if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 					continue
 				}
-				data, err := os.ReadFile(filepath.Join(assessDir, e.Name()))
+				entryPath := filepath.Join(assessDir, e.Name())
+				// Lstat to prevent following symlinks to files outside assessDir.
+				lfi, err := os.Lstat(entryPath)
+				if err != nil || lfi.Mode()&os.ModeSymlink != 0 {
+					continue
+				}
+				data, err := os.ReadFile(entryPath)
 				if err != nil {
 					continue
 				}

@@ -48,6 +48,12 @@ func (m *Manager) Create(ctx context.Context, a *schema.Attestation) error {
 	if a.ControlID == "" {
 		return fmt.Errorf("attestation must specify a control ID (--control)")
 	}
+	if len(a.EvidenceRef) > 2_000 {
+		return fmt.Errorf("attestation evidence reference too long (max 2,000 chars)")
+	}
+	if len(a.Notes) > 10_000 {
+		return fmt.Errorf("attestation notes too long (max 10,000 chars)")
+	}
 
 	a.AffirmedAt = time.Now()
 	a.Status = "current"

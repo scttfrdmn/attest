@@ -50,6 +50,12 @@ func (m *Manager) Create(ctx context.Context, w *schema.Waiver) error {
 	if w.ControlID == "" {
 		return fmt.Errorf("waiver must specify a control ID (--control)")
 	}
+	if len(w.Justification) > 10_000 {
+		return fmt.Errorf("waiver justification too long (max 10,000 chars)")
+	}
+	if len(w.CompensatingControls) > 50 {
+		return fmt.Errorf("too many compensating controls (max 50)")
+	}
 
 	w.ApprovedAt = time.Now()
 	w.Status = "active"

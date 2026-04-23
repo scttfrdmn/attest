@@ -350,10 +350,12 @@ func toCDKResourceID(id string) string {
 // matching the Sigstore/Rekor ecosystem used in the attest release pipeline.
 // Customize the subject glob to match your organization's CI/CD identity.
 func GenerateKyverno(orgID, ecrRegistry, ciSubjectGlob, outputDir string) error {
-	// Validate inputs to prevent YAML injection — newlines would break the policy structure.
+	// Validate inputs to prevent YAML/template injection.
+	// Newlines break YAML structure; backticks break the Go template string literal;
+	// null bytes cause unpredictable behaviour in YAML parsers.
 	for _, v := range []string{orgID, ecrRegistry, ciSubjectGlob} {
-		if strings.ContainsAny(v, "\n\r") {
-			return fmt.Errorf("GenerateKyverno: inputs must not contain newlines")
+		if strings.ContainsAny(v, "\n\r\x00`") {
+			return fmt.Errorf("GenerateKyverno: inputs must not contain newlines, null bytes, or backticks")
 		}
 	}
 

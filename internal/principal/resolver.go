@@ -204,6 +204,13 @@ func (l *LDAPSource) Resolve(ctx context.Context, principalARN string, attrs *sc
 		return nil // not a role ARN
 	}
 
+	// Validate BaseDN before passing to LDAP — an invalid or injected DN would
+	// cause errors or unintended directory traversal. Valid LDAP DNs contain only
+	// alphanumeric, spaces, commas, equals, plus, hash, semicolon, angle brackets.
+	if !isValidLDAPDN(l.BaseDN) {
+		return fmt.Errorf("LDAP BaseDN %q contains unsafe characters", l.BaseDN)
+	}
+
 	conn, err := ldap.DialURL(l.URL)
 	if err != nil {
 		return nil // LDAP unavailable — not fatal, Cedar defaults to deny
@@ -290,4 +297,22 @@ func extractCN(dn string) string {
 		return after
 	}
 	return first
+}
+
+// isValidLDAPDN validates that a string is a safe LDAP Distinguished Name.
+// Rejects characters not expected in LDAP DNs to prevent injection or
+// unexpected directory traversal via a misconfigured BaseDN.
+func isValidLDAPDN(dn string) bool {
+	if dn == "" {
+		return false
+	}
+	// LDAP DNs consist of RDN components separated by commas.
+	// Each RDN is attributeType=value, where value may be quoted.
+	// Reject control characters and null bytes; allow the standard DN charset.
+	for _, r := range dn {
+		if r < 32 || r == 127 { // control characters
+			return false
+		}
+	}
+	return true
 }
