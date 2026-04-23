@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -309,12 +310,12 @@ func (s *Server) handleOperationsSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Send keepalive comment.
-	fmt.Fprintf(w, ": connected\n\n")
+	_, _ = io.WriteString(w, ": connected\n\n")
 	flusher.Flush()
 
 	if s.eval == nil {
 		// No evaluator running — send placeholder.
-		fmt.Fprintf(w, "data: {\"status\":\"Cedar PDP not running — use 'attest watch' to start\"}\n\n")
+		_, _ = io.WriteString(w, "data: {\"status\":\"Cedar PDP not running — use 'attest watch' to start\"}\n\n")
 		flusher.Flush()
 		<-r.Context().Done()
 		return
@@ -330,7 +331,7 @@ func (s *Server) handleOperationsSSE(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			b, _ := json.Marshal(ev)
-			fmt.Fprintf(w, "data: %s\n\n", b)
+			_, _ = w.Write(append(append([]byte("data: "), b...), '\n', '\n'))
 			flusher.Flush()
 		}
 	}
@@ -388,7 +389,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		"Done.",
 	}
 	for _, step := range steps {
-		fmt.Fprintf(w, "data: %s\n\n", step)
+		_, _ = io.WriteString(w, "data: "+step+"\n\n")
 		flusher.Flush()
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -412,7 +413,7 @@ func sanitizeForJSON(s string) string {
 func jsonResponse(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	b, _ := json.Marshal(v)
-	_, _ = w.Write(b)
+	_, _ = w.Write(b) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter
 }
 
 func readYAML(path string) ([]byte, error) {

@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -124,7 +125,7 @@ func (h *OIDCHandler) Middleware(next http.Handler) http.Handler {
 
 		cookie, err := r.Cookie(sessionCookieName)
 		if err != nil {
-			http.Redirect(w, r, "/login?redirect="+r.URL.Path, http.StatusFound)
+			http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.Path), http.StatusFound)
 			return
 		}
 
@@ -136,7 +137,7 @@ func (h *OIDCHandler) Middleware(next http.Handler) http.Handler {
 			h.mu.Lock()
 			delete(h.sessions, cookie.Value)
 			h.mu.Unlock()
-			http.Redirect(w, r, "/login?redirect="+r.URL.Path, http.StatusFound)
+			http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.Path), http.StatusFound)
 			return
 		}
 
@@ -156,6 +157,7 @@ func (h *OIDCHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    state,
 		MaxAge:   300, // 5 minutes
 		HttpOnly: true,
+		Secure:   !isLocalAddr(h.oauth2.RedirectURL),
 		SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, h.oauth2.AuthCodeURL(state), http.StatusFound)
@@ -171,8 +173,14 @@ func (h *OIDCHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid state", http.StatusBadRequest)
 		return
 	}
-	// Clear state cookie.
-	http.SetCookie(w, &http.Cookie{Name: "oidc_state", MaxAge: -1})
+	// Clear state cookie — flags must match the original for browsers to honour the deletion.
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oidc_state",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   !isLocalAddr(h.oauth2.RedirectURL),
+		SameSite: http.SameSiteLaxMode,
+	})
 
 	// Exchange code for token.
 	token, err := h.oauth2.Exchange(r.Context(), r.URL.Query().Get("code"))
@@ -247,7 +255,13 @@ func (h *OIDCHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		delete(h.sessions, cookie.Value)
 		h.mu.Unlock()
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   !isLocalAddr(h.oauth2.RedirectURL),
+		SameSite: http.SameSiteLaxMode,
+	})
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
