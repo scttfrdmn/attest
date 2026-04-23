@@ -1699,7 +1699,6 @@ Assessment types:
 			// High-value controls: -5 for gap, -3 for partial
 			// Standard controls: -3 for gap, -1 for partial (simplified; full weight table in 800-171A)
 			const maxScoreL2 = 110
-			const maxScoreL1 = 15
 
 			// Level 1 practice IDs (FAR 52.204-21)
 			level1Practices := map[string]bool{
