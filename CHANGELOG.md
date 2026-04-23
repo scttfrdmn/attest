@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-04-23
+
+### Added
+
+- **FedRAMP Moderate baseline expanded** — `frameworks/fedramp-moderate/framework.yaml`
+  grows from 23 → 36 controls covering 6 new families with structural (SCP),
+  operational (Cedar), and monitoring (Config) enforcement:
+  - AT: security awareness training and role-based training (Cedar temporal)
+  - CA: continuous monitoring (Config/Security Hub checks)
+  - CP: system backup protection (SCP backup vault guard + Config)
+  - IR: incident handling (GuardDuty monitoring) and incident reporting (Cedar)
+  - RA: vulnerability scanning (Inspector + SSM Patch)
+  - SA: external system services (Cedar vendor approval) + developer configuration management (SCP)
+  - SC: DNSSEC (SC-20, SC-21) structural + Config checks
+  - SI: system monitoring (SI-4, GuardDuty) and retention (SI-12, CloudWatch)
+
+- **FedRAMP High baseline** — new `frameworks/fedramp-high/framework.yaml` with 15
+  High-specific delta controls (activate alongside fedramp-moderate for complete coverage):
+  - Stricter MFA: hardware tokens required (IA-2(1), IA-2(6))
+  - Non-repudiation and cryptographic audit records (AU-9(3), AU-10, AU-11 with 1yr retention)
+  - Privilege tightening: role pass restriction, account suspension (AC-2(13), AC-6(1))
+  - Cryptographic enforcement: TLS 1.2+, KMS ViaService, key rotation (SC-8(1), SC-12(1), SC-28(1))
+  - Software integrity: ECR image scanning, signed containers (SI-7(1), SI-7(6))
+  - Maintenance: SSM-only access, deny SSH/RDP (MA-4)
+
+- **Conflict detection** for new frameworks:
+  - `fedramp-high` without `fedramp-moderate` → warning (delta framework gap)
+  - `fedramp` + `itar` → info (GovCloud guidance)
+
+- **Artifact client documentation**: FedRAMP frameworks require explicit operator
+  activation; P-ATO is not an AWS Artifact agreement like the HIPAA BAA.
+
 ## [0.13.0] - 2026-04-23
 
 ### Added
