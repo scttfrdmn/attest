@@ -29,6 +29,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	cedar "github.com/cedar-policy/cedar-go"
 	"github.com/provabl/attest/internal/auth"
 	"github.com/provabl/attest/internal/evaluator"
 	"github.com/provabl/attest/internal/reporting"
@@ -54,26 +55,38 @@ type Server struct {
 	assessorMode   bool       // true = read-only C3PAO assessor portal
 	assessorOrg    string     // name of the assessor organization
 	assessorExpiry time.Time  // zero = no expiry
+	dashboardPS    *cedar.PolicySet // nil for NewServer/NewAssessorServer; loaded from policies/dashboard.cedar
 }
 
-// NewServerWithOIDC creates a dashboard server using OIDC authentication.
-func NewServerWithOIDC(addr, storeDir string, oidcHandler *auth.OIDCHandler, eval *evaluator.Evaluator) *Server {
+// NewServerWithOIDC creates a dashboard server using OIDC authentication and
+// Cedar-based role authorization. Returns an error if the embedded Cedar policy
+// file fails to parse — this surfaces at startup, not at first request.
+func NewServerWithOIDC(addr, storeDir string, oidcHandler *auth.OIDCHandler, eval *evaluator.Evaluator) (*Server, error) {
+	ps, err := loadDashboardPolicies()
+	if err != nil {
+		return nil, err
+	}
 	s := &Server{
-		addr:      addr,
-		mux:       http.NewServeMux(),
-		eval:      eval,
-		storeDir:  storeDir,
+		addr:        addr,
+		mux:         http.NewServeMux(),
+		eval:        eval,
+		storeDir:    storeDir,
+		dashboardPS: ps,
 	}
 	oidcHandler.RegisterRoutes(s.mux)
-	s.mux.Handle("/", oidcHandler.Middleware(http.HandlerFunc(s.handleIndex)))
-	s.mux.Handle("/api/posture", oidcHandler.Middleware(http.HandlerFunc(s.handlePosture)))
-	s.mux.Handle("/api/frameworks", oidcHandler.Middleware(http.HandlerFunc(s.handleFrameworks)))
-	s.mux.Handle("/api/operations/stream", oidcHandler.Middleware(http.HandlerFunc(s.handleOperationsSSE)))
-	s.mux.Handle("/api/environments", oidcHandler.Middleware(http.HandlerFunc(s.handleEnvironments)))
-	s.mux.Handle("/api/waivers", oidcHandler.Middleware(http.HandlerFunc(s.handleWaivers)))
-	s.mux.Handle("/api/incidents", oidcHandler.Middleware(http.HandlerFunc(s.handleIncidents)))
-	s.mux.Handle("/api/generate", oidcHandler.Middleware(http.HandlerFunc(s.handleGenerate)))
-	return s
+	// Each route: OIDC authn → Cedar authz → handler.
+	wrap := func(h http.HandlerFunc) http.Handler {
+		return oidcHandler.Middleware(cedarGuard(ps, h))
+	}
+	s.mux.Handle("/", wrap(s.handleIndex))
+	s.mux.Handle("/api/posture", wrap(s.handlePosture))
+	s.mux.Handle("/api/frameworks", wrap(s.handleFrameworks))
+	s.mux.Handle("/api/operations/stream", wrap(s.handleOperationsSSE))
+	s.mux.Handle("/api/environments", wrap(s.handleEnvironments))
+	s.mux.Handle("/api/waivers", wrap(s.handleWaivers))
+	s.mux.Handle("/api/incidents", wrap(s.handleIncidents))
+	s.mux.Handle("/api/generate", wrap(s.handleGenerate))
+	return s, nil
 }
 
 // AssessorConfig holds configuration for assessor portal mode.
@@ -352,7 +365,25 @@ func (s *Server) handleEnvironments(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]any{"environments": []any{}, "error": "failed to parse SRE data"})
 		return
 	}
-	jsonResponse(w, map[string]any{"environments": sre.Environments})
+
+	environments := sre.Environments
+
+	// PI researchers see only their own environments (env.Owner == user.Email).
+	// Cedar has already permitted this request at the route level; the filtering
+	// here is a data-scoping concern that Cedar cannot express (it makes a binary
+	// permit/deny decision, not a collection filter).
+	if user, err := auth.UserFromContext(r.Context()); err == nil &&
+		user.Role == auth.RolePIResearcher {
+		filtered := make(map[string]schema.Environment, len(environments))
+		for id, env := range environments {
+			if env.Owner == user.Email {
+				filtered[id] = env
+			}
+		}
+		environments = filtered
+	}
+
+	jsonResponse(w, map[string]any{"environments": environments})
 }
 
 func (s *Server) handleWaivers(w http.ResponseWriter, r *http.Request) {

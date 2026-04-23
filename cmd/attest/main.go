@@ -1931,7 +1931,10 @@ Default (no flags): no auth, localhost only — for local development.`,
 					return fmt.Errorf("initializing OIDC: %w", err)
 				}
 				fmt.Printf("Starting attest dashboard with OIDC auth (%s)\n", oidcIssuer)
-				srv := dashboard.NewServerWithOIDC(addr, ".attest", oidcHandler, nil)
+				srv, err := dashboard.NewServerWithOIDC(addr, ".attest", oidcHandler, nil)
+				if err != nil {
+					return fmt.Errorf("dashboard: %w", err)
+				}
 				if err := srv.Start(ctx); err != nil && err.Error() != "http: Server closed" {
 					return err
 				}
