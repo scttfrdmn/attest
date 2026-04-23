@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-04-23
+
+### Added
+
+- **`itar`** — ITAR (International Traffic in Arms Regulations) framework: US person
+  access restriction, export license tracking (Cedar temporal), GovCloud-only FIPS
+  storage, Technology Control Plan gate, classification marking, audit trail, training.
+  **This was the only existing framework that was completely missing.**
+
+- **`gdpr`** — GDPR for EU research participants: lawful basis (Article 89 research
+  exemption), pseudonymisation/data minimisation, DPIA, Article 32 technical measures,
+  72-hour breach notification, Standard Contractual Clauses, DPO, ROPA.
+
+- **`42-cfr-part-2`** — Substance abuse confidentiality (stricter than HIPAA): written
+  consent gate, IRB research exception, MFA per 2024 Final Rule, minimum necessary
+  access, Macie SUD record monitoring.
+
+- **`cjis`** — FBI CJIS Security Policy v5.9.5: US-only storage, AES-256/FIPS encryption,
+  MFA (October 2024 requirement), 3-year log retention, background checks, 6-month
+  training (Cedar temporal), triennial audit.
+
+- **`va-handbook-6500`** — VA research data: ERDSP approval gate, VA DUA/CRADA tracking
+  (Cedar temporal), 1-hour VA breach notification, annual training.
+
+- **`cmmc-level-2`** — Discoverability alias for CMMC Level 2. Single reference control
+  directing to `nist-800-171-r2` (all 110 enforcement controls). Conflict rule warns
+  when activated without `nist-800-171-r2`. Correctly annotated as `c3pao` / triennial.
+
+### Changed
+
+- `conflicts.go`: added conflict rule for `cmmc-level-2` without `nist-800-171-r2`.
+
 ## [0.18.0] - 2026-04-23
 
 ### Added
