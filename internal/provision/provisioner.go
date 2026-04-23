@@ -88,11 +88,6 @@ func NewProvisioner(ctx context.Context, region string) (*Provisioner, error) {
 	}, nil
 }
 
-// newProvisionerWithSvc creates a provisioner with injected client (for testing).
-func newProvisionerWithSvc(svc orgAPI, region string) *Provisioner {
-	return &Provisioner{orgSvc: svc, region: region}
-}
-
 // ComputePlan determines the target OU, checks prerequisites, and
 // returns a provisioning plan for approval.
 func (p *Provisioner) ComputePlan(ctx context.Context, sre *schema.SRE, req *Request) (*Plan, error) {

@@ -197,12 +197,7 @@ func TestConditionInCompiledSCP(t *testing.T) {
 }
 
 func TestSCPSizeLimit(t *testing.T) {
-	// Build a policy with many actions to exceed 5120 bytes.
-	var actions []string
-	for i := 0; i < 200; i++ {
-		actions = append(actions, "s3:*", "ec2:*", "iam:CreateRole", "iam:DeleteRole")
-	}
-	// Deduplicate to keep uniqueness.
+	// Build a large unique action set to exceed 5120 bytes.
 	uniqueActions := []string{}
 	for i := 0; i < 60; i++ {
 		uniqueActions = append(uniqueActions, "s3:Action"+strings.Repeat("x", i+10))

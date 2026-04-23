@@ -101,7 +101,7 @@ func (e *Evaluator) EvaluateWithPolicies(ctx context.Context, ps *cedar.PolicySe
 		Resource:  resourceUID,
 	}
 
-	decision, diag := ps.IsAuthorized(entities, cedarReq)
+	decision, diag := cedar.Authorize(ps, entities, cedarReq)
 
 	effect := "DENY"
 	if decision == types.Decision(true) {
@@ -264,7 +264,7 @@ func loadPoliciesFromDir(dir string) (*cedar.PolicySet, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parsing %s: %w", e.Name(), err)
 		}
-		for id, policy := range parsed.Map() {
+		for id, policy := range parsed.All() {
 			ps.Add(id, policy)
 		}
 	}

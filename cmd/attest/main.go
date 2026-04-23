@@ -484,7 +484,6 @@ func runVerification(ctx context.Context, region string, sre *schema.SRE) {
 	fmt.Println("  (Config and Security Hub not required — $0 ongoing cost)")
 }
 
-// deduplicationKey mirrors internal/framework.deduplicationKey for CLI use.
 // applyClassificationScheme reads a classification scheme YAML and maps
 // institutional data classification tags on accounts to attest data classes.
 func applyClassificationScheme(schemeName string, sre *schema.SRE) error {
@@ -499,10 +498,8 @@ func applyClassificationScheme(schemeName string, sre *schema.SRE) error {
 	}
 
 	tagKey := "attest:data-class"
-	if scheme.SchemeID != "" {
-		// Scheme-specific tag key (e.g., "UC:DataProtectionLevel" for UC P-levels).
-		// We read it from the YAML but fall back to the standard attest tag.
-	}
+	// scheme.SchemeID would select an institution-specific tag key (e.g., "UC:DataProtectionLevel"),
+	// but the standard attest tag is used until that feature is implemented.
 
 	for accountID, env := range sre.Environments {
 		// Check for institutional classification tag.
@@ -534,13 +531,6 @@ func applyClassificationScheme(schemeName string, sre *schema.SRE) error {
 		}
 	}
 	return nil
-}
-
-func deduplicationKey(ctrl schema.Control) string {
-	if len(ctrl.Structural) > 0 {
-		return ctrl.Structural[0].ID
-	}
-	return ctrl.Family + "/" + ctrl.ID
 }
 
 func frameworksCmd() *cobra.Command {
@@ -1306,7 +1296,7 @@ func loadCedarPolicies(dir string) (*cedar.PolicySet, error) {
 		if err != nil {
 			continue
 		}
-		for id, policy := range parsed.Map() {
+		for id, policy := range parsed.All() {
 			ps.Add(id, policy)
 		}
 	}

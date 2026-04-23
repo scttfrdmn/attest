@@ -157,7 +157,7 @@ func (r *Runner) loadPolicies() (*cedar.PolicySet, error) {
 			continue
 		}
 		// Merge the parsed policies into the main policy set.
-		for policyID, policy := range parsed.Map() {
+		for policyID, policy := range parsed.All() {
 			ps.Add(policyID, policy)
 		}
 	}

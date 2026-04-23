@@ -107,11 +107,6 @@ func NewSAMLSource(ctx context.Context, region string) (*SAMLSource, error) {
 	}, nil
 }
 
-// newSAMLSourceWithClients creates a SAMLSource with injected clients (for testing).
-func newSAMLSourceWithClients(iamSvc iamAPI, stsSvc stsAPI) *SAMLSource {
-	return &SAMLSource{iamSvc: iamSvc, stsSvc: stsSvc}
-}
-
 func (s *SAMLSource) Name() string { return "saml" }
 
 // Resolve reads IAM role tags for the role identified in principalARN and maps

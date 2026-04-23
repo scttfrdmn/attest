@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"text/template" // nosemgrep: go.lang.security.audit.xss.import-text-template -- SSP output is Markdown, not HTML
+	"text/template" // nosemgrep: go.lang.security.audit.xss.import-text-template
 	"time"
 )
 

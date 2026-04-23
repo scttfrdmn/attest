@@ -85,10 +85,8 @@ func TestTranslateEvent(t *testing.T) {
 				if strings.Contains(req.PrincipalARN, "\n") {
 					t.Errorf("PrincipalARN contains newline: %q", req.PrincipalARN)
 				}
-				if strings.Contains(req.PrincipalARN, "malicious") {
-					// newline was replaced by underscore, so "malicious" is still there
-					// but the newline that would split log lines is gone
-				}
+				// "malicious" stays in the ARN after sanitization; only the newline is removed.
+				_ = strings.Contains(req.PrincipalARN, "malicious")
 			},
 		},
 		{
