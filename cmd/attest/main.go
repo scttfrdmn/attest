@@ -57,7 +57,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.19.1"
+var version = "0.19.8"
 
 func main() {
 	root := &cobra.Command{
