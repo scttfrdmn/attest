@@ -2444,23 +2444,43 @@ Use 'attest ai translate' to generate proposed policies from natural language.`,
 
 // translateCloudTrailEvent is a thin wrapper around the evaluator package's translator.
 // Duplicating the logic here avoids exposing an unexported function cross-package.
+// IMPORTANT: all CloudTrail-sourced fields MUST be sanitized before use in Cedar
+// evaluation — CloudTrail events are external data and could contain injection content.
 func translateCloudTrailEvent(ev cttypes.Event) *evaluator.AuthzRequest {
 	if ev.EventName == nil {
 		return nil
 	}
+	// sanitize caps length to 512 and strips unsafe characters (matches evaluator/cloudtrail.go).
+	sanitize := func(s string) string {
+		const max = 512
+		if len(s) > max {
+			s = s[:max]
+		}
+		var b strings.Builder
+		for _, r := range s {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+				(r >= '0' && r <= '9') || r == '.' || r == '_' ||
+				r == '/' || r == ':' || r == '@' || r == '-' {
+				b.WriteRune(r)
+			} else {
+				b.WriteRune('_')
+			}
+		}
+		return b.String()
+	}
 	principal := "arn:aws:iam::unknown:user/unknown"
 	if ev.Username != nil {
-		principal = "arn:aws:iam::unknown:user/" + *ev.Username
+		principal = "arn:aws:iam::unknown:user/" + sanitize(*ev.Username)
 	}
 	resource := "*"
 	for _, r := range ev.Resources {
 		if r.ResourceName != nil {
-			resource = *r.ResourceName
+			resource = sanitize(*r.ResourceName)
 			break
 		}
 	}
 	return &evaluator.AuthzRequest{
-		Action:       *ev.EventName,
+		Action:       sanitize(*ev.EventName),
 		PrincipalARN: principal,
 		ResourceARN:  resource,
 		Attributes:   map[string]any{},

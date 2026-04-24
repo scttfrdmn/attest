@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -71,9 +72,12 @@ func IngestCosignAttestation(ctx context.Context, image string) (*CosignAttestat
 
 	// Step 1: Verify signature and extract signer identity.
 	if err := verifySignature(ctx, att); err != nil {
-		// Signature verification failed — image is unsigned or signature invalid.
+		// Signature verification failed — log details internally, expose only a
+		// generic message. Raw cosign errors can expose key paths, config locations,
+		// or internal infrastructure details.
+		fmt.Fprintf(os.Stderr, "cosign: signature verification failed for %s: %v\n", image, err)
 		att.Verified = false
-		att.SignerSubject = fmt.Sprintf("verification failed: %v", err)
+		att.SignerSubject = "unsigned or unverified"
 	} else {
 		att.Verified = true
 	}
