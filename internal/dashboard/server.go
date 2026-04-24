@@ -273,7 +273,7 @@ func (s *Server) handlePosture(w http.ResponseWriter, r *http.Request) {
 	cwPath := filepath.Join(s.storeDir, "compiled", "crosswalk.yaml")
 	data, err := readYAML(cwPath)
 	if err != nil {
-		jsonResponse(w, map[string]any{"error": err.Error()})
+		jsonResponse(w, map[string]any{"error": "failed to load posture data"})
 		return
 	}
 

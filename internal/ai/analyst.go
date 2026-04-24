@@ -85,6 +85,9 @@ func NewAnalyst(ctx context.Context, region string) (*Analyst, error) {
 // Uses Haiku for simple lookups, Opus for complex reasoning.
 // Every claim should trace to a specific artifact (crosswalk entry, posture data).
 func (a *Analyst) Ask(ctx context.Context, question string) (string, error) {
+	// Sanitize user-supplied question — strips newlines and control chars that
+	// could fragment the prompt structure. Guardrails provide additional protection.
+	question = sanitizePromptField(question)
 	// Build system prompt with compliance context from .attest/.
 	systemPrompt := a.buildSystemPrompt()
 
@@ -403,6 +406,8 @@ Return JSON: {summary, priority_items}.`
 //
 // Uses Sonnet 4.6 for structured prose generation.
 func (a *Analyst) GenerateAdminPolicy(ctx context.Context, controlID, policyType string) (*RemediationArtifact, error) {
+	controlID = sanitizePromptField(controlID)
+	policyType = sanitizePromptField(policyType)
 	postureSummary := a.loadPostureSummary()
 
 	typeHint := policyType
@@ -521,6 +526,9 @@ Return JSON: {
 // TranslateToCedar takes a natural language access control statement and
 // produces a Cedar policy. Uses Opus for precision.
 func (a *Analyst) TranslateToCedar(ctx context.Context, statement string) (string, error) {
+	// Sanitize user-supplied statement before embedding in prompt.
+	safeStatement := strings.ReplaceAll(statement, "</statement>", "<\\/statement>")
+	safeStatement = strings.ReplaceAll(safeStatement, "\x00", "")
 	systemPrompt := a.buildSystemPrompt() + `
 
 Your task is to translate a natural language access control requirement into a
@@ -536,7 +544,7 @@ Cedar policy. Follow these rules:
 		Messages: []types.Message{
 			{Role: types.ConversationRoleUser,
 				Content: []types.ContentBlock{&types.ContentBlockMemberText{
-					Value: "Translate to Cedar policy:\n\n" + statement,
+					Value: "Translate to Cedar policy:\n\n<statement>\n" + safeStatement + "\n</statement>",
 				}}},
 		},
 		System: []types.SystemContentBlock{
@@ -593,16 +601,17 @@ Return JSON array: [{
   "suggestion": "<remediation suggestion>"
 }]`
 
+	// Escape closing tag — a malicious log entry containing "</cedar_log>" would
+	// otherwise terminate the delimiter early, allowing prompt injection.
+	safeLog := strings.ReplaceAll(logSample, "</cedar_log>", "<\\/cedar_log>")
+
 	input := &bedrockruntime.ConverseStreamInput{
 		ModelId: aws.String(selectModel(CapabilityAnomaly)),
 		Messages: []types.Message{
 			{Role: types.ConversationRoleUser,
 				Content: []types.ContentBlock{&types.ContentBlockMemberText{
-					// Wrap in delimiters to prevent prompt injection via crafted log entries.
-					// A malicious Cedar policy could produce deny_reason fields with embedded
-					// instructions; the delimiters signal to the model this is untrusted data.
 					Value: "Analyze this Cedar decision log for anomalies:\n\n" +
-						"<cedar_log>\n" + logSample + "\n</cedar_log>",
+						"<cedar_log>\n" + safeLog + "\n</cedar_log>",
 				}}},
 		},
 		System: []types.SystemContentBlock{
@@ -635,17 +644,18 @@ type ImpactResult struct {
 // estimates the impact of activating or updating it against current posture.
 // Uses Opus for depth of analysis.
 func (a *Analyst) AnalyzeImpact(ctx context.Context, frameworkPath string) (*ImpactResult, error) {
+	baseName := filepath.Base(frameworkPath) // use basename in all errors — full path leaks filesystem layout
 	info, err := os.Stat(frameworkPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", frameworkPath, err)
+		return nil, fmt.Errorf("reading framework %s: %w", baseName, err)
 	}
 	if info.Size() > maxDocumentSize {
 		return nil, fmt.Errorf("framework file %s is too large (%d bytes, max %d)",
-			filepath.Base(frameworkPath), info.Size(), maxDocumentSize)
+			baseName, info.Size(), maxDocumentSize)
 	}
 	content, err := os.ReadFile(frameworkPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", frameworkPath, err)
+		return nil, fmt.Errorf("reading framework %s: %w", baseName, err)
 	}
 	postureSummary := a.loadPostureSummary()
 
@@ -666,8 +676,13 @@ Return JSON: {
   "scp_budget_delta": <integer>
 }`
 
-	userMsg := fmt.Sprintf("Current posture:\n%s\n\nFramework document (%s):\n%s",
-		postureSummary, filepath.Base(frameworkPath), string(content[:min(len(content), 8000)]))
+	// Wrap framework content in delimiters and escape closing tag to prevent
+	// prompt injection via a crafted framework document — matches the pattern
+	// used in IngestDocument() and AnalyzeAnomalies().
+	rawContent := string(content[:min(len(content), 8000)])
+	safeContent := strings.ReplaceAll(rawContent, "</framework_doc>", "<\\/framework_doc>")
+	userMsg := fmt.Sprintf("Current posture:\n%s\n\nFramework document (%s):\n<framework_doc>\n%s\n</framework_doc>",
+		postureSummary, baseName, safeContent)
 
 	input := &bedrockruntime.ConverseStreamInput{
 		ModelId: aws.String(selectModel(CapabilityFrameworkImpact)),
@@ -712,6 +727,7 @@ type RemediationArtifact struct {
 // Remediate generates a remediation artifact for a specific control gap.
 // Uses Sonnet for code/artifact generation.
 func (a *Analyst) Remediate(ctx context.Context, controlID string) (*RemediationArtifact, error) {
+	controlID = sanitizePromptField(controlID)
 	postureSummary := a.loadPostureSummary()
 	systemPrompt := a.buildSystemPrompt() + `
 

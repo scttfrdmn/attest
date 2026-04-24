@@ -3924,8 +3924,20 @@ Example:
 			if err != nil {
 				return fmt.Errorf("connecting to Bedrock: %w", err)
 			}
-			fmt.Printf("Analyzing framework impact: %s\n\n", args[0])
-			result, err := analyst.AnalyzeImpact(ctx, args[0])
+			// Validate the framework file path — same pattern as aiIngestCmd.
+			fwPath, err := filepath.Abs(args[0])
+			if err != nil {
+				return fmt.Errorf("resolving path: %w", err)
+			}
+			fwInfo, err := os.Stat(fwPath)
+			if err != nil {
+				return fmt.Errorf("framework file not found: %w", err)
+			}
+			if !fwInfo.Mode().IsRegular() {
+				return fmt.Errorf("framework path must be a regular file, not a directory or symlink")
+			}
+			fmt.Printf("Analyzing framework impact: %s\n\n", filepath.Base(fwPath))
+			result, err := analyst.AnalyzeImpact(ctx, fwPath)
 			if err != nil {
 				return fmt.Errorf("impact analysis failed: %w", err)
 			}
