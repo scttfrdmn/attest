@@ -909,12 +909,14 @@ func sanitizePromptField(s string) string {
 func (a *Analyst) listDocuments(dir string) string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Sprintf("(could not read %s: %v)", dir, err)
+		return "(document directory not accessible)"
 	}
 	var files []string
 	for _, e := range entries {
 		if !e.IsDir() {
-			files = append(files, e.Name())
+			// Sanitize filename before embedding in Bedrock prompt — POSIX filenames
+			// can contain newlines, which would break the prompt structure.
+			files = append(files, sanitizePromptField(e.Name()))
 		}
 	}
 	return strings.Join(files, "\n")

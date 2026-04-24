@@ -147,14 +147,14 @@ func (a *Analyzer) walkOU(ctx context.Context, node *OUNode) error {
 	// Collect SCPs attached to this OU/root.
 	scps, err := a.listSCPsForTarget(ctx, node.ID)
 	if err != nil {
-		return fmt.Errorf("listing SCPs for %s: %w", node.ID, err)
+		return fmt.Errorf("listing SCPs for OU: %w", err)
 	}
 	node.SCPs = scps
 
 	// Collect accounts directly under this OU.
 	accounts, err := a.listAccountsForParent(ctx, node.ID)
 	if err != nil {
-		return fmt.Errorf("listing accounts for %s: %w", node.ID, err)
+		return fmt.Errorf("listing accounts for OU: %w", err)
 	}
 	node.Accounts = accounts
 
@@ -166,7 +166,7 @@ func (a *Analyzer) walkOU(ctx context.Context, node *OUNode) error {
 			NextToken: nextToken,
 		})
 		if err != nil {
-			return fmt.Errorf("listing OUs for parent %s: %w", node.ID, err)
+			return fmt.Errorf("listing OUs for parent: %w", err)
 		}
 
 		for _, ou := range out.OrganizationalUnits {
@@ -203,7 +203,7 @@ func (a *Analyzer) listSCPsForTarget(ctx context.Context, targetID string) ([]At
 			NextToken: nextToken,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("listing policies for target %s: %w", targetID, err)
+			return nil, fmt.Errorf("listing policies for target: %w", err)
 		}
 
 		for _, p := range out.Policies {
@@ -212,7 +212,7 @@ func (a *Analyzer) listSCPsForTarget(ctx context.Context, targetID string) ([]At
 				PolicyId: aws.String(policyID),
 			})
 			if err != nil {
-				return nil, fmt.Errorf("describing policy %s: %w", policyID, err)
+				return nil, fmt.Errorf("describing policy: %w", err)
 			}
 			scps = append(scps, AttachedSCP{
 				ID:       policyID,
@@ -242,7 +242,7 @@ func (a *Analyzer) listAccountsForParent(ctx context.Context, parentID string) (
 			NextToken: nextToken,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("listing accounts for parent %s: %w", parentID, err)
+			return nil, fmt.Errorf("listing accounts for parent: %w", err)
 		}
 
 		for _, acct := range out.Accounts {
@@ -257,7 +257,7 @@ func (a *Analyzer) listAccountsForParent(ctx context.Context, parentID string) (
 			// Fetch tags for data classification.
 			tags, err := a.listTagsForResource(ctx, aws.ToString(acct.Id))
 			if err != nil {
-				return nil, fmt.Errorf("listing tags for account %s: %w", info.ID, err)
+				return nil, fmt.Errorf("listing tags for account: %w", err)
 			}
 			info.Tags = tags
 			accounts = append(accounts, info)
@@ -283,7 +283,7 @@ func (a *Analyzer) listTagsForResource(ctx context.Context, resourceID string) (
 			NextToken:  nextToken,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("listing tags for %s: %w", resourceID, err)
+			return nil, fmt.Errorf("listing tags for resource: %w", err)
 		}
 
 		for _, t := range out.Tags {
@@ -320,7 +320,7 @@ func (a *Analyzer) InventoryExistingSCPs(ctx context.Context) ([]AttachedSCP, er
 				PolicyId: aws.String(policyID),
 			})
 			if err != nil {
-				return nil, fmt.Errorf("describing policy %s: %w", policyID, err)
+				return nil, fmt.Errorf("describing policy: %w", err)
 			}
 			scps = append(scps, AttachedSCP{
 				ID:       policyID,
