@@ -46,8 +46,21 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: 1
 
-      # --- Semgrep SAST ---
+      # --- Semgrep SAST (auto rules) ---
       - name: Semgrep
         uses: returntocorp/semgrep-action@v1
         with:
           config: auto
+
+      # --- Semgrep custom project rules ---
+      # These enforce attest-specific security invariants that the auto ruleset
+      # cannot catch: terminal output sanitization, prompt injection prevention,
+      # path traversal after filepath.Join, git stderr exposure, and silent
+      # json.Marshal error discard. Findings here block CI.
+      - name: Semgrep custom rules
+        run: |
+          pip install semgrep --quiet
+          semgrep --config .semgrep/attest-security.yaml \
+                  --error \
+                  --metrics=off \
+                  .

@@ -1,0 +1,172 @@
+rules:
+
+  # ── Terminal Output Safety ──────────────────────────────────────────────────
+  #
+  # All terminal output in cmd/ that receives variables must go through
+  # output.Printf/Println (internal/output/terminal.go) which sanitizes
+  # ANSI escape sequences. Direct fmt.Printf with variables is unsafe.
+
+  - id: attest-unsafe-fmt-printf-in-cmd
+    message: >
+      Use output.Printf instead of fmt.Printf for terminal output with variables.
+      fmt.Printf with user/external string args enables ANSI terminal injection.
+      Import "github.com/provabl/attest/internal/output" and call output.Printf.
+    severity: ERROR
+    languages: [go]
+    pattern-either:
+      - pattern: fmt.Printf($FMT, ..., $VAR, ...)
+      - pattern: fmt.Println($VAR, ...)
+      - pattern: fmt.Println($VAR)
+    pattern-not:
+      - pattern: fmt.Printf($FMT)
+    paths:
+      include:
+        - cmd/
+
+  # ── Prompt Injection Prevention ─────────────────────────────────────────────
+  #
+  # All user-supplied or external string values embedded in Bedrock prompts
+  # must be passed through sanitizePromptField() or wrapped in delimiters.
+  # These rules catch the most common missing-sanitization patterns.
+
+  - id: attest-ai-unsanitized-control-id
+    message: >
+      controlID parameter must be sanitized with sanitizePromptField() before
+      embedding in a Bedrock prompt. Raw controlID can contain newlines that
+      fragment the prompt structure. Apply sanitizePromptField(controlID) at
+      the top of the function.
+    severity: WARNING
+    languages: [go]
+    patterns:
+      - pattern: |
+          func $FUNC(ctx context.Context, controlID string, ...) (...) {
+            ...
+            fmt.Sprintf(..., ..., controlID, ...)
+            ...
+          }
+      - pattern-not: |
+          func $FUNC(ctx context.Context, controlID string, ...) (...) {
+            controlID = sanitizePromptField(controlID)
+            ...
+          }
+    paths:
+      include:
+        - internal/ai/
+
+  - id: attest-ai-unsanitized-statement
+    message: >
+      statement parameter in TranslateToCedar must be sanitized before embedding
+      in a Bedrock prompt. User-supplied natural language statements can contain
+      injection payloads. Wrap in <statement>...</statement> delimiters with the
+      closing tag escaped.
+    severity: WARNING
+    languages: [go]
+    patterns:
+      - pattern: |
+          func $FUNC(ctx context.Context, statement string) (...) {
+            ...
+            $V = $BUILDFN(..., statement, ...)
+            ...
+          }
+      - pattern-not: |
+          func $FUNC(ctx context.Context, statement string) (...) {
+            safeStatement = ...
+            ...
+          }
+    paths:
+      include:
+        - internal/ai/
+
+  # ── Path Traversal Prevention ────────────────────────────────────────────────
+  #
+  # filepath.Join with external data must be followed by a filepath.Abs
+  # confinement check. This catches the class of path traversal bugs that
+  # appeared in framework loading, waiver IDs, and assessment IDs.
+
+  - id: attest-filepath-join-no-confinement
+    message: >
+      filepath.Join with a variable requires a filepath.Abs confinement check.
+      Without it, a value like "../../../etc/passwd" can escape the intended
+      directory. Add: abs, _ := filepath.Abs(path); if !strings.HasPrefix(abs, base) { return error }
+    severity: WARNING
+    languages: [go]
+    patterns:
+      - pattern: |
+          $PATH = filepath.Join($BASE, $VAR)
+          ...
+          os.ReadFile($PATH)
+      - pattern-not: |
+          $PATH = filepath.Join($BASE, $VAR)
+          ...
+          filepath.Abs(...)
+          ...
+          os.ReadFile($PATH)
+      - pattern-not: |
+          $PATH = filepath.Join($BASE, $VAR)
+          ...
+          os.Lstat($PATH)
+          ...
+          os.ReadFile($PATH)
+    paths:
+      include:
+        - internal/
+        - cmd/
+
+  # ── YAML/File Write Safety ───────────────────────────────────────────────────
+  #
+  # os.WriteFile with a path that includes a variable must have the variable
+  # validated. Catches draft attestation ID and assessment ID path traversal.
+
+  - id: attest-writefile-variable-path
+    message: >
+      os.WriteFile with a variable path component requires validation that the
+      resolved path stays within the intended directory. Use filepath.Abs and a
+      strings.HasPrefix check, or validate the ID with a safeIDRE regex first.
+    severity: WARNING
+    languages: [go]
+    patterns:
+      - pattern: os.WriteFile(filepath.Join($BASE, $VAR+$EXT), ...)
+      - pattern-not: |
+          if !$RE.MatchString($VAR) { ... }
+          ...
+          os.WriteFile(filepath.Join($BASE, $VAR+$EXT), ...)
+    paths:
+      include:
+        - internal/
+        - cmd/
+
+  # ── Git stderr Exposure ──────────────────────────────────────────────────────
+  #
+  # Git stderr must not be included in user-facing error messages. It can
+  # contain file paths, repository internals, or transient credential errors.
+
+  - id: attest-git-stderr-in-error
+    message: >
+      Do not embed git stderr in user-facing errors. Git stderr can expose file
+      paths, repository internals, or transient secrets. Use a generic error:
+      fmt.Errorf("git command failed: %w", err)
+    severity: ERROR
+    languages: [go]
+    pattern: fmt.Errorf($FMT, ..., $STDERR.String(), ...)
+    paths:
+      include:
+        - internal/store/
+
+  # ── Silent Error Discard ─────────────────────────────────────────────────────
+  #
+  # Discarding errors from json.Marshal in security-critical paths (like SCP
+  # comparison) can cause incorrect behavior where two different objects compare
+  # as equal. Require explicit error handling.
+
+  - id: attest-silent-json-marshal-error
+    message: >
+      Do not silently discard errors from json.Marshal in comparison or validation
+      logic. A marshal error produces an empty []byte, making two different objects
+      appear identical. Check the error and return false/error if it occurs.
+    severity: WARNING
+    languages: [go]
+    pattern: $X, _ = json.Marshal(...)
+    paths:
+      include:
+        - internal/deploy/
+        - internal/compiler/
