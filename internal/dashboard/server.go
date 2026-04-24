@@ -74,17 +74,20 @@ func NewServerWithOIDC(addr, storeDir string, oidcHandler *auth.OIDCHandler, eva
 		dashboardPS: ps,
 	}
 	oidcHandler.RegisterRoutes(s.mux)
-	// Each route: OIDC authn → Cedar authz → handler.
+	// Each route: OIDC authn → Cedar authz → [readOnly guard] → handler.
 	wrap := func(h http.HandlerFunc) http.Handler {
 		return oidcHandler.Middleware(cedarGuard(ps, h))
 	}
+	wrapRO := func(h http.HandlerFunc) http.Handler {
+		return oidcHandler.Middleware(cedarGuard(ps, readOnlyGuard(h)))
+	}
 	s.mux.Handle("/", wrap(s.handleIndex))
-	s.mux.Handle("/api/posture", wrap(s.handlePosture))
-	s.mux.Handle("/api/frameworks", wrap(s.handleFrameworks))
-	s.mux.Handle("/api/operations/stream", wrap(s.handleOperationsSSE))
-	s.mux.Handle("/api/environments", wrap(s.handleEnvironments))
-	s.mux.Handle("/api/waivers", wrap(s.handleWaivers))
-	s.mux.Handle("/api/incidents", wrap(s.handleIncidents))
+	s.mux.Handle("/api/posture", wrapRO(s.handlePosture))
+	s.mux.Handle("/api/frameworks", wrapRO(s.handleFrameworks))
+	s.mux.Handle("/api/operations/stream", wrapRO(s.handleOperationsSSE))
+	s.mux.Handle("/api/environments", wrapRO(s.handleEnvironments))
+	s.mux.Handle("/api/waivers", wrapRO(s.handleWaivers))
+	s.mux.Handle("/api/incidents", wrapRO(s.handleIncidents))
 	s.mux.Handle("/api/generate", wrap(s.handleGenerate))
 	return s, nil
 }
@@ -128,12 +131,12 @@ func NewServer(addr, storeDir, authToken string, eval *evaluator.Evaluator) *Ser
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/", s.handleIndex)
-	s.mux.HandleFunc("/api/posture", s.handlePosture)
-	s.mux.HandleFunc("/api/frameworks", s.handleFrameworks)
-	s.mux.HandleFunc("/api/operations/stream", s.handleOperationsSSE)
-	s.mux.HandleFunc("/api/environments", s.handleEnvironments)
-	s.mux.HandleFunc("/api/waivers", s.handleWaivers)
-	s.mux.HandleFunc("/api/incidents", s.handleIncidents)
+	s.mux.Handle("/api/posture", readOnlyGuard(http.HandlerFunc(s.handlePosture)))
+	s.mux.Handle("/api/frameworks", readOnlyGuard(http.HandlerFunc(s.handleFrameworks)))
+	s.mux.Handle("/api/operations/stream", readOnlyGuard(http.HandlerFunc(s.handleOperationsSSE)))
+	s.mux.Handle("/api/environments", readOnlyGuard(http.HandlerFunc(s.handleEnvironments)))
+	s.mux.Handle("/api/waivers", readOnlyGuard(http.HandlerFunc(s.handleWaivers)))
+	s.mux.Handle("/api/incidents", readOnlyGuard(http.HandlerFunc(s.handleIncidents)))
 	s.mux.HandleFunc("/api/generate", s.handleGenerate)
 }
 
@@ -143,8 +146,26 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'")
+			// 'unsafe-inline' retained for HTMX and inline styles in the dashboard template.
+			// Added: object-src 'none' (blocks plugins), frame-ancestors 'none' (clickjacking),
+			// base-uri 'self' (prevents base-tag hijacking).
+			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "+
+				"object-src 'none'; frame-ancestors 'none'; base-uri 'self'")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// readOnlyGuard rejects non-GET/HEAD requests to read-only API handlers with
+// 405 Method Not Allowed. This prevents handlers that only implement read logic
+// from silently accepting write requests if mutation methods are added later.
+func readOnlyGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

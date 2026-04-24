@@ -546,6 +546,14 @@ type AnomalyResult struct {
 // AnalyzeAnomalies reads the Cedar decision log and detects unusual patterns.
 // Uses Sonnet for structured extraction.
 func (a *Analyst) AnalyzeAnomalies(ctx context.Context, logPath string) ([]AnomalyResult, error) {
+	info, err := os.Stat(logPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading decision log %s: %w", logPath, err)
+	}
+	if info.Size() > maxDocumentSize {
+		return nil, fmt.Errorf("decision log %s is too large (%d bytes, max %d); truncate or rotate the log",
+			filepath.Base(logPath), info.Size(), maxDocumentSize)
+	}
 	logData, err := os.ReadFile(logPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading decision log %s: %w", logPath, err)
