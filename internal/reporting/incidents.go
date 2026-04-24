@@ -93,6 +93,9 @@ func (m *IncidentManager) Create(title, severity, source, notes string, controlI
 
 // Resolve marks an incident as resolved.
 func (m *IncidentManager) Resolve(id, notes string) error {
+	if len(notes) > maxIncidentNotesLen {
+		return fmt.Errorf("incident notes too long (max %d chars)", maxIncidentNotesLen)
+	}
 	incidents, err := m.List()
 	if err != nil {
 		return err

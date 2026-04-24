@@ -219,6 +219,9 @@ func (l *LDAPSource) Resolve(ctx context.Context, principalARN string, attrs *sc
 
 	// Bind (anonymous or service account).
 	if l.BindDN != "" {
+		if !isValidLDAPDN(l.BindDN) {
+			return fmt.Errorf("LDAP BindDN %q contains unsafe characters", l.BindDN)
+		}
 		if err := conn.Bind(l.BindDN, l.BindPass); err != nil {
 			return nil // bind failed — log but don't block evaluation
 		}

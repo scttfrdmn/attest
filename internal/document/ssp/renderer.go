@@ -159,8 +159,11 @@ func (s *SSP) Render() (string, error) {
 func titleCase(s string) string {
 	words := strings.Fields(s)
 	for i, w := range words {
-		if len(w) > 0 {
-			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		runes := []rune(w)
+		if len(runes) > 0 {
+			// Use rune-level slicing to handle multi-byte UTF-8 characters correctly.
+			// Byte-level w[:1] would corrupt characters like é (U+00E9, 2 bytes).
+			words[i] = strings.ToUpper(string(runes[:1])) + string(runes[1:])
 		}
 	}
 	return strings.Join(words, " ")

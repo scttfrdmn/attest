@@ -81,7 +81,7 @@ func NewServerWithOIDC(addr, storeDir string, oidcHandler *auth.OIDCHandler, eva
 	wrapRO := func(h http.HandlerFunc) http.Handler {
 		return oidcHandler.Middleware(cedarGuard(ps, readOnlyGuard(h)))
 	}
-	s.mux.Handle("/", wrap(s.handleIndex))
+	s.mux.Handle("/", wrapRO(s.handleIndex))
 	s.mux.Handle("/api/posture", wrapRO(s.handlePosture))
 	s.mux.Handle("/api/frameworks", wrapRO(s.handleFrameworks))
 	s.mux.Handle("/api/operations/stream", wrapRO(s.handleOperationsSSE))
@@ -130,7 +130,7 @@ func NewServer(addr, storeDir, authToken string, eval *evaluator.Evaluator) *Ser
 }
 
 func (s *Server) registerRoutes() {
-	s.mux.HandleFunc("/", s.handleIndex)
+	s.mux.Handle("/", readOnlyGuard(http.HandlerFunc(s.handleIndex)))
 	s.mux.Handle("/api/posture", readOnlyGuard(http.HandlerFunc(s.handlePosture)))
 	s.mux.Handle("/api/frameworks", readOnlyGuard(http.HandlerFunc(s.handleFrameworks)))
 	s.mux.Handle("/api/operations/stream", readOnlyGuard(http.HandlerFunc(s.handleOperationsSSE)))
