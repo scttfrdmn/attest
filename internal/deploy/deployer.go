@@ -411,7 +411,15 @@ func contentMatches(a, b string) bool {
 	if err := json.Unmarshal([]byte(b), &objB); err != nil {
 		return false
 	}
-	normA, _ := json.Marshal(objA)
-	normB, _ := json.Marshal(objB)
+	// Marshal errors here would mean we successfully unmarshaled but cannot
+	// re-marshal — pathological with standard Go types, but treat as mismatch.
+	normA, err := json.Marshal(objA)
+	if err != nil {
+		return false
+	}
+	normB, err := json.Marshal(objB)
+	if err != nil {
+		return false
+	}
 	return string(normA) == string(normB)
 }

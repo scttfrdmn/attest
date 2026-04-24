@@ -210,7 +210,11 @@ func (s *Store) gitOutput(args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("%w: %s", err, stderr.String())
+		// Log stderr internally at trace level; do not surface it to callers.
+		// Git stderr can expose file paths, repository internals, or transient
+		// secrets in error output.
+		_ = stderr.String() // consumed but not propagated
+		return "", fmt.Errorf("git command failed: %w", err)
 	}
 	return stdout.String(), nil
 }

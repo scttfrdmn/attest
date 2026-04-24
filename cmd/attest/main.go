@@ -2699,7 +2699,7 @@ func waiverCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("Waiver created: %s\n", w.ID)
-			fmt.Printf("  Control: %s | Scope: %s | Expires: %s\n", w.ControlID, w.Scope, w.ExpiresAt.Format("2006-01-02"))
+			fmt.Printf("  Control: %s | Scope: %s | Expires: %s\n", w.ControlID, attestation.SanitizeTerminalOutput(w.Scope), w.ExpiresAt.Format("2006-01-02"))
 			return nil
 		},
 	}
@@ -2738,7 +2738,7 @@ func waiverCmd() *cobra.Command {
 			fmt.Println(strings.Repeat("─", 72))
 			for _, w := range waivers {
 				fmt.Printf("%-15s %-10s %-20s %-12s %s\n",
-					w.ID, w.ControlID, w.Scope, w.ExpiresAt.Format("2006-01-02"), w.Status)
+					w.ID, w.ControlID, attestation.SanitizeTerminalOutput(w.Scope), w.ExpiresAt.Format("2006-01-02"), w.Status)
 			}
 			return nil
 		},
@@ -2831,7 +2831,7 @@ func incidentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Created incident %s: %s [%s]\n", inc.ID, inc.Title, inc.Severity)
+			fmt.Printf("Created incident %s: %s [%s]\n", inc.ID, attestation.SanitizeTerminalOutput(inc.Title), inc.Severity)
 			return nil
 		},
 	}
@@ -2860,7 +2860,7 @@ func incidentCmd() *cobra.Command {
 					resolved = fmt.Sprintf(" → resolved %s", inc.ResolvedAt.Format("2006-01-02"))
 				}
 				fmt.Printf("  [%s] %s  %s  %s%s\n",
-					inc.Severity, inc.ID, inc.Status, inc.Title, resolved)
+					inc.Severity, inc.ID, inc.Status, attestation.SanitizeTerminalOutput(inc.Title), resolved)
 			}
 			return nil
 		},
@@ -2968,7 +2968,7 @@ administrative controls (training, risk assessments, IR testing, etc.).`,
 			fmt.Println(strings.Repeat("─", 76))
 			for _, a := range attestations {
 				fmt.Printf("%-18s %-10s %-22s %-12s %s\n",
-					a.ID, a.ControlID, a.AffirmedBy, a.ExpiresAt.Format("2006-01-02"), a.Status)
+					a.ID, a.ControlID, attestation.SanitizeTerminalOutput(a.AffirmedBy), a.ExpiresAt.Format("2006-01-02"), a.Status)
 			}
 			return nil
 		},
