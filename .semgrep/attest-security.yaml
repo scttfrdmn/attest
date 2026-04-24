@@ -21,7 +21,7 @@ rules:
       - pattern: fmt.Printf($FMT)
     paths:
       include:
-        - cmd/
+        - "**/cmd/**"
 
   # ── Prompt Injection Prevention ─────────────────────────────────────────────
   #
@@ -51,7 +51,7 @@ rules:
           }
     paths:
       include:
-        - internal/ai/
+        - "**/internal/ai/**"
 
   - id: attest-ai-unsanitized-statement
     message: >
@@ -75,7 +75,7 @@ rules:
           }
     paths:
       include:
-        - internal/ai/
+        - "**/internal/ai/**"
 
   # ── Path Traversal Prevention ────────────────────────────────────────────────
   #
@@ -109,8 +109,8 @@ rules:
           os.ReadFile($PATH)
     paths:
       include:
-        - internal/
-        - cmd/
+        - '**/internal/**'
+        - '**/cmd/**'
 
   # ── YAML/File Write Safety ───────────────────────────────────────────────────
   #
@@ -132,8 +132,8 @@ rules:
           os.WriteFile(filepath.Join($BASE, $VAR+$EXT), ...)
     paths:
       include:
-        - internal/
-        - cmd/
+        - '**/internal/**'
+        - '**/cmd/**'
 
   # ── Git stderr Exposure ──────────────────────────────────────────────────────
   #
@@ -150,7 +150,7 @@ rules:
     pattern: fmt.Errorf($FMT, ..., $STDERR.String(), ...)
     paths:
       include:
-        - internal/store/
+        - '**/internal/store/**'
 
   # ── Silent Error Discard ─────────────────────────────────────────────────────
   #
@@ -168,5 +168,5 @@ rules:
     pattern: $X, _ = json.Marshal(...)
     paths:
       include:
-        - internal/deploy/
-        - internal/compiler/
+        - '**/internal/deploy/**'
+        - '**/internal/compiler/**'

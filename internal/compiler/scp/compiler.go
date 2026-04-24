@@ -386,7 +386,7 @@ func estimateStatementSize(actions, notAction []string, condition map[string]any
 	} else {
 		s.Action = actions
 	}
-	b, _ := json.Marshal(s)
+	b, _ := json.Marshal(s) // nosemgrep: semgrep.attest-silent-json-marshal-error — b is SCP content from compiler output, not a security comparison
 	return len(b) + 1 // +1 for comma separator in array
 }
 

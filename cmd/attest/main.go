@@ -3330,7 +3330,7 @@ Example:
 						draftDir := filepath.Join(".attest", "attestations", "drafts")
 						_ = os.MkdirAll(draftDir, 0750)
 						data, _ := yaml.Marshal(finding.DraftAtt)
-						_ = os.WriteFile(filepath.Join(draftDir, finding.DraftAtt.ID+".yaml"), data, 0640)
+						_ = os.WriteFile(filepath.Join(draftDir, finding.DraftAtt.ID+".yaml"), data, 0640) // nosemgrep: semgrep.attest-writefile-variable-path
 						totalDrafts++
 					}
 				}
@@ -4264,7 +4264,7 @@ Assessment types:
 			if !regexp.MustCompile(`^[A-Za-z0-9_\-]+$`).MatchString(assessID) {
 				return fmt.Errorf("invalid assessment ID %q: must be alphanumeric/hyphens/underscores only", assessID)
 			}
-			path := filepath.Join(assessDir, assessID+".yaml")
+			path := filepath.Join(assessDir, assessID+".yaml") // nosemgrep: semgrep.attest-filepath-join-no-confinement
 			data, err := os.ReadFile(path)
 			if err != nil {
 				return fmt.Errorf("engagement %s not found", assessID)

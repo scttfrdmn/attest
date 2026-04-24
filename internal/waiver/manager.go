@@ -159,7 +159,7 @@ func (m *Manager) Expire(ctx context.Context, waiverID string) error {
 	if !safeIDRE.MatchString(waiverID) {
 		return fmt.Errorf("waiver ID %q contains unsafe characters", waiverID)
 	}
-	path := filepath.Join(m.storePath, waiverID+".yaml")
+	path := filepath.Join(m.storePath, waiverID+".yaml") // nosemgrep: semgrep.attest-filepath-join-no-confinement — waiverID validated by safeIDRE
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("waiver %s not found: %w", waiverID, err)

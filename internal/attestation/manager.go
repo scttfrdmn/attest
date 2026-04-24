@@ -148,7 +148,7 @@ func (m *Manager) Expire(ctx context.Context, attestationID string) error {
 	if !safeIDRE.MatchString(attestationID) {
 		return fmt.Errorf("attestation ID %q contains unsafe characters", attestationID)
 	}
-	path := filepath.Join(m.storePath, attestationID+".yaml")
+	path := filepath.Join(m.storePath, attestationID+".yaml") // nosemgrep: semgrep.attest-filepath-join-no-confinement — attestationID validated by safeIDRE
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("attestation %s not found: %w", attestationID, err)
