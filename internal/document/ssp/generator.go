@@ -69,7 +69,11 @@ func (g *Generator) Generate(
 	evalStats map[string]EvalStats, // Cedar evaluation statistics per policy
 ) (*SSP, error) {
 	ssp := &SSP{
-		Title:       fmt.Sprintf("System Security Plan — %s — %s", sre.Name, fw.Name),
+		// Escape markdown in sre.Name and fw.Name — these come from sre.yaml (user-editable)
+		// and framework YAML; a name with `**` or `[link](url)` would corrupt the SSP.
+		Title: fmt.Sprintf("System Security Plan — %s — %s",
+			strings.NewReplacer("*", "\\*", "[", "\\[", "]", "\\]", "\n", " ", "\r", " ").Replace(sre.Name),
+			strings.NewReplacer("*", "\\*", "[", "\\[", "]", "\\]", "\n", " ", "\r", " ").Replace(fw.Name)),
 		SRE:         sre,
 		Framework:   fw,
 		Crosswalk:   crosswalk,

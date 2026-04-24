@@ -18,6 +18,7 @@ package principal
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -211,7 +212,10 @@ func (l *LDAPSource) Resolve(ctx context.Context, principalARN string, attrs *sc
 		return fmt.Errorf("LDAP BaseDN %q contains unsafe characters", l.BaseDN)
 	}
 
-	conn, err := ldap.DialURL(l.URL)
+	// Use a 5-second connection timeout — ldap.DialURL has no timeout by default,
+	// so a slow or unreachable LDAP server would block indefinitely. LDAP failures
+	// are non-fatal (Cedar defaults to deny without attributes), but hanging is worse.
+	conn, err := ldap.DialURL(l.URL, ldap.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}))
 	if err != nil {
 		return nil // LDAP unavailable — not fatal, Cedar defaults to deny
 	}

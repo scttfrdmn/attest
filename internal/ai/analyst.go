@@ -322,7 +322,10 @@ Return a JSON object with: summary, priority_items.`
 		if docsDir != "" {
 			docList = a.listDocuments(docsDir)
 		}
-		userMsg = fmt.Sprintf("Available documents in %s:\n%s\n\nWhat should this organization focus on?", docsDir, docList)
+		// Use filepath.Base(docsDir) to avoid exposing the full filesystem path in the
+		// Bedrock prompt — the directory structure is internal system information.
+		userMsg = fmt.Sprintf("Available documents in '%s':\n%s\n\nWhat should this organization focus on?",
+			filepath.Base(docsDir), docList)
 
 	default:
 		postureSummary := a.loadPostureSummary()
@@ -899,8 +902,10 @@ func sanitizePromptField(s string) string {
 	}
 	result := b.String()
 	// Truncate to prevent excessively long injected values from dominating the prompt.
-	if len(result) > 512 {
-		result = result[:512] + "…"
+	// Truncate at rune boundary, not byte boundary, to avoid splitting multi-byte
+	// UTF-8 characters (e.g., CJK ideographs, emoji) that span 2-4 bytes.
+	if runes := []rune(result); len(runes) > 512 {
+		result = string(runes[:512]) + "…"
 	}
 	return result
 }

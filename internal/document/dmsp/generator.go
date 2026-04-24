@@ -34,6 +34,7 @@ func escapeMarkdown(s string) string {
 		"*", "\\*", "_", "\\_",
 		"#", "\\#", "!", "\\!",
 		"`", "\\`", "<", "&lt;", ">", "&gt;",
+		"|", "\\|", // pipe is a table column delimiter in Markdown
 		"\n", " ", "\r", " ",
 	)
 	return r.Replace(strings.TrimSpace(s))

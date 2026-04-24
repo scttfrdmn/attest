@@ -57,7 +57,7 @@ import (
 	"github.com/provabl/attest/pkg/schema"
 )
 
-var version = "0.19.8"
+var version = "0.19.9"
 
 func main() {
 	root := &cobra.Command{
@@ -2534,6 +2534,25 @@ Create it first: aws organizations create-organizational-unit --parent-id <root>
 			if len(email) > 64 {
 				return fmt.Errorf("--email must be ≤ 64 characters (AWS Organizations limit)")
 			}
+			// Validate owner and purpose — used as AWS resource tags (256-char limit,
+			// alphanumeric + select punctuation). Reject control characters that could
+			// cause issues in tag display or downstream systems.
+			if owner != "" {
+				if len(owner) > 256 {
+					return fmt.Errorf("--owner must be ≤ 256 characters (AWS tag limit)")
+				}
+				if !regexp.MustCompile(`^[a-zA-Z0-9 \-\.@/]+$`).MatchString(owner) {
+					return fmt.Errorf("--owner may only contain letters, digits, spaces, hyphens, dots, @ and /")
+				}
+			}
+			if purpose != "" {
+				if len(purpose) > 256 {
+					return fmt.Errorf("--purpose must be ≤ 256 characters (AWS tag limit)")
+				}
+				if !regexp.MustCompile(`^[a-zA-Z0-9 \-\.,()/:]+$`).MatchString(purpose) {
+					return fmt.Errorf("--purpose may only contain letters, digits, spaces, and common punctuation")
+				}
+			}
 			if len(dataClasses) == 0 {
 				return fmt.Errorf("--data-class is required (e.g., --data-class CUI)")
 			}
@@ -3801,11 +3820,11 @@ likely findings and weaknesses. Uses Claude Opus 4.6.`,
 				return fmt.Errorf("audit simulation failed: %w", err)
 			}
 			fmt.Printf("\nSimulated Score: %d / 110 controls\n\n", result.Score)
-			fmt.Printf("Assessor Narrative:\n%s\n\n", result.Narrative)
+			fmt.Printf("Assessor Narrative:\n%s\n\n", attestation.SanitizeTerminalOutput(result.Narrative))
 			if len(result.Weaknesses) > 0 {
 				fmt.Println("Weaknesses identified:")
 				for _, w := range result.Weaknesses {
-					fmt.Printf("  • %s\n", w)
+					fmt.Printf("  • %s\n", attestation.SanitizeTerminalOutput(w))
 				}
 			}
 			if len(result.Findings) > 0 {
@@ -3845,7 +3864,7 @@ Example:
 			if err != nil {
 				return fmt.Errorf("translation failed: %w", err)
 			}
-			fmt.Println(cedar)
+			fmt.Println(attestation.SanitizeTerminalOutput(cedar))
 			fmt.Println("\nReview the policy, then: cp proposed.cedar .attest/proposed/")
 			fmt.Println("Test with: attest simulate --proposed .attest/proposed/")
 			return nil
@@ -3991,9 +4010,9 @@ Example:
 				return fmt.Errorf("remediation failed: %w", err)
 			}
 			fmt.Printf("Type: %s\nTitle: %s\n\n", artifact.Type, artifact.Title)
-			fmt.Println(artifact.Content)
+			fmt.Println(attestation.SanitizeTerminalOutput(artifact.Content))
 			if artifact.Explanation != "" {
-				fmt.Printf("\nExplanation: %s\n", artifact.Explanation)
+				fmt.Printf("\nExplanation: %s\n", attestation.SanitizeTerminalOutput(artifact.Explanation))
 			}
 			// Write to proposed directory if --out specified.
 			if outDir != "" {
@@ -4065,9 +4084,9 @@ Examples:
 				return fmt.Errorf("policy generation failed: %w", err)
 			}
 			fmt.Printf("Title: %s\n\n", artifact.Title)
-			fmt.Println(artifact.Content)
+			fmt.Println(attestation.SanitizeTerminalOutput(artifact.Content))
 			if artifact.Explanation != "" {
-				fmt.Printf("\nAudit note: %s\n", artifact.Explanation)
+				fmt.Printf("\nAudit note: %s\n", attestation.SanitizeTerminalOutput(artifact.Explanation))
 			}
 			// Write to output directory if specified.
 			if outDir != "" {

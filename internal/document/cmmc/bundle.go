@@ -355,6 +355,7 @@ func sanitizeMarkdown(s string) string {
 		"`", "\\`",
 		"<", "&lt;", ">", "&gt;",
 		"&", "&amp;",
+		"|", "\\|", // pipe is a table column delimiter in Markdown tables
 		"\n", " ", "\r", " ", // collapse newlines to prevent multi-line injection
 	)
 	return replacer.Replace(s)
