@@ -277,16 +277,49 @@ type Incident struct {
 
 // PrincipalAttributes are the entity attributes Cedar policies evaluate.
 // Sourced from external systems via the principal attribute resolver.
+//
+// Training attributes are populated by qualify (formerly ark) which writes
+// attest:* IAM role tags on training completion. The resolver maps those
+// tags to the typed fields below. See docs/integrations/qualify.md for
+// the full tag schema.
 type PrincipalAttributes struct {
-	PrincipalARN       string            `json:"principal_arn"`
-	HumanIdentity      string            `json:"human_identity,omitempty"`       // resolved human behind the role
-	LabMembership      []string          `json:"lab_membership,omitempty"`       // from directory/HR
-	CUITrainingCurrent bool              `json:"cui_training_current"`           // from LMS
-	CUITrainingExpiry  time.Time         `json:"cui_training_expiry,omitempty"`  // from LMS
-	IRBProtocols       []string          `json:"irb_protocols,omitempty"`        // from IRB system (Cayuse/iRIS)
-	ComputeAllocation  float64           `json:"compute_allocation,omitempty"`   // from research computing
-	AdminLevel         string            `json:"admin_level,omitempty"`          // "none", "env", "sre"
-	Attributes         map[string]string `json:"attributes,omitempty"`           // extensible attributes
+	PrincipalARN      string    `json:"principal_arn"`
+	HumanIdentity     string    `json:"human_identity,omitempty"`      // resolved human behind the role
+	LabMembership     []string  `json:"lab_membership,omitempty"`      // from directory/HR
+	AdminLevel        string    `json:"admin_level,omitempty"`         // "none", "env", "sre"
+
+	// --- Training attributes (written by qualify, read by Cedar policies) ---
+
+	// CUI handling training (cui-fundamentals module in qualify)
+	CUITrainingCurrent bool      `json:"cui_training_current"`
+	CUITrainingExpiry  time.Time `json:"cui_training_expiry,omitempty"`
+
+	// HIPAA privacy and security training
+	HIPAATrainingCurrent bool      `json:"hipaa_training_current"`
+	HIPAATrainingExpiry  time.Time `json:"hipaa_training_expiry,omitempty"`
+
+	// General security awareness training
+	AwarenessTrainingCurrent bool      `json:"awareness_training_current"`
+	AwarenessTrainingExpiry  time.Time `json:"awareness_training_expiry,omitempty"`
+
+	// FERPA basics (student records handling)
+	FERPATrainingCurrent bool `json:"ferpa_training_current"`
+
+	// ITAR/EAR export control training
+	ITARTrainingCurrent bool `json:"itar_training_current"`
+
+	// Data classification training
+	DataClassTrainingCurrent bool `json:"data_class_training_current"`
+
+	// NIH Research Security Program training (NOT-OD-26-017)
+	ResearchSecurityTrainingCurrent bool      `json:"research_security_training_current"`
+	ResearchSecurityTrainingExpiry  time.Time `json:"research_security_training_expiry,omitempty"`
+
+	// --- Source-system attributes ---
+
+	IRBProtocols      []string          `json:"irb_protocols,omitempty"`       // from IRB system (Cayuse/iRIS)
+	ComputeAllocation float64           `json:"compute_allocation,omitempty"`  // from research computing
+	Attributes        map[string]string `json:"attributes,omitempty"`          // extensible attributes
 }
 
 // --- Cedar Evaluation ---

@@ -140,14 +140,69 @@ func (s *SAMLSource) Resolve(ctx context.Context, principalARN string, attrs *sc
 	}
 
 	// Map attest:* tags to PrincipalAttributes.
-	if v, ok := tags["attest:cui-training"]; ok {
-		attrs.CUITrainingCurrent = strings.ToLower(v) == "true"
-	}
-	if v, ok := tags["attest:cui-expiry"]; ok {
+	// Tags are written by qualify (formerly ark) on training module completion.
+	// See docs/integrations/qualify.md for the full tag schema contract.
+
+	parseBool := func(v string) bool { return strings.ToLower(v) == "true" }
+	parseExpiry := func(v string) time.Time {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			attrs.CUITrainingExpiry = t
+			return t
 		}
+		return time.Time{}
 	}
+
+	// CUI handling training
+	if v, ok := tags["attest:cui-training"]; ok {
+		attrs.CUITrainingCurrent = parseBool(v)
+	}
+	if v, ok := tags["attest:cui-training-expiry"]; ok {
+		attrs.CUITrainingExpiry = parseExpiry(v)
+	}
+	// Legacy tag key written by older qualify versions — kept for backward compat.
+	if v, ok := tags["attest:cui-expiry"]; ok && attrs.CUITrainingExpiry.IsZero() {
+		attrs.CUITrainingExpiry = parseExpiry(v)
+	}
+
+	// HIPAA training
+	if v, ok := tags["attest:hipaa-training"]; ok {
+		attrs.HIPAATrainingCurrent = parseBool(v)
+	}
+	if v, ok := tags["attest:hipaa-training-expiry"]; ok {
+		attrs.HIPAATrainingExpiry = parseExpiry(v)
+	}
+
+	// Security awareness training
+	if v, ok := tags["attest:awareness-training"]; ok {
+		attrs.AwarenessTrainingCurrent = parseBool(v)
+	}
+	if v, ok := tags["attest:awareness-training-expiry"]; ok {
+		attrs.AwarenessTrainingExpiry = parseExpiry(v)
+	}
+
+	// FERPA training
+	if v, ok := tags["attest:ferpa-training"]; ok {
+		attrs.FERPATrainingCurrent = parseBool(v)
+	}
+
+	// ITAR/EAR export control training
+	if v, ok := tags["attest:itar-training"]; ok {
+		attrs.ITARTrainingCurrent = parseBool(v)
+	}
+
+	// Data classification training
+	if v, ok := tags["attest:data-class-training"]; ok {
+		attrs.DataClassTrainingCurrent = parseBool(v)
+	}
+
+	// NIH Research Security Program training (NOT-OD-26-017)
+	if v, ok := tags["attest:research-security-training"]; ok {
+		attrs.ResearchSecurityTrainingCurrent = parseBool(v)
+	}
+	if v, ok := tags["attest:research-security-training-expiry"]; ok {
+		attrs.ResearchSecurityTrainingExpiry = parseExpiry(v)
+	}
+
+	// Identity and access attributes
 	if v, ok := tags["attest:lab-id"]; ok && v != "" {
 		attrs.LabMembership = append(attrs.LabMembership, v)
 	}

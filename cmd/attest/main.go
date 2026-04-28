@@ -1233,9 +1233,22 @@ Provide principal, action, resource ARNs and entity attributes as --attr flags.`
 					ldapSrc := principal.NewLDAPSource(ldapURL, ldapBaseDN)
 					resolver := principal.NewResolver(samlSrc, ldapSrc)
 					if resolved, err := resolver.Resolve(ctx, principalARN); err == nil {
-						if resolved.CUITrainingCurrent {
-							attributes["principal.cui_training_current"] = true
+						// Training attributes from qualify (attest:* IAM tags)
+						attributes["principal.cui_training_current"] = resolved.CUITrainingCurrent
+						attributes["principal.hipaa_training_current"] = resolved.HIPAATrainingCurrent
+						attributes["principal.awareness_training_current"] = resolved.AwarenessTrainingCurrent
+						attributes["principal.ferpa_training_current"] = resolved.FERPATrainingCurrent
+						attributes["principal.itar_training_current"] = resolved.ITARTrainingCurrent
+						attributes["principal.data_class_training_current"] = resolved.DataClassTrainingCurrent
+						attributes["principal.research_security_training_current"] = resolved.ResearchSecurityTrainingCurrent
+						// Expiry timestamps (non-zero means training is valid until that time)
+						if !resolved.CUITrainingExpiry.IsZero() {
+							attributes["principal.training_expiry"] = resolved.CUITrainingExpiry.Unix()
 						}
+						if !resolved.ResearchSecurityTrainingExpiry.IsZero() {
+							attributes["principal.research_security_training_expiry"] = resolved.ResearchSecurityTrainingExpiry.Unix()
+						}
+						// Identity attributes
 						for _, lab := range resolved.LabMembership {
 							attributes["principal.lab_membership"] = lab
 						}
