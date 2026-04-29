@@ -440,3 +440,60 @@ type ClassificationMapping struct {
 	Description   string   `yaml:"description" json:"description"`
 	Notes         string   `yaml:"notes,omitempty" json:"notes,omitempty"`
 }
+
+// --- Research Project Context ---
+// Stored in .attest/projects.yaml. Not written by attest — populated by
+// qualify's onboarding flow, manual entry via `attest project add`, or
+// institutional systems. Provides the AI compliance navigator with the
+// research context it needs to surface obligation maps and unknown unknowns.
+
+// ResearchProject represents an active funded research project in the SRE.
+// The combination of funding sources, data types, participant populations,
+// and collaborator institutions determines the complete compliance obligation set.
+type ResearchProject struct {
+	ID          string `yaml:"id" json:"id"`           // short slug, e.g., "chen-quantum-cui"
+	Name        string `yaml:"name" json:"name"`        // human-readable
+	PIName      string `yaml:"pi_name" json:"pi_name"`
+	PIEmail     string `yaml:"pi_email" json:"pi_email"`
+	Active      bool   `yaml:"active" json:"active"`
+
+	Funding      []GrantRef          `yaml:"funding,omitempty" json:"funding,omitempty"`
+	DataTypes    []string            `yaml:"data_types,omitempty" json:"data_types,omitempty"`       // CUI, PHI, GENOMIC, FERPA, PII, OPEN
+	Sensitivity  string              `yaml:"data_sensitivity,omitempty" json:"data_sensitivity,omitempty"` // "controlled", "sensitive", "open"
+	Environments []string            `yaml:"environments,omitempty" json:"environments,omitempty"`   // AWS account IDs in scope
+	Collaborators []CollaboratorRef  `yaml:"collaborators,omitempty" json:"collaborators,omitempty"`
+
+	// Research-specific compliance state
+	IRBProtocol       string    `yaml:"irb_protocol,omitempty" json:"irb_protocol,omitempty"`            // IRB protocol number
+	IRBExpiry         time.Time `yaml:"irb_expiry,omitempty" json:"irb_expiry,omitempty"`
+	ClinicalTrialsNCT string    `yaml:"clinicaltrials_nct,omitempty" json:"clinicaltrials_nct,omitempty"` // NCT identifier
+	DBGaPAccessions   []string  `yaml:"dbgap_accessions,omitempty" json:"dbgap_accessions,omitempty"`
+	DUCCurrent        bool      `yaml:"duc_current,omitempty" json:"duc_current,omitempty"`
+	DMSPCurrent       bool      `yaml:"dmsp_current,omitempty" json:"dmsp_current,omitempty"`
+
+	Notes     string    `yaml:"notes,omitempty" json:"notes,omitempty"`
+	CreatedAt time.Time `yaml:"created_at" json:"created_at"`
+	UpdatedAt time.Time `yaml:"updated_at" json:"updated_at"`
+}
+
+// GrantRef identifies a funding source for a research project.
+// The combination of source type and award number determines compliance obligations.
+type GrantRef struct {
+	Source string `yaml:"source" json:"source"` // "DoD", "NIH", "NSF", "DARPA", "Private", etc.
+	Award  string `yaml:"award" json:"award"`   // grant/contract number
+	Type   string `yaml:"type" json:"type"`     // "contract", "grant", "cooperative_agreement", "subaward"
+}
+
+// CollaboratorRef identifies an external collaborator on a research project.
+// Collaborator institution and country determine export control and data sharing obligations.
+type CollaboratorRef struct {
+	Name        string `yaml:"name" json:"name"`
+	Institution string `yaml:"institution" json:"institution"`
+	Country     string `yaml:"country" json:"country"` // ISO 3166-1 alpha-2, e.g., "US", "CN", "DE"
+	Role        string `yaml:"role,omitempty" json:"role,omitempty"` // "co-pi", "postdoc", "collaborator"
+}
+
+// ProjectsFile is the top-level structure of .attest/projects.yaml.
+type ProjectsFile struct {
+	Projects []ResearchProject `yaml:"projects" json:"projects"`
+}

@@ -829,6 +829,73 @@ func (a *Analyst) buildSystemPrompt() string {
 	// Inject posture summary if available.
 	b.WriteString("\n")
 	b.WriteString(a.loadPostureSummary())
+
+	// Inject research project context if .attest/projects.yaml exists.
+	// This gives the AI the funding sources, data types, and collaborator context
+	// it needs to surface obligation maps and unknown unknowns.
+	b.WriteString(a.loadProjectContext())
+
+	return b.String()
+}
+
+// loadProjectContext reads .attest/projects.yaml and returns a sanitized
+// summary of active research projects for inclusion in Bedrock system prompts.
+func (a *Analyst) loadProjectContext() string {
+	data, err := os.ReadFile(filepath.Join(".attest", "projects.yaml"))
+	if err != nil {
+		return "" // no projects file — graceful degradation
+	}
+	var pf schema.ProjectsFile
+	if err := yaml.Unmarshal(data, &pf); err != nil {
+		return ""
+	}
+
+	var active []schema.ResearchProject
+	for _, p := range pf.Projects {
+		if p.Active {
+			active = append(active, p)
+		}
+	}
+	if len(active) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\nResearch projects (%d active):\n", len(active)))
+	for _, p := range active {
+		b.WriteString(fmt.Sprintf("  Project: %s\n", sanitizePromptField(p.Name)))
+		if p.PIName != "" {
+			b.WriteString(fmt.Sprintf("    PI: %s\n", sanitizePromptField(p.PIName)))
+		}
+		if len(p.Funding) > 0 {
+			sources := make([]string, len(p.Funding))
+			for i, f := range p.Funding {
+				sources[i] = sanitizePromptField(f.Source) + "/" + sanitizePromptField(f.Type)
+			}
+			b.WriteString(fmt.Sprintf("    Funding: %s\n", strings.Join(sources, ", ")))
+		}
+		if len(p.DataTypes) > 0 {
+			types := make([]string, len(p.DataTypes))
+			for i, dt := range p.DataTypes {
+				types[i] = sanitizePromptField(dt)
+			}
+			b.WriteString(fmt.Sprintf("    Data types: %s\n", strings.Join(types, ", ")))
+		}
+		if len(p.Collaborators) > 0 {
+			for _, c := range p.Collaborators {
+				b.WriteString(fmt.Sprintf("    Collaborator: %s (%s, %s)\n",
+					sanitizePromptField(c.Name),
+					sanitizePromptField(c.Institution),
+					sanitizePromptField(c.Country)))
+			}
+		}
+		if p.IRBProtocol != "" {
+			b.WriteString(fmt.Sprintf("    IRB: %s\n", sanitizePromptField(p.IRBProtocol)))
+		}
+		if len(p.DBGaPAccessions) > 0 {
+			b.WriteString(fmt.Sprintf("    dbGaP: %s\n", strings.Join(p.DBGaPAccessions, ", ")))
+		}
+	}
 	return b.String()
 }
 

@@ -102,6 +102,7 @@ within it are research environments that inherit the org-level posture.`,
 		enforceCmd(),
 		ingestCmd(),
 		c3paoCmd(),
+		projectCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -4311,6 +4312,299 @@ func min3(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// projectCmd manages research project context in .attest/projects.yaml.
+// This context feeds the AI compliance navigator so it can surface
+// obligation maps and unknown unknowns from research funding + data types.
+func projectCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "project",
+		Short: "Manage research project context for AI compliance navigation",
+		Long: `Research project context tells the AI compliance navigator what grants fund
+your work, what data types are in scope, and who your collaborators are.
+This context drives obligation mapping: DoD + CUI = CMMC, NIH + genomic = GDS policy, etc.
+
+Context is stored in .attest/projects.yaml and loaded into every AI prompt.`,
+	}
+
+	addCmd := &cobra.Command{
+		Use:   "add",
+		Short: "Add a research project (interactive wizard)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runProjectAdd()
+		},
+	}
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List research projects and their obligation hints",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runProjectList()
+		},
+	}
+
+	cmd.AddCommand(addCmd, listCmd)
+	return cmd
+}
+
+func runProjectAdd() error {
+	output.Printf("attest project add — Research Project Wizard\n")
+	output.Printf("Answers drive compliance obligation mapping. Press Enter to skip optional fields.\n\n")
+
+	ask := func(prompt string) string {
+		output.Printf("%s: ", prompt)
+		var v string
+		_, _ = fmt.Scanln(&v)
+		return strings.TrimSpace(v)
+	}
+	askMulti := func(prompt string) []string {
+		output.Printf("%s (comma-separated): ", prompt)
+		var v string
+		_, _ = fmt.Scanln(&v)
+		var result []string
+		for _, s := range strings.Split(v, ",") {
+			if t := strings.TrimSpace(s); t != "" {
+				result = append(result, t)
+			}
+		}
+		return result
+	}
+
+	p := schema.ResearchProject{
+		Active:    true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	p.Name = ask("Project name (e.g., 'Quantum Computing Lab — CUI Phase')")
+	if p.Name == "" {
+		return fmt.Errorf("project name is required")
+	}
+	p.ID = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(strings.ToLower(p.Name), "-")
+	if len(p.ID) > 40 {
+		p.ID = p.ID[:40]
+	}
+
+	p.PIName = ask("Principal Investigator name")
+	p.PIEmail = ask("PI email")
+
+	output.Printf("\nFunding sources (one per line, blank line to finish):\n")
+	output.Printf("  Format: <source> <award> <type>  e.g., 'DoD N00014-26-1-2345 contract'\n")
+	output.Printf("  Sources: DoD, NIH, NSF, DARPA, NASA, Private, Other\n")
+	output.Printf("  Types:   contract, grant, cooperative_agreement, subaward\n")
+	for {
+		line := ask("  Funding")
+		if line == "" {
+			break
+		}
+		parts := strings.Fields(line)
+		g := schema.GrantRef{}
+		if len(parts) >= 1 {
+			g.Source = parts[0]
+		}
+		if len(parts) >= 2 {
+			g.Award = parts[1]
+		}
+		if len(parts) >= 3 {
+			g.Type = parts[2]
+		}
+		if g.Source != "" {
+			p.Funding = append(p.Funding, g)
+		}
+	}
+
+	dataRaw := askMulti("\nData types in scope (CUI, PHI, GENOMIC, FERPA, PII, OPEN)")
+	p.DataTypes = dataRaw
+
+	output.Printf("\nCollaborators outside your institution (blank line to finish):\n")
+	output.Printf("  Format: <name>, <institution>, <country-code>  e.g., 'Dr. Liu Wei, Peking University, CN'\n")
+	for {
+		line := ask("  Collaborator")
+		if line == "" {
+			break
+		}
+		parts := strings.SplitN(line, ",", 3)
+		c := schema.CollaboratorRef{}
+		if len(parts) >= 1 {
+			c.Name = strings.TrimSpace(parts[0])
+		}
+		if len(parts) >= 2 {
+			c.Institution = strings.TrimSpace(parts[1])
+		}
+		if len(parts) >= 3 {
+			c.Country = strings.ToUpper(strings.TrimSpace(parts[2]))
+		}
+		if c.Name != "" {
+			p.Collaborators = append(p.Collaborators, c)
+		}
+	}
+
+	p.IRBProtocol = ask("\nIRB protocol number (if human subjects research)")
+	p.ClinicalTrialsNCT = ask("ClinicalTrials.gov NCT identifier (if applicable)")
+
+	dbgapRaw := askMulti("dbGaP study accessions (if using controlled-access genomic data)")
+	p.DBGaPAccessions = dbgapRaw
+
+	envRaw := askMulti("\nAWS account IDs in scope for this project")
+	p.Environments = envRaw
+
+	// Load existing projects file (or create new).
+	projectsPath := filepath.Join(".attest", "projects.yaml")
+	var pf schema.ProjectsFile
+	if data, err := os.ReadFile(projectsPath); err == nil {
+		_ = yaml.Unmarshal(data, &pf)
+	}
+
+	// Check for duplicate ID.
+	for _, existing := range pf.Projects {
+		if existing.ID == p.ID {
+			p.ID = p.ID + "-2"
+		}
+	}
+	pf.Projects = append(pf.Projects, p)
+
+	data, err := yaml.Marshal(pf)
+	if err != nil {
+		return fmt.Errorf("marshaling projects: %w", err)
+	}
+	if err := os.MkdirAll(".attest", 0750); err != nil {
+		return err
+	}
+	if err := os.WriteFile(projectsPath, data, 0640); err != nil {
+		return fmt.Errorf("writing projects.yaml: %w", err)
+	}
+
+	output.Printf("\n✓ Project '%s' added to .attest/projects.yaml\n", p.ID)
+	output.Printf("\nObligation hints:\n")
+	for _, hint := range deriveObligationHints(p) {
+		output.Printf("  • %s\n", hint)
+	}
+	output.Printf("\nRun 'attest navigate' for the full compliance obligation map.\n")
+	return nil
+}
+
+func runProjectList() error {
+	projectsPath := filepath.Join(".attest", "projects.yaml")
+	data, err := os.ReadFile(projectsPath)
+	if os.IsNotExist(err) {
+		output.Println("No projects defined. Run 'attest project add' to add research project context.")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading projects.yaml: %w", err)
+	}
+	var pf schema.ProjectsFile
+	if err := yaml.Unmarshal(data, &pf); err != nil {
+		return fmt.Errorf("parsing projects.yaml: %w", err)
+	}
+
+	active := 0
+	for _, p := range pf.Projects {
+		if p.Active {
+			active++
+		}
+	}
+	output.Printf("Research projects: %d total, %d active\n\n", len(pf.Projects), active)
+
+	for _, p := range pf.Projects {
+		status := "active"
+		if !p.Active {
+			status = "inactive"
+		}
+		output.Printf("[%s] %s (%s)\n", status, p.Name, p.ID)
+		if p.PIName != "" {
+			output.Printf("  PI: %s\n", p.PIName)
+		}
+		if len(p.Funding) > 0 {
+			sources := make([]string, len(p.Funding))
+			for i, f := range p.Funding {
+				sources[i] = f.Source
+			}
+			output.Printf("  Funding: %s\n", strings.Join(sources, ", "))
+		}
+		if len(p.DataTypes) > 0 {
+			output.Printf("  Data: %s\n", strings.Join(p.DataTypes, ", "))
+		}
+		hints := deriveObligationHints(p)
+		if len(hints) > 0 {
+			output.Printf("  Obligations: %s\n", strings.Join(hints[:min3(len(hints), 3)], " | "))
+			if len(hints) > 3 {
+				output.Printf("               (+%d more — run 'attest navigate')\n", len(hints)-3)
+			}
+		}
+		output.Println()
+	}
+	return nil
+}
+
+// deriveObligationHints returns a quick summary of compliance obligations
+// implied by a research project's funding, data types, and collaborators.
+// This is a fast heuristic — the full obligation engine is in internal/obligations/.
+func deriveObligationHints(p schema.ResearchProject) []string {
+	var hints []string
+	seen := make(map[string]bool)
+	add := func(h string) {
+		if !seen[h] {
+			seen[h] = true
+			hints = append(hints, h)
+		}
+	}
+
+	for _, f := range p.Funding {
+		switch strings.ToUpper(f.Source) {
+		case "DOD", "DARPA", "NAVY", "ARMY", "AIRFORCE", "USAF", "ONR", "AFOSR", "ARO":
+			if f.Type == "contract" {
+				add("CMMC Level 2 (C3PAO assessment required)")
+			} else {
+				add("CMMC Level 1 (annual self-assessment + SPRS)")
+			}
+		case "NIH":
+			add("NIH DMS Policy (DMSP required)")
+			add("NIH Research Security (NOT-OD-26-017 training)")
+		case "NSF":
+			add("NSF Research Security (training + disclosure)")
+		}
+	}
+
+	for _, dt := range p.DataTypes {
+		switch strings.ToUpper(dt) {
+		case "CUI":
+			add("NIST 800-171 / CMMC Level 2")
+		case "PHI":
+			add("HIPAA Security Rule")
+			add("Certificate of Confidentiality (auto)")
+		case "GENOMIC", "GENOME":
+			add("NIH Genomic Data Sharing Policy")
+			add("dbGaP DUC required before access")
+		case "FERPA":
+			add("FERPA (student records)")
+		}
+	}
+
+	for _, c := range p.Collaborators {
+		switch strings.ToUpper(c.Country) {
+		case "CN", "RU", "IR", "KP", "CU":
+			add("ITAR/EAR deemed export review required")
+		}
+		if strings.HasSuffix(strings.ToLower(c.Country), "eu") ||
+			c.Country == "DE" || c.Country == "FR" || c.Country == "GB" ||
+			c.Country == "NL" || c.Country == "SE" || c.Country == "IT" {
+			add("GDPR Standard Contractual Clauses (SCCs)")
+		}
+	}
+
+	if p.IRBProtocol != "" {
+		add("IRB annual renewal (45 CFR Part 46)")
+	}
+	if len(p.DBGaPAccessions) > 0 {
+		add("dbGaP DUC annual renewal")
+	}
+	if p.ClinicalTrialsNCT != "" {
+		add("ClinicalTrials.gov results submission (12-month)")
+	}
+
+	return hints
 }
 
 func ingestCmd() *cobra.Command {
