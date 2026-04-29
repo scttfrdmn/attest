@@ -4450,7 +4450,7 @@ func runProjectAdd() error {
 	p.Environments = envRaw
 
 	// Load existing projects file (or create new).
-	projectsPath := filepath.Join(".attest", "projects.yaml")
+	projectsPath := filepath.Join(".attest", "projects.yaml") // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
 	var pf schema.ProjectsFile
 	if data, err := os.ReadFile(projectsPath); err == nil {
 		_ = yaml.Unmarshal(data, &pf)
@@ -4485,7 +4485,7 @@ func runProjectAdd() error {
 }
 
 func runProjectList() error {
-	projectsPath := filepath.Join(".attest", "projects.yaml")
+	projectsPath := filepath.Join(".attest", "projects.yaml") // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
 	data, err := os.ReadFile(projectsPath)
 	if os.IsNotExist(err) {
 		output.Println("No projects defined. Run 'attest project add' to add research project context.")
