@@ -5,6 +5,14 @@ assessment_type: c3pao
 assessment_cycle: triennial
 source: https://dodcio.defense.gov/CMMC/
 
+dependencies:
+  - id: nist-800-171-r2
+    required: true
+    reason: >
+      CMMC Level 2 IS NIST SP 800-171 Rev 2 (all 110 practices, all 14 families).
+      This entry provides CMMC-specific assessment metadata (c3pao, triennial);
+      the control definitions and enforcement live in nist-800-171-r2.
+
 # CMMC Level 2 — Advanced Cyber Hygiene
 # Assessment: C3PAO (Third-Party Assessment Organization) — required for critical programs
 #             Self-assessment permitted for non-critical programs
