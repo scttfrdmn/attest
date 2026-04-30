@@ -176,6 +176,7 @@ aws organizations tag-resource --resource-id 123456789012 \
                         <h3>Health &amp; Research</h3>
                         <ul>
                             <li><span class="fw-id">hipaa</span> HIPAA Security Rule</li>
+                            <li><span class="fw-id">nih-gds</span> NIH Genomic Data Sharing Policy (2025)</li>
                             <li><span class="fw-id">nih-research-security</span> NIH NOT-OD-26-017</li>
                             <li><span class="fw-id">42-cfr-part-2</span> 42 CFR Part 2 (substance use)</li>
                             <li><span class="fw-id">translational-medicine</span> Translational research</li>
@@ -264,6 +265,7 @@ aws organizations tag-resource --resource-id 123456789012 \
                             <dt><code>attest attest</code></dt><dd>Administrative control attestations</dd>
                             <dt><code>attest attest pi-sign</code></dt><dd>PI institutional attestation (NIH dbGaP)</dd>
                             <dt><code>attest incident</code></dt><dd>Security and compliance incident tracking</dd>
+                            <dt><code>attest navigate</code></dt><dd>Show compliance obligations across active projects (--project, --timeline, --ai)</dd>
                             <dt><code>attest calendar</code></dt><dd>Upcoming review and renewal obligations</dd>
                             <dt><code>attest report</code></dt><dd>Posture trend report from history</dd>
                             <dt><code>attest serve</code></dt><dd>Launch the compliance dashboard</dd>
@@ -289,6 +291,15 @@ aws organizations tag-resource --resource-id 123456789012 \
                             <dt><code>attest verify &lt;binary&gt;</code></dt><dd>Verify attest binary via cosign/Sigstore</dd>
                         </dl>
                     </div>
+                    <div class="cmd-group">
+                        <h3>Regulatory intelligence</h3>
+                        <dl>
+                            <dt><code>attest regulatory ingest &lt;url&gt;</code></dt><dd>Fetch and analyze a specific notice URL or file (NIH Guide, Federal Register, etc.)</dd>
+                            <dt><code>attest regulatory fetch</code></dt><dd>Check all configured sources for new notices (--since, --dry-run, --create-issues)</dd>
+                            <dt><code>attest regulatory pending</code></dt><dd>List relevant notices not yet tracked as GitHub issues</dd>
+                            <dt><code>attest regulatory sources</code></dt><dd>List configured regulatory sources and last-checked status</dd>
+                        </dl>
+                    </div>
                 </div>
             </section>
 
@@ -303,11 +314,12 @@ aws organizations tag-resource --resource-id 123456789012 \
                         <a href="https://provabl.dev">provabl</a> /
                         <span class="product-accent">attest</span>
                     </div>
-                    <p class="footer-sub">Apache 2.0 · v0.19.9</p>
+                    <p class="footer-sub">Apache 2.0 · v0.20.0</p>
                 </div>
                 <nav class="footer-links" aria-label="Suite navigation">
                     <a href="https://ground.provabl.dev">ground</a>
                     <a href="https://qualify.provabl.dev">qualify</a>
+                    <a href="https://vet.provabl.dev">vet</a>
                     <a href="https://github.com/provabl/attest">GitHub</a>
                     <a href="https://github.com/provabl/attest/releases">Releases</a>
                     <a href="https://github.com/provabl/attest/issues">Issues</a>

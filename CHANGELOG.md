@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-04-30
+
+### Added
+
+- **Obligations engine** (`internal/obligations/`): deterministic compliance obligation
+  mapping from project context. 12 rules covering DoD/NIH/NSF funding, PHI/CUI/SUD/
+  genomic/FERPA data types, ITAR TCP for controlled-country collaborators, GDPR SCCs,
+  IRB continuing review, dbGaP annual DUC renewal. 17 unit tests.
+- **`attest navigate`**: surfaces compliance obligations across active projects
+  (`--project`, `--timeline 90d`, `--ai` flags). NavigationAlert schema type.
+  Persists to `.attest/history/navigation/YYYY-MM-DD.json`.
+- **`CapabilityNavigator`** in AI analyst (Opus 4.6): `Navigate()` method provides
+  AI-assisted explanation and prioritisation of deterministic obligation set.
+- **`GET /api/navigate`** dashboard route: returns `[]NavigationAlert` as JSON.
+- **CMMC Level 1 framework** (`frameworks/cmmc-level-1/`): all 17 FAR 52.204-21
+  practices (Foundational Cyber Hygiene), 54 assessment objectives, annual
+  self-assessment cycle. Standalone baseline — not a delta on Level 2.
+- **Regulatory intelligence** (`internal/regulatory/`): automated monitoring of NIH
+  Guide, NIST CSRC, Federal Register (HHS + DoD) for compliance-relevant notices.
+  Two-stage AI pipeline: Haiku triage (~$0.001/notice) then Sonnet deep analysis.
+  SSRF-protected URL fetching (https-only, private IP blocking, 1MB limit).
+  7 unit tests (SSRF, RSS parsing, deduplication).
+- **`attest regulatory`** command group: `ingest <url>`, `fetch`, `pending`, `sources`.
+- **`.github/workflows/regulatory-watch.yml`**: weekly Monday 9am UTC scheduled
+  workflow; creates GitHub issues for relevant regulatory notices automatically.
+- **SLSA Level 2 release workflow**: `actions/attest-build-provenance` + cosign
+  keyless signing + SBOM attestation (syft, SPDX format). Triggered on `v*.*.*` tags.
+- **SPDX headers** on all 71 Go source files (`SPDX-FileCopyrightText: 2026 Scott
+  Friedman`, `SPDX-License-Identifier: Apache-2.0`). `REUSE.toml` for JSON/YAML/SQL.
+- **qualify↔attest integration**: principal resolver now reads all 9 `attest:*`
+  training tags (was 4). New `PrincipalAttributes` fields: HIPAA, FERPA, ITAR,
+  DataClass, ResearchSecurity training + expiry; NIHApproval, country, CoC check.
+- **Research project schema**: `ResearchProject`, `GrantRef`, `CollaboratorRef`,
+  `ProjectsFile` types for `.attest/projects.yaml`.
+- **`attest project add/list`**: interactive project wizard; obligation hints from
+  obligations engine shown on `list`.
+- **`NavigationAlert`** schema type (severity, title, detail, trigger, due date, status).
+- **GitHub milestones v0.21.0–v0.25.0** with 29 implementation issues covering
+  multi-framework compile correctness, NIH GDS framework, provenance-aware
+  provisioning, multi-framework evidence, and regulatory intelligence.
+
+### Changed
+
+- `deriveObligationHints()` now calls deterministic obligations engine (was heuristic
+  string-matching on funding source names).
+- `attest frameworks add` accepts multiple framework IDs in one command.
+
 ## [0.19.1] - 2026-04-23
 
 ### Security
