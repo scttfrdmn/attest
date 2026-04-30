@@ -91,7 +91,7 @@ func NewCompiler() *Compiler { return &Compiler{} }
 func (c *Compiler) Compile(rcs *framework.ResolvedControlSet) ([]CompiledSCP, error) {
 	var scps []CompiledSCP
 
-	for key, controls := range rcs.Controls {
+	for key, controls := range rcs.Structural {
 		var specs []schema.StructuralEnforcement
 		var refs []ControlRef
 		for _, rc := range controls {
@@ -137,7 +137,7 @@ func (c *Compiler) IntelligentCompile(rcs *framework.ResolvedControlSet) ([]Comp
 		controlRefs []ControlRef
 	}
 	var allSpecs []specTuple
-	for _, controls := range rcs.Controls {
+	for _, controls := range rcs.Structural {
 		for _, rc := range controls {
 			ref := ControlRef{FrameworkID: rc.FrameworkID, ControlID: rc.Control.ID}
 			for _, spec := range rc.Control.Structural {

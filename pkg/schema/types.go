@@ -54,11 +54,23 @@ type FrameworkRef struct {
 // Framework is the full definition of a compliance framework.
 // These are YAML files in the frameworks/ directory — community maintained,
 // with Artifact-sourced shared responsibility data overlaid at runtime.
+// FrameworkDependency declares a required or recommended dependency on another framework.
+// Used in framework YAML to express "this framework requires framework X to be active."
+type FrameworkDependency struct {
+	ID       string `yaml:"id" json:"id"`
+	Reason   string `yaml:"reason" json:"reason"`
+	Required bool   `yaml:"required" json:"required"`
+}
+
 type Framework struct {
 	ID      string `yaml:"id" json:"id"`
 	Name    string `yaml:"name" json:"name"`
 	Version string `yaml:"version" json:"version"`
 	Source  string `yaml:"source" json:"source"` // URL to authoritative source
+
+	// Dependencies lists frameworks that must be active alongside this one.
+	// Required=true frameworks block activation if not already active.
+	Dependencies []FrameworkDependency `yaml:"dependencies,omitempty" json:"dependencies,omitempty"`
 
 	// AssessmentType indicates how this framework is assessed.
 	// Values: "self" (annual self-assessment), "c3pao" (third-party assessor),

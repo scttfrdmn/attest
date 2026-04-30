@@ -592,58 +592,144 @@ func frameworksCmd() *cobra.Command {
 
 func frameworkAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "add [framework-id]",
-		Short: "Activate a framework for this SRE",
-		Args:  cobra.ExactArgs(1),
+		Use:   "add [framework-id...]",
+		Short: "Activate one or more frameworks for this SRE",
+		Long: `Activate compliance frameworks. Multiple IDs may be given in one command.
+Dependencies are resolved automatically — if a framework requires another,
+it will be activated first or an error will explain what to add.
+
+Examples:
+  attest frameworks add nist-800-171-r2
+  attest frameworks add nist-800-171-r2 nih-gds   # activates in dependency order`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fwID := args[0]
 			fwDir, _ := cmd.Flags().GetString("frameworks")
-
-				// Verify framework exists.
-				loader := framework.NewLoader(fwDir)
-				fw, err := loader.Load(fwID)
-				if err != nil {
-					return fmt.Errorf("framework %q not found in %s: %w", fwID, fwDir, err)
-				}
-
-				// Load SRE config.
-				sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml"))
-				if err != nil {
-					return fmt.Errorf("reading .attest/sre.yaml: %w (run 'attest init' first)", err)
-				}
-				var sre schema.SRE
-				if err := yaml.Unmarshal(sreData, &sre); err != nil {
-					return fmt.Errorf("parsing sre.yaml: %w", err)
-				}
-
-				// Check for duplicate.
-				for _, ref := range sre.Frameworks {
-					if ref.ID == fwID {
-						output.Printf("Framework %s is already active.\n", fwID)
-						return nil
-					}
-				}
-
-				// Append and save.
-				sre.Frameworks = append(sre.Frameworks, schema.FrameworkRef{
-					ID:      fwID,
-					Version: fw.Version,
-				})
-				out, err := yaml.Marshal(sre)
-				if err != nil {
-					return err
-				}
-				if err := os.WriteFile(filepath.Join(".attest", "sre.yaml"), out, 0640); err != nil {
-					return fmt.Errorf("writing sre.yaml: %w", err)
-				}
-
-				output.Printf("Framework activated: %s v%s (%d controls)\n", fw.Name, fw.Version, len(fw.Controls))
-				output.Println("Run 'attest compile' to generate policy artifacts.")
-				return nil
-			},
+			return runFrameworkAdd(args, fwDir)
+		},
 	}
 	cmd.Flags().String("frameworks", "frameworks", "Path to frameworks directory")
 	return cmd
+}
+
+func runFrameworkAdd(ids []string, fwDir string) error {
+	loader := framework.NewLoader(fwDir)
+
+	// Load all requested frameworks first to validate they exist and read dependencies.
+	loaded := make(map[string]*schema.Framework, len(ids))
+	for _, id := range ids {
+		fw, err := loader.Load(id)
+		if err != nil {
+			return fmt.Errorf("framework %q not found in %s: %w", id, fwDir, err)
+		}
+		loaded[id] = fw
+	}
+
+	// Load SRE config.
+	sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml")) // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+	if err != nil {
+		return fmt.Errorf("reading .attest/sre.yaml: %w (run 'attest init' first)", err)
+	}
+	var sre schema.SRE
+	if err := yaml.Unmarshal(sreData, &sre); err != nil {
+		return fmt.Errorf("parsing sre.yaml: %w", err)
+	}
+
+	// Build the set of currently-active framework IDs (including ones being added).
+	activeSet := make(map[string]bool, len(sre.Frameworks)+len(ids))
+	for _, ref := range sre.Frameworks {
+		activeSet[ref.ID] = true
+	}
+	// Include all requested IDs as "will be active" so dependency checks work
+	// when both a dependency and dependent are passed together.
+	for _, id := range ids {
+		activeSet[id] = true
+	}
+
+	// Check dependencies for each requested framework.
+	for _, id := range ids {
+		fw := loaded[id]
+		for _, dep := range fw.Dependencies {
+			if !activeSet[dep.ID] {
+				if dep.Required {
+					return fmt.Errorf(
+						"framework %q requires %q to be active first.\n"+
+							"  Reason: %s\n"+
+							"  Fix: attest frameworks add %s %s",
+						id, dep.ID, dep.Reason, dep.ID, id)
+				}
+				output.Warnf("Note: %s recommends activating %s (%s)", id, dep.ID, dep.Reason)
+			}
+		}
+	}
+
+	// Topologically sort: dependencies before dependents.
+	ordered := topoSort(ids, loaded)
+
+	// Activate each in order.
+	added := 0
+	for _, id := range ordered {
+		fw := loaded[id]
+		// Skip if already active.
+		alreadyActive := false
+		for _, ref := range sre.Frameworks {
+			if ref.ID == id {
+				alreadyActive = true
+				break
+			}
+		}
+		if alreadyActive {
+			output.Printf("Framework %s is already active.\n", id)
+			continue
+		}
+		sre.Frameworks = append(sre.Frameworks, schema.FrameworkRef{
+			ID:      id,
+			Version: fw.Version,
+		})
+		output.Printf("Framework activated: %s v%s (%d controls)\n", fw.Name, fw.Version, len(fw.Controls))
+		added++
+	}
+
+	if added == 0 {
+		return nil
+	}
+
+	out, err := yaml.Marshal(sre)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(".attest", "sre.yaml"), out, 0o640); err != nil { // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+		return fmt.Errorf("writing sre.yaml: %w", err)
+	}
+	output.Println("Run 'attest compile' to generate policy artifacts.")
+	return nil
+}
+
+// topoSort orders framework IDs so that dependencies come before dependents.
+// IDs not in the loaded map are skipped (they were already active).
+func topoSort(ids []string, loaded map[string]*schema.Framework) []string {
+	visited := make(map[string]bool)
+	var ordered []string
+	var visit func(id string)
+	visit = func(id string) {
+		if visited[id] {
+			return
+		}
+		visited[id] = true
+		fw, ok := loaded[id]
+		if !ok {
+			return
+		}
+		for _, dep := range fw.Dependencies {
+			if _, inBatch := loaded[dep.ID]; inBatch {
+				visit(dep.ID)
+			}
+		}
+		ordered = append(ordered, id)
+	}
+	for _, id := range ids {
+		visit(id)
+	}
+	return ordered
 }
 
 

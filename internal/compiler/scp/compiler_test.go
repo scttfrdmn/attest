@@ -143,7 +143,7 @@ func TestParseCondition(t *testing.T) {
 func TestConditionInCompiledSCP(t *testing.T) {
 	// End-to-end: compile a control with a real condition and verify the JSON.
 	rcs := &framework.ResolvedControlSet{
-		Controls: map[string][]framework.ResolvedControl{
+		Structural: map[string][]framework.ResolvedControl{
 			"scp-require-mfa": {
 				{
 					FrameworkID: "test",
@@ -207,7 +207,7 @@ func TestSCPSizeLimit(t *testing.T) {
 	}
 
 	rcs := &framework.ResolvedControlSet{
-		Controls: map[string][]framework.ResolvedControl{
+		Structural: map[string][]framework.ResolvedControl{
 			"scp-big-test": {
 				{
 					FrameworkID: "test",

@@ -13,7 +13,7 @@ import (
 
 func TestCompile(t *testing.T) {
 	rcs := &framework.ResolvedControlSet{
-		Controls: map[string][]framework.ResolvedControl{
+		Operational: map[string][]framework.ResolvedControl{
 			"scp-test": {
 				{
 					FrameworkID: "test",
@@ -59,7 +59,7 @@ func TestCompileWithHandwrittenCedarPolicy(t *testing.T) {
 unless { resource.encrypted == true };`
 
 	rcs := &framework.ResolvedControlSet{
-		Controls: map[string][]framework.ResolvedControl{
+		Operational: map[string][]framework.ResolvedControl{
 			"scp-test": {
 				{
 					FrameworkID: "test",
@@ -107,7 +107,7 @@ func TestTemporalConstraints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rcs := &framework.ResolvedControlSet{
-				Controls: map[string][]framework.ResolvedControl{
+				Operational: map[string][]framework.ResolvedControl{
 					"scp-temporal-test": {
 						{
 							FrameworkID: "test",
@@ -152,7 +152,7 @@ func TestTemporalConstraints(t *testing.T) {
 
 func TestBuildSchema(t *testing.T) {
 	rcs := &framework.ResolvedControlSet{
-		Controls: map[string][]framework.ResolvedControl{
+		Operational: map[string][]framework.ResolvedControl{
 			"scp-test": {
 				{
 					FrameworkID: "test",
@@ -224,7 +224,7 @@ func TestInferCedarType(t *testing.T) {
 
 func TestBuildSchemaWithTemporalContext(t *testing.T) {
 	rcs := &framework.ResolvedControlSet{
-		Controls: map[string][]framework.ResolvedControl{
+		Operational: map[string][]framework.ResolvedControl{
 			"scp-test": {
 				{
 					FrameworkID: "test",

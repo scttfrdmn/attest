@@ -242,6 +242,100 @@ func DetectConflicts(frameworks []*schema.Framework) []Conflict {
 		})
 	}
 
+	// --- NIH GDS conflicts (NOT-OD-24-157, NOT-OD-25-083) ---
+
+	// NIH GDS without nist-800-171-r2 (blocking) — NOT-OD-24-157 mandates 800-171
+	// compliance for all approved users. Cannot satisfy NIH GDS without 800-171.
+	if has("nih-gds") && !has("nist-800-171-r2") {
+		conflicts = append(conflicts, Conflict{
+			Type:       "contradiction",
+			Severity:   "blocking",
+			Frameworks: []string{"nih-gds"},
+			ControlIDs: []string{"nih-gds-3.1"},
+			Description: "NIH GDS (NOT-OD-24-157) mandates NIST SP 800-171 compliance for all " +
+				"approved users. NIH GDS cannot be satisfied without 800-171.",
+			Resolution: "attest frameworks add nist-800-171-r2 nih-gds",
+		})
+	}
+
+	// NIH GDS + ITAR region conflict (blocking) — NIH requires commercial AWS
+	// (FedRAMP Moderate); ITAR requires GovCloud. Incompatible in one SRE.
+	if has("nih-gds") && has("itar") {
+		conflicts = append(conflicts, Conflict{
+			Type:       "contradiction",
+			Severity:   "blocking",
+			Frameworks: []string{"nih-gds", "itar"},
+			ControlIDs: []string{"nih-gds-1.2", "ITAR-region"},
+			Description: "NIH GDS requires commercial AWS (FedRAMP Moderate). " +
+				"ITAR requires GovCloud (us-gov-east-1/us-gov-west-1). " +
+				"These are incompatible in a single SRE.",
+			Resolution: "Deploy separate SREs: commercial (NIH GDS/HIPAA/800-171) and GovCloud (ITAR/CMMC).",
+		})
+	}
+
+	// HIPAA + NIH GDS retention vs deletion conflict (warning — architecturally resolvable)
+	// HIPAA §164.316(b)(1): 6-year retention. NIH DUA: delete at closeout.
+	if has("hipaa") && has("nih-gds") {
+		conflicts = append(conflicts, Conflict{
+			Type:       "conflict",
+			Severity:   "warning",
+			Frameworks: []string{"hipaa", "nih-gds"},
+			ControlIDs: []string{"164.316(b)(1)", "nih-gds-2.4"},
+			Description: "HIPAA §164.316(b)(1) requires 6-year retention of PHI documentation. " +
+				"NIH DUA requires deletion of controlled-access data at project closeout. " +
+				"Mutually exclusive without source provenance tagging on every data object.",
+			Resolution: "attest provision --provenance-aware --closeout-date YYYY-MM-DD " +
+				"(must be configured before the first byte of combined data is written)",
+		})
+	}
+
+	// HIPAA + NIH GDS AI/ML model governance gap (warning)
+	if has("hipaa") && has("nih-gds") {
+		conflicts = append(conflicts, Conflict{
+			Type:       "info",
+			Severity:   "warning",
+			Frameworks: []string{"hipaa", "nih-gds"},
+			ControlIDs: []string{"nih-gds-2.3", "164.312(a)(2)(iv)"},
+			Description: "AI/ML models trained on combined PHI + NIH controlled-access data " +
+				"are NIH derivatives (NOT-OD-25-081) AND potentially PHI-containing. " +
+				"Neither HIPAA nor 800-171 provides specific AI model governance for this case.",
+			Resolution: "Document model provenance at training time. Obtain DAC approval for " +
+				"retention/sharing. Tag models: nih:derivative=true, nih:dua-id=<DUA-ID>. " +
+				"Run membership inference testing before publication.",
+		})
+	}
+
+	// FedRAMP + NIH GDS researcher tier gap (warning)
+	// FedRAMP satisfies the NIH repository requirement (800-53 Moderate), NOT the
+	// researcher requirement (800-171). Both are needed for full NIH DUA compliance.
+	if (has("fedramp-moderate") || has("fedramp-high")) && has("nih-gds") && !has("nist-800-171-r2") {
+		conflicts = append(conflicts, Conflict{
+			Type:       "info",
+			Severity:   "warning",
+			Frameworks: []string{"fedramp-moderate", "nih-gds"},
+			ControlIDs: []string{"nih-gds-3.1"},
+			Description: "FedRAMP Moderate satisfies the NIH *repository* requirement (800-53 Moderate baseline), " +
+				"not the *researcher* requirement (800-171). NIH DUA requires 800-171 compliance for approved users.",
+			Resolution: "Activate nist-800-171-r2 for the researcher tier in addition to FedRAMP.",
+		})
+	}
+
+	// HIPAA Safe Harbor ≠ NIH GDS de-identification for genomic data (info)
+	if has("hipaa") && has("nih-gds") {
+		conflicts = append(conflicts, Conflict{
+			Type:       "info",
+			Severity:   "info",
+			Frameworks: []string{"hipaa", "nih-gds"},
+			ControlIDs: []string{"164.514", "nih-gds-2.2"},
+			Description: "HIPAA Safe Harbor (18-identifier removal) does not satisfy NIH GDS " +
+				"for genomic sequence data. Re-identification from genomic sequence is technically solved " +
+				"(Gymrek et al. 2013, Sweeney et al.). A dataset can be HIPAA de-identified but still " +
+				"require NIH controlled-access treatment.",
+			Resolution: "Treat controlled-access genomic data as never de-identified regardless of " +
+				"HIPAA Safe Harbor status. Apply both frameworks' controls to genomic data.",
+		})
+	}
+
 	return conflicts
 }
 

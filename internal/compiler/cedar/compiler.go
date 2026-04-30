@@ -60,7 +60,7 @@ func NewCompiler() *Compiler { return &Compiler{} }
 func (c *Compiler) Compile(rcs *framework.ResolvedControlSet) ([]CompiledCedarPolicy, error) {
 	var policies []CompiledCedarPolicy
 
-	for key, controls := range rcs.Controls {
+	for key, controls := range rcs.Operational {
 		var specs []schema.OperationalEnforcement
 		var refs []ControlRef
 		for _, rc := range controls {
@@ -97,7 +97,7 @@ func (c *Compiler) BuildSchema(rcs *framework.ResolvedControlSet) string {
 	entityDefs := make(map[string]map[string]string) // entity name → attr → Cedar type
 	actionDefs := make(map[string][]string)           // action name → principal+resource types
 
-	for _, controls := range rcs.Controls {
+	for _, controls := range rcs.Operational {
 		for _, rc := range controls {
 			for _, spec := range rc.Control.Operational {
 				// Collect entity types.
@@ -123,7 +123,7 @@ func (c *Compiler) BuildSchema(rcs *framework.ResolvedControlSet) string {
 	}
 
 	// Add temporal context entity if any control uses temporal constraints.
-	for _, controls := range rcs.Controls {
+	for _, controls := range rcs.Operational {
 		for _, rc := range controls {
 			for _, spec := range rc.Control.Operational {
 				if spec.Temporal != nil {

@@ -289,6 +289,123 @@ func TestDetectConflicts_FedRAMPAndITAR(t *testing.T) {
 	}
 }
 
+// --- NIH GDS conflict tests -------------------------------------------------------
+
+func fw(id string) *schema.Framework {
+	return &schema.Framework{ID: id, Version: "1.0", Controls: []schema.Control{{ID: "test", Family: "Test"}}}
+}
+
+func hasConflictForFrameworks(conflicts []Conflict, f1, f2 string) bool {
+	for _, c := range conflicts {
+		has1, has2 := false, false
+		for _, fid := range c.Frameworks {
+			if fid == f1 {
+				has1 = true
+			}
+			if fid == f2 {
+				has2 = true
+			}
+		}
+		if has1 && has2 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasBlockingConflictForFramework(conflicts []Conflict, f1 string) bool {
+	for _, c := range conflicts {
+		if c.Severity != "blocking" {
+			continue
+		}
+		for _, fid := range c.Frameworks {
+			if fid == f1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestNIHGDSWithout800171IsBlocking(t *testing.T) {
+	conflicts := DetectConflicts([]*schema.Framework{fw("nih-gds"), fw("hipaa")})
+	if !hasBlockingConflictForFramework(conflicts, "nih-gds") {
+		t.Error("nih-gds without nist-800-171-r2 must produce a blocking conflict")
+	}
+	if !HasBlockingConflicts(conflicts) {
+		t.Error("HasBlockingConflicts must return true for nih-gds without nist-800-171-r2")
+	}
+}
+
+func TestNIHGDSWithout800171NotBlockingWhen800171Present(t *testing.T) {
+	conflicts := DetectConflicts([]*schema.Framework{fw("nih-gds"), fw("nist-800-171-r2")})
+	if hasBlockingConflictForFramework(conflicts, "nih-gds") {
+		// Check it's not the "without 800-171" blocking conflict
+		for _, c := range conflicts {
+			if c.Severity == "blocking" {
+				for _, fid := range c.ControlIDs {
+					if fid == "nih-gds-3.1" {
+						t.Error("should not produce 800-171-dependency blocking conflict when nist-800-171-r2 is active")
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestNIHGDSPlusITARIsBlocking(t *testing.T) {
+	conflicts := DetectConflicts([]*schema.Framework{fw("nih-gds"), fw("itar"), fw("nist-800-171-r2")})
+	if !hasConflictForFrameworks(conflicts, "nih-gds", "itar") {
+		t.Error("nih-gds + itar must produce a conflict (incompatible region requirements)")
+	}
+	if !HasBlockingConflicts(conflicts) {
+		t.Error("HasBlockingConflicts must return true for nih-gds + itar")
+	}
+}
+
+func TestHIPAAPlusNIHGDSRetentionConflictIsWarning(t *testing.T) {
+	conflicts := DetectConflicts([]*schema.Framework{fw("hipaa"), fw("nih-gds"), fw("nist-800-171-r2")})
+	found := false
+	for _, c := range conflicts {
+		if c.Severity == "warning" && hasConflictForFrameworks([]Conflict{c}, "hipaa", "nih-gds") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("hipaa + nih-gds must produce at least one warning conflict (retention vs deletion)")
+	}
+}
+
+func TestHIPAAPlusNIHGDSDoesNotBlockDeployment(t *testing.T) {
+	// HIPAA + NIH GDS conflict is warning only (resolvable via provenance tagging)
+	conflicts := DetectConflicts([]*schema.Framework{fw("hipaa"), fw("nih-gds"), fw("nist-800-171-r2")})
+	for _, c := range conflicts {
+		// The only blocking conflict should be if nih-gds is missing its 800-171 dependency,
+		// but we include nist-800-171-r2 so that should not fire.
+		if c.Severity == "blocking" {
+			for _, fid := range c.ControlIDs {
+				if fid == "164.316(b)(1)" || fid == "nih-gds-2.4" {
+					t.Error("hipaa+nih-gds retention conflict should be warning, not blocking")
+				}
+			}
+		}
+	}
+}
+
+func TestFedRAMPPlusNIHGDSWithout800171IsWarning(t *testing.T) {
+	conflicts := DetectConflicts([]*schema.Framework{fw("fedramp-moderate"), fw("nih-gds")})
+	// Should have both: blocking (nih-gds without 800-171) and warning (fedramp researcher gap)
+	hasWarning := false
+	for _, c := range conflicts {
+		if c.Severity == "warning" && hasConflictForFrameworks([]Conflict{c}, "fedramp-moderate", "nih-gds") {
+			hasWarning = true
+		}
+	}
+	if !hasWarning {
+		t.Error("fedramp-moderate + nih-gds without nist-800-171-r2 must produce a researcher-tier warning")
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsHelper(s, sub))
 }

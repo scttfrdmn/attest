@@ -82,30 +82,61 @@ func (l *Loader) LoadAll() ([]*schema.Framework, error) {
 }
 
 // Resolve computes the effective control set for a given set of active
-// frameworks. Handles cross-framework overlap (e.g., HIPAA and 800-171
-// both require encryption at rest — emit one SCP, map to both controls).
+// frameworks, separated into three maps by enforcement type.
+//
+// Structural (SCP): deduplicates by condition fingerprint — two frameworks
+// requiring the same deny condition produce one SCP statement.
+//
+// Operational (Cedar): never deduplicates across frameworks — each
+// framework's Cedar policies evaluate independently via default-deny AND
+// semantics. Key is frameworkID+controlID to guarantee separation.
+//
+// Monitoring (Config): deduplicates by resource_type+rule — two frameworks
+// checking the same Config rule produce one rule deployment.
 func Resolve(frameworks []*schema.Framework) (*ResolvedControlSet, error) {
 	rcs := &ResolvedControlSet{
-		Controls: make(map[string][]ResolvedControl),
+		Structural:  make(map[string][]ResolvedControl),
+		Operational: make(map[string][]ResolvedControl),
+		Monitoring:  make(map[string][]ResolvedControl),
 	}
 
 	for _, fw := range frameworks {
 		for _, ctrl := range fw.Controls {
-			key := deduplicationKey(ctrl)
-			rcs.Controls[key] = append(rcs.Controls[key], ResolvedControl{
-				FrameworkID: fw.ID,
-				Control:     ctrl,
-			})
+			rc := ResolvedControl{FrameworkID: fw.ID, Control: ctrl}
+			if len(ctrl.Structural) > 0 {
+				key := structuralKey(ctrl)
+				rcs.Structural[key] = append(rcs.Structural[key], rc)
+			}
+			if len(ctrl.Operational) > 0 {
+				// Operational specs never deduplicate across frameworks.
+				// Cedar's default-deny model requires both frameworks' policies
+				// to independently permit — AND semantics, not OR.
+				key := fw.ID + "/" + ctrl.ID
+				rcs.Operational[key] = append(rcs.Operational[key], rc)
+			}
+			if len(ctrl.Monitoring) > 0 {
+				key := monitoringKey(ctrl)
+				rcs.Monitoring[key] = append(rcs.Monitoring[key], rc)
+			}
 		}
 	}
 	return rcs, nil
 }
 
-// ResolvedControlSet is the deduplicated set of controls across all active frameworks.
+// ResolvedControlSet holds the deduplicated controls across all active frameworks,
+// separated by enforcement type so each compiler accesses only its domain.
 type ResolvedControlSet struct {
-	// Controls maps a deduplication key → list of controls that share enforcement.
-	// Multiple framework controls can map to the same enforcement artifact.
-	Controls map[string][]ResolvedControl
+	// Structural maps condition-fingerprint → controls with Structural (SCP) specs.
+	// Two frameworks requiring the same deny condition share one SCP statement.
+	Structural map[string][]ResolvedControl
+
+	// Operational maps frameworkID+controlID → controls with Operational (Cedar) specs.
+	// Each framework's Cedar policies are kept separate: AND semantics via default-deny.
+	Operational map[string][]ResolvedControl
+
+	// Monitoring maps resourceType+ruleID → controls with Monitoring (Config) specs.
+	// Two frameworks checking the same resource type/rule share one Config rule.
+	Monitoring map[string][]ResolvedControl
 }
 
 // ResolvedControl pairs a control with its originating framework.
@@ -114,13 +145,20 @@ type ResolvedControl struct {
 	Control     schema.Control
 }
 
-// deduplicationKey generates a key for grouping controls that share enforcement.
-// Controls requiring the same SCP/Cedar policy across frameworks get one artifact.
-func deduplicationKey(ctrl schema.Control) string {
-	// Simplified: use first structural enforcement ID if present,
-	// otherwise family + control ID.
+// structuralKey generates the SCP deduplication key.
+// Controls sharing the same structural enforcement spec ID → one SCP statement.
+func structuralKey(ctrl schema.Control) string {
 	if len(ctrl.Structural) > 0 {
 		return ctrl.Structural[0].ID
+	}
+	return ctrl.Family + "/" + ctrl.ID
+}
+
+// monitoringKey generates the Config rule deduplication key.
+// Controls checking the same resource type and rule → one Config rule.
+func monitoringKey(ctrl schema.Control) string {
+	if len(ctrl.Monitoring) > 0 {
+		return ctrl.Monitoring[0].ResourceType + "/" + ctrl.Monitoring[0].ID
 	}
 	return ctrl.Family + "/" + ctrl.ID
 }

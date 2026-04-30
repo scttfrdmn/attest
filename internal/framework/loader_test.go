@@ -288,9 +288,9 @@ func TestResolve_Deduplication(t *testing.T) {
 
 	// "scp-require-mfa" appears in both frameworks; it should be grouped under one key.
 	key := "scp-require-mfa"
-	group, ok := rcs.Controls[key]
+	group, ok := rcs.Structural[key]
 	if !ok {
-		t.Fatalf("expected deduplication key %q in resolved controls", key)
+		t.Fatalf("expected deduplication key %q in resolved Structural map", key)
 	}
 	if len(group) < 2 {
 		t.Errorf("expected at least 2 controls under key %q, got %d", key, len(group))
@@ -306,6 +306,73 @@ func TestResolve_Deduplication(t *testing.T) {
 	}
 	if !fwIDs["hipaa-test"] {
 		t.Error("expected hipaa-test in resolved controls for scp-require-mfa")
+	}
+}
+
+// TestResolve_CedarNeverDeduplicates verifies that Cedar (Operational) specs from
+// different frameworks always stay separate — AND semantics via default-deny requires
+// both policies to independently permit before access is granted.
+func TestResolve_CedarNeverDeduplicates(t *testing.T) {
+	// Two frameworks both defining access control Cedar specs with the same structural key.
+	fw1 := &schema.Framework{
+		ID:      "fw-alpha",
+		Version: "1.0",
+		Controls: []schema.Control{
+			{
+				ID:     "AC.1",
+				Family: "Access Control",
+				Structural: []schema.StructuralEnforcement{
+					{ID: "scp-require-mfa", Actions: []string{"*"}, Effect: "Deny"},
+				},
+				Operational: []schema.OperationalEnforcement{
+					{ID: "cedar-access-alpha", Description: "Alpha access control"},
+				},
+			},
+		},
+	}
+	fw2 := &schema.Framework{
+		ID:      "fw-beta",
+		Version: "1.0",
+		Controls: []schema.Control{
+			{
+				ID:     "AC.1",
+				Family: "Access Control",
+				Structural: []schema.StructuralEnforcement{
+					{ID: "scp-require-mfa", Actions: []string{"*"}, Effect: "Deny"},
+				},
+				Operational: []schema.OperationalEnforcement{
+					{ID: "cedar-access-beta", Description: "Beta access control"},
+				},
+			},
+		},
+	}
+
+	rcs, err := Resolve([]*schema.Framework{fw1, fw2})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	// Structural: both frameworks share the same SCP condition → one entry.
+	if len(rcs.Structural) != 1 {
+		t.Errorf("Structural map: want 1 entry (deduped SCPs), got %d", len(rcs.Structural))
+	}
+	if group := rcs.Structural["scp-require-mfa"]; len(group) != 2 {
+		t.Errorf("Structural[scp-require-mfa]: want 2 controls (from both frameworks), got %d", len(group))
+	}
+
+	// Operational: Cedar specs never deduplicate across frameworks.
+	// Two frameworks → two separate Operational entries (different keys).
+	if len(rcs.Operational) != 2 {
+		t.Errorf("Operational map: want 2 entries (one per framework, never deduped), got %d; "+
+			"Cedar policies from different frameworks must evaluate independently", len(rcs.Operational))
+	}
+	alphaKey := "fw-alpha/AC.1"
+	betaKey := "fw-beta/AC.1"
+	if _, ok := rcs.Operational[alphaKey]; !ok {
+		t.Errorf("Operational map missing key %q", alphaKey)
+	}
+	if _, ok := rcs.Operational[betaKey]; !ok {
+		t.Errorf("Operational map missing key %q", betaKey)
 	}
 }
 
