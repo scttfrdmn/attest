@@ -1,8 +1,10 @@
-# Ark Integration
+# qualify Integration
 
-[Ark (AWS Research Kit)](https://github.com/scttfrdmn/ark) is a sister project that
+> **Note:** qualify was previously named "Ark" (AWS Research Kit). This document uses both names interchangeably in prose. All CLI commands now use `qualify train start` (not `ark learn start`).
+
+[qualify](https://github.com/provabl/qualify) is a sister project that
 provides progressive security training and per-researcher guardrails for institutions
-running research on AWS. Attest and Ark address complementary halves of the same
+running research on AWS. Attest and qualify address complementary halves of the same
 compliance problem.
 
 ```
@@ -45,7 +47,7 @@ policies — independently of which tool the researcher uses.
 
 ### 1. Training completion → IAM role tags (the critical link)
 
-When a researcher completes a compliance-relevant training module in Ark, Ark calls
+When a researcher completes a compliance-relevant training module in qualify, qualify calls
 the AWS IAM API to tag their assumed role with attest-readable attributes:
 
 ```
@@ -62,7 +64,7 @@ starts returning ALLOW for this researcher — without any CISO action.
 
 **Ark module → attest tag mapping:**
 
-| Ark training module | Tag written | Attest control satisfied |
+| qualify training module | Tag written | Attest control satisfied |
 |---|---|---|
 | CUI Fundamentals (CITI) | `attest:cui-training=true`, `attest:cui-expiry=YYYY-MM-DD` | NIST 800-171 §3.2.2 |
 | HIPAA Privacy & Security | `attest:hipaa-training=true`, `attest:hipaa-expiry=YYYY-MM-DD` | HIPAA §164.308(a)(5) |
@@ -70,26 +72,26 @@ starts returning ALLOW for this researcher — without any CISO action.
 | Data Classification | `attest:data-class-training=true` | NIST 800-171 §3.2.1[a] |
 | Export Control (ITAR) | `attest:us-person=true` | ITAR (set from institutional identity, not training) |
 
-### 2. Ark certificates → attest attestation records
+### 2. qualify certificates → attest attestation records
 
 Ark generates cryptographically signed training certificates. These should
 simultaneously create attest attestation records — eliminating the manual
 `attest attest create` step for training controls:
 
 ```
-Ark certificate ARK-CERT-12345 issued for researcher@mru.edu
+qualify certificate QUALIFY-CERT-12345 issued for researcher@mru.edu
   → Creates: .attest/attestations/ATT-2026-3.2.2-001.yaml
     id: ATT-2026-3.2.2-001
     control_id: "3.2.2"
-    title: "CUI handling training — Ark certificate ARK-CERT-12345"
-    affirmed_by: "Ark Training System (automated)"
-    evidence_ref: "ARK-CERT-12345"
+    title: "CUI handling training — qualify certificate QUALIFY-CERT-12345"
+    affirmed_by: "qualify Training System (automated)"
+    evidence_ref: "QUALIFY-CERT-12345"
     evidence_type: "training_record"
     expires_at: "2027-04-01"
 ```
 
 Result: `attest attest list` shows the control as attested. `attest generate ssp`
-cites the Ark certificate as evidence for §3.2.2. No human in the loop for routine
+cites the qualify certificate as evidence for §3.2.2. No human in the loop for routine
 renewals.
 
 ### 3. attest denial → Ark remediation
@@ -103,33 +105,33 @@ $ attest evaluate --principal ... --action s3:PutObject --attr "principal.cui_tr
 Decision:  DENY
 Policy:    cedar-cui-data-movement (NIST 800-171 §3.1.3)
 Reason:    principal.cui_training_current is false
-Remediate: ark learn start cui-fundamentals
-           (or visit https://ark.institution.edu/training/cui-fundamentals)
+Remediate: qualify train start cui-fundamentals
+           (or visit https://qualify.institution.edu/training/cui-fundamentals)
 ```
 
 ### 4. attest calendar shows Ark training obligations
 
 `attest calendar` lists administrative controls with review schedules. Controls
-backed by Ark training display the module name and direct link:
+backed by qualify training display the module name and direct link:
 
 ```
 $ attest calendar --window 90d
 
-✗ 3.2.2   CUI training    NOT ATTESTED   → ark learn start cui-fundamentals
-✗ 3.2.1   Security awareness NOT ATTESTED → ark learn start security-awareness
-⚠ 3.2.2   hipaa-training  expiring 15d   → ark learn start hipaa-privacy-security
+✗ 3.2.2   CUI training    NOT ATTESTED   → qualify train start cui-fundamentals
+✗ 3.2.1   Security awareness NOT ATTESTED → qualify train start security-awareness
+⚠ 3.2.2   hipaa-training  expiring 15d   → qualify train start hipaa-privacy-security
 ```
 
-### 5. attest ai ingest --type ark
+### 5. attest ai ingest --type qualify
 
 Bulk-import Ark training records as attest attestations:
 
 ```bash
-attest ai ingest --type ark --endpoint https://ark.institution.edu/api \
-  --token $ARK_API_TOKEN
+attest ai ingest --type qualify --endpoint https://qualify.institution.edu/api \
+  --token $QUALIFY_API_TOKEN
 ```
 
-Queries Ark's compliance reporting API for all completed training certificates,
+Queries qualify's compliance reporting API for all completed training certificates,
 maps them to framework controls, and creates attestation records for any that
 don't already exist. Useful for initial setup when Ark has months of training
 history that predates attest deployment.
@@ -228,7 +230,7 @@ AWS_PROFILE=aws attest evaluate \
   --attr "resource.encryption_type=aws:kms" \
   --attr "principal.lab_authorization=true"
 
-# Expected: ALLOW (principal.cui_training_current resolved true from Ark tag)
+# Expected: ALLOW (principal.cui_training_current resolved true from qualify tag)
 ```
 
 ---
@@ -256,4 +258,4 @@ AWS_PROFILE=aws attest evaluate \
 - [Principal attribute resolver](../architecture/principal-attributes.md)
 - [ITAR framework](../frameworks/itar.md)
 - [Admin-to-technical bridge](../architecture/admin-tech-bridge.md)
-- [Ark repository](https://github.com/scttfrdmn/ark)
+- [Ark repository](https://github.com/provabl/qualify)

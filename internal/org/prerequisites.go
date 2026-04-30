@@ -135,10 +135,12 @@ func CheckPrerequisitesFromMeta(meta *GroundMeta) []PrereqResult {
 	}
 
 	// Report external services declared in ground.yaml (informational).
+	// Sanitize names before printing — they come from operator-controlled
+	// ground-meta.json and could contain ANSI escape sequences.
 	if len(meta.ExternalServices) > 0 {
 		names := make([]string, len(meta.ExternalServices))
 		for i, svc := range meta.ExternalServices {
-			names[i] = svc.Name
+			names[i] = sanitizeTerminalString(svc.Name)
 		}
 		results = append(results, PrereqResult{
 			Name:     "External services",
@@ -290,4 +292,46 @@ func metaCheckWarn(name string, ok bool, detail, remediation string) PrereqResul
 		return PrereqResult{Name: name, Severity: "ok", Status: true, Detail: detail}
 	}
 	return PrereqResult{Name: name, Severity: "warning", Status: false, Detail: "not enabled", Remediation: remediation}
+}
+
+// sanitizeTerminalString strips ANSI/VT100 escape sequences from operator-supplied
+// strings before printing to a terminal. Prevents injection via ground-meta.json.
+func sanitizeTerminalString(s string) string {
+	var out strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == '\x1b' && i+1 < len(s) {
+			// Skip the escape sequence.
+			i++
+			if s[i] == '[' {
+				// CSI sequence: skip until letter.
+				i++
+				for i < len(s) && (s[i] < 'A' || s[i] > 'Z') && (s[i] < 'a' || s[i] > 'z') {
+					i++
+				}
+				if i < len(s) {
+					i++ // skip terminating letter
+				}
+			} else if s[i] == ']' {
+				// OSC sequence: skip until BEL (0x07) or ST (0x1b 0x5c).
+				i++
+				for i < len(s) && s[i] != '\x07' {
+					if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '\\' {
+						i += 2
+						break
+					}
+					i++
+				}
+				if i < len(s) && s[i] == '\x07' {
+					i++
+				}
+			} else {
+				i++ // skip single-char escape
+			}
+			continue
+		}
+		out.WriteByte(s[i])
+		i++
+	}
+	return out.String()
 }
