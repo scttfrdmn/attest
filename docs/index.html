@@ -132,7 +132,8 @@ aws organizations tag-resource --resource-id 123456789012 \
 <span class="accent-cmd">attest</span> compile --scp-strategy merged
 <span class="accent-cmd">attest</span> preflight --region us-east-1
 <span class="accent-cmd">attest</span> apply --approve --region us-east-1
-<span class="out"># SCPs deployed — every account in the org inherits them immediately</span></code></pre>
+<span class="out"># 110 controls compiled → 1 merged SCP, 15 Cedar policies, Config rules</span>
+<span class="out"># SCP deployed — every account in the org inherits immediately</span></code></pre>
                             </div>
                         </div>
                     </div>
@@ -143,7 +144,8 @@ aws organizations tag-resource --resource-id 123456789012 \
                             <h3>Scan &amp; generate evidence</h3>
                             <div class="code-block">
                                 <pre><code><span class="accent-cmd">attest</span> scan
-<span class="out"># Enforced: 9  Partial: 21  Gaps: 0</span>
+<span class="out"># nist-800-171-r2 (110 controls): 9 enforced, 21 partial, 80 AWS-covered, 0 gaps</span>
+<span class="out"># hipaa           (23 controls):  12 enforced, 11 via 800-171 supersession</span>
 
 <span class="accent-cmd">attest</span> generate ssp --framework cmmc-level-2
 <span class="accent-cmd">attest</span> generate assess --framework cmmc-level-2  <span class="cm"># CMMC 2.0 self-assessment score</span>
