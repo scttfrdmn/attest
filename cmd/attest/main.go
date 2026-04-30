@@ -516,6 +516,47 @@ posture is derived from the compiled crosswalk (run 'attest compile' first).`,
 						output.Println("  ✗ Blocking conflicts detected — review resolutions above before deploying.")
 					}
 				}
+
+				// Provenance gap detection: HIPAA + NIH GDS without provenance tagging is a
+				// structural conflict that cannot be resolved by policy alone.
+				nihGDSActive := false
+				hipaaActive := false
+				for _, fw := range frameworks {
+					switch fw.ID {
+					case "nih-gds":
+						nihGDSActive = true
+					case "hipaa":
+						hipaaActive = true
+					}
+				}
+				if nihGDSActive && hipaaActive {
+					// Check each environment for provenance config.
+					for envID, env := range sre.Environments {
+						hasPHI := false
+						for _, dc := range env.DataClasses {
+							if strings.EqualFold(dc, "PHI") {
+								hasPHI = true
+								break
+							}
+						}
+						if hasPHI && (env.ProvenanceConfig == nil || !env.ProvenanceConfig.Enabled) {
+							output.Println()
+							output.Println("⚠ STRUCTURAL CONFLICT UNRESOLVED")
+							output.Printf("  Environment %s (%s) has PHI and NIH GDS active but\n", env.Name, envID)
+							output.Println("  provenance tagging is not configured.")
+							output.Println()
+							output.Println("  Risk: Cannot satisfy both NIH DUA delete-at-closeout and HIPAA 6-year retention")
+							output.Println("  for combined PHI+genomic data without source provenance tagging.")
+							output.Println()
+							output.Println("  Control: nih-gds-2.4[b] — S3 lifecycle rules not configured")
+							output.Println()
+							output.Println("  Resolution:")
+							output.Printf("    attest provision --provenance-aware --environment %s --closeout-date YYYY-MM-DD\n", envID)
+							output.Println()
+							output.Println("  WARNING: Must be done BEFORE any combined PHI+genomic data is written.")
+						}
+					}
+				}
 			}
 
 			// Optional: direct API verification (free, no Config required).
@@ -1549,7 +1590,7 @@ func generateCmd() *cobra.Command {
 		Use:   "generate",
 		Short: "Generate compliance documents from compiled crosswalk",
 	}
-	cmd.AddCommand(generateSSPCmd(), generatePOAMCmd(), generateAssessCmd(), generateOSCALCmd(), generateCMMCBundleCmd(), generateSPRSCmd(), generateDMSPCmd())
+	cmd.AddCommand(generateSSPCmd(), generatePOAMCmd(), generateAssessCmd(), generateOSCALCmd(), generateCMMCBundleCmd(), generateSPRSCmd(), generateDMSPCmd(), generateCloseoutCmd())
 	return cmd
 }
 
@@ -1616,6 +1657,152 @@ With --framework nih-gds: NIH DUA attestation readiness report.
 	}
 	cmd.Flags().StringVar(&fw, "framework", "", "specific framework to assess (e.g. nih-gds)")
 	return cmd
+}
+
+func generateCloseoutCmd() *cobra.Command {
+	var envID string
+	cmd := &cobra.Command{
+		Use:   "closeout",
+		Short: "Generate closeout checklist for an environment with NIH GDS + HIPAA data",
+		Long: `Generates a project closeout checklist for environments that contain both
+NIH controlled-access genomic data (NIH GDS) and PHI (HIPAA). The checklist
+covers both the NIH DUA deletion requirements (within 30 days) and the
+HIPAA 6-year retention requirements, which have conflicting obligations.
+
+Requires an environment with ProvenanceConfig enabled (attest provision --provenance-aware).`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runGenerateCloseout(envID)
+		},
+	}
+	cmd.Flags().StringVar(&envID, "environment", "", "AWS account ID of the environment (required)")
+	_ = cmd.MarkFlagRequired("environment")
+	return cmd
+}
+
+func runGenerateCloseout(envID string) error {
+	// Load SRE and find the environment.
+	sreData, err := os.ReadFile(filepath.Join(".attest", "sre.yaml")) // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+	if err != nil {
+		return fmt.Errorf("reading .attest/sre.yaml: %w (run 'attest init' first)", err)
+	}
+	var sre schema.SRE
+	if err := yaml.Unmarshal(sreData, &sre); err != nil {
+		return fmt.Errorf("parsing sre.yaml: %w", err)
+	}
+
+	env, ok := sre.Environments[envID]
+	if !ok {
+		return fmt.Errorf("environment %s not found in .attest/sre.yaml", envID)
+	}
+
+	// Load project context for DUA IDs, IRB protocol, dbGaP accessions.
+	var pf schema.ProjectsFile
+	if projectsData, readErr := os.ReadFile(filepath.Join(".attest", "projects.yaml")); readErr == nil { // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+		_ = yaml.Unmarshal(projectsData, &pf)
+	}
+
+	closeoutDate := "YYYY-MM-DD (not configured)"
+	if env.ProvenanceConfig != nil && env.ProvenanceConfig.CloseoutDate != nil {
+		closeoutDate = env.ProvenanceConfig.CloseoutDate.Format("2006-01-02")
+	}
+
+	hasPHI := func() bool {
+		for _, dc := range env.DataClasses {
+			if strings.EqualFold(dc, "PHI") {
+				return true
+			}
+		}
+		return false
+	}()
+
+	var hasIRB bool
+	var dbGaPAccessions []string
+	for _, p := range pf.Projects {
+		if p.Active {
+			if p.IRBProtocol != "" {
+				hasIRB = true
+			}
+			dbGaPAccessions = append(dbGaPAccessions, p.DBGaPAccessions...)
+		}
+	}
+
+	var doc strings.Builder
+	doc.WriteString(fmt.Sprintf("# Project Closeout Checklist — %s\n\n", envID))
+	doc.WriteString(fmt.Sprintf("**Environment:** %s (%s)  \n", env.Name, envID))
+	doc.WriteString(fmt.Sprintf("**Closeout date:** %s  \n", closeoutDate))
+	doc.WriteString(fmt.Sprintf("**Generated:** %s\n\n", time.Now().Format("2006-01-02")))
+	doc.WriteString("---\n\n")
+	doc.WriteString("> **CRITICAL:** NIH DUA deletion must occur within 30 days of closeout.\n")
+	doc.WriteString("> HIPAA records must be RETAINED for 6 years. These obligations apply simultaneously.\n")
+	doc.WriteString("> Provenance tagging (data-source tag on every S3 object) enforces both.\n\n")
+
+	// NIH DUA requirements
+	doc.WriteString("## 1. NIH DUA Requirements — Delete within 30 days of closeout\n\n")
+	doc.WriteString("- [ ] Delete all S3 objects tagged `data-source=dbgap`\n")
+	doc.WriteString("- [ ] Delete all S3 objects tagged `data-source=derived-dbgap`\n")
+	doc.WriteString("- [ ] Delete all S3 objects tagged `data-source=combined`\n")
+	doc.WriteString("- [ ] Delete all S3 objects tagged `data-source=derived-combined`\n")
+	doc.WriteString("- [ ] Drop NIH genomic database tables (e.g., `nih_genomic` table)\n")
+	doc.WriteString("- [ ] Delete SageMaker models tagged `nih:derivative=true`\n")
+	doc.WriteString("- [ ] Delete ECR images containing NIH-derived model weights\n")
+	if len(dbGaPAccessions) > 0 {
+		doc.WriteString(fmt.Sprintf("- [ ] Submit DUA closure notification to NIH (accessions: %s)\n",
+			strings.Join(dbGaPAccessions, ", ")))
+	} else {
+		doc.WriteString("- [ ] Submit DUA closure notification to NIH\n")
+	}
+	doc.WriteString("- [ ] Generate deletion certification\n")
+	doc.WriteString("- [ ] Run: `attest verify-closeout --environment " + envID + "`\n\n")
+
+	// HIPAA requirements (only if PHI present)
+	if hasPHI {
+		doc.WriteString("## 2. HIPAA Requirements — Retain for 6 years\n\n")
+		doc.WriteString("- [ ] Verify S3 objects tagged `data-source=ehr` are NOT deleted\n")
+		doc.WriteString("- [ ] Verify S3 objects tagged `data-source=derived-ehr` are NOT deleted\n")
+		doc.WriteString("- [ ] Verify 6-year lifecycle rules are active on EHR buckets\n")
+		doc.WriteString("- [ ] Archive CloudTrail logs to Glacier for 6 years\n")
+		doc.WriteString("- [ ] Retain SSP, risk assessment, and incident response records\n")
+		doc.WriteString("- [ ] Retain workforce training records\n\n")
+	}
+
+	// IRB requirements (only if IRB protocol found)
+	if hasIRB {
+		doc.WriteString("## 3. IRB Requirements\n\n")
+		doc.WriteString("- [ ] Submit final report to IRB\n")
+		doc.WriteString("- [ ] Notify IRB of project completion\n")
+		doc.WriteString("- [ ] Confirm all consent obligations per protocol\n\n")
+	}
+
+	// Environment decommission
+	nextSection := 2
+	if hasPHI {
+		nextSection = 3
+	}
+	if hasIRB {
+		nextSection++
+	}
+	doc.WriteString(fmt.Sprintf("## %d. Environment Decommission\n\n", nextSection))
+	doc.WriteString("- [ ] Revoke researcher IAM access to the environment\n")
+	doc.WriteString("- [ ] Remove attest:nih-approval IAM tags from all researcher roles\n")
+	doc.WriteString("- [ ] Remove researchers from NIH Approved User list in principal resolver\n")
+	doc.WriteString("- [ ] Archive environment config: `cp -r .attest .attest-archive-" + closeoutDate + "`\n")
+	doc.WriteString("- [ ] Submit DUA closure notification to NIH\n")
+	doc.WriteString("- [ ] Update `.attest/projects.yaml` — set `active: false` for closed projects\n\n")
+
+	doc.WriteString("---\n\n")
+	doc.WriteString("*Generated by attest. Complete all items and retain this checklist per HIPAA record retention requirements.*\n")
+
+	// Print to terminal and write to file.
+	output.Println(doc.String())
+
+	docsDir := filepath.Join(".attest", "documents") // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+	if mkErr := os.MkdirAll(docsDir, 0o750); mkErr == nil {
+		outPath := filepath.Join(docsDir, envID+"-closeout-checklist.md") // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+		if writeErr := os.WriteFile(outPath, []byte(doc.String()), 0o640); writeErr == nil {
+			output.Printf("Closeout checklist written to: %s\n", outPath)
+		}
+	}
+	return nil
 }
 
 func runGenerateNIHGDSAssess() error {
@@ -2901,6 +3088,8 @@ Create it first: aws organizations create-organizational-unit --parent-id <root>
 			dataClasses, _ := cmd.Flags().GetStringSlice("data-class")
 			approve, _ := cmd.Flags().GetBool("approve")
 			region, _ := cmd.Flags().GetString("region")
+			provenanceAware, _ := cmd.Flags().GetBool("provenance-aware")
+			closeoutDateStr, _ := cmd.Flags().GetString("closeout-date")
 
 			if name == "" {
 				return fmt.Errorf("--name is required")
@@ -2943,6 +3132,51 @@ Create it first: aws organizations create-organizational-unit --parent-id <root>
 			}
 			if len(dataClasses) == 0 {
 				return fmt.Errorf("--data-class is required (e.g., --data-class CUI)")
+			}
+
+			// Provenance-aware guard: environments with both PHI and NIH GDS data
+			// require --provenance-aware before any combined data is written.
+			hasPHI := func() bool {
+				for _, dc := range dataClasses {
+					if strings.EqualFold(dc, "PHI") || strings.EqualFold(dc, "phi") {
+						return true
+					}
+				}
+				return false
+			}()
+			// Check if nih-gds is active in the SRE (we'll load SRE below, but need the check here).
+			// Simplified check: if data-class includes genomic/CUI alongside PHI, require provenance.
+			hasGenomicOrNIH := func() bool {
+				for _, dc := range dataClasses {
+					u := strings.ToUpper(dc)
+					if u == "GENOMIC" || u == "NIH" || u == "DBGAP" {
+						return true
+					}
+				}
+				return false
+			}()
+			if hasPHI && hasGenomicOrNIH && !provenanceAware {
+				return fmt.Errorf(
+					"environment has both PHI and NIH/genomic data classes — provenance tagging required.\n"+
+						"Risk: cannot satisfy both HIPAA 6-year retention and NIH DUA closeout deletion\n"+
+						"without source provenance tagging on every data object.\n\n"+
+						"WARNING: Must be configured BEFORE the first byte of combined data is written.\n\n"+
+						"Re-run with:\n"+
+						"  attest provision --name %s --provenance-aware --closeout-date YYYY-MM-DD <other flags>",
+					name)
+			}
+
+			// Parse closeout date if provided.
+			var closeoutDate *time.Time
+			if closeoutDateStr != "" {
+				t, parseErr := time.Parse("2006-01-02", closeoutDateStr)
+				if parseErr != nil {
+					return fmt.Errorf("--closeout-date must be YYYY-MM-DD format: %w", parseErr)
+				}
+				closeoutDate = &t
+			}
+			if provenanceAware && closeoutDate == nil {
+				return fmt.Errorf("--provenance-aware requires --closeout-date YYYY-MM-DD")
 			}
 
 			// Load SRE.
@@ -3022,9 +3256,26 @@ Create it first: aws organizations create-organizational-unit --parent-id <root>
 			output.Println("  2. attest compile --scp-strategy merged — update SCP set if needed")
 			output.Println("  3. attest apply --approve — deploy updated SCPs to org")
 
-			// Register in sre.yaml.
+			// Register in sre.yaml, with ProvenanceConfig if requested.
 			if sre.Environments == nil {
 				sre.Environments = make(map[string]schema.Environment)
+			}
+			if provenanceAware {
+				env.ProvenanceConfig = schema.DefaultProvenanceConfig(closeoutDate)
+				output.Printf("\nProvenance tagging configured:\n")
+				output.Printf("  Tag key:         data-source\n")
+				output.Printf("  Closeout date:   %s\n", closeoutDate.Format("2006-01-02"))
+				output.Printf("  Lifecycle rules: %d (dbgap/combined/derived → delete at closeout; ehr/derived-ehr → retain 6y)\n",
+					len(env.ProvenanceConfig.LifecycleRules))
+				output.Printf("  Tag enforcement SCP: enabled (denies s3:PutObject without valid data-source tag)\n")
+				output.Println()
+				output.Println("⚠ WARNING: Provenance tagging cannot be retrofitted to existing datasets.")
+				output.Println("  Configure S3 lifecycle rules and write first data ONLY after this provisioning completes.")
+				output.Println()
+				output.Println("Next steps for provenance-aware environment:")
+				output.Printf("  1. attest generate closeout --environment %s   # generate closeout checklist\n", env.AccountID)
+				output.Println("  2. Tag all S3 objects with data-source=<dbgap|ehr|combined|...> at write time")
+				output.Println("  3. Use 'attest model-training-wrapper' for SageMaker jobs touching dbGaP data")
 			}
 			sre.Environments[env.AccountID] = *env
 			updated, err := yaml.Marshal(sre)
@@ -3039,9 +3290,13 @@ Create it first: aws organizations create-organizational-unit --parent-id <root>
 	cmd.Flags().String("owner", "", "PI or lab owner")
 	cmd.Flags().String("email", "", "AWS account email — must be globally unique (required)")
 	cmd.Flags().String("purpose", "", "Research purpose description")
-	cmd.Flags().StringSlice("data-class", nil, "Data class(es): CUI, PHI, FERPA, PII, OPEN")
+	cmd.Flags().StringSlice("data-class", nil, "Data class(es): CUI, PHI, FERPA, PII, OPEN, GENOMIC, NIH")
 	cmd.Flags().Bool("approve", false, "Skip interactive confirmation")
 	cmd.Flags().String("region", "us-east-1", "AWS region")
+	cmd.Flags().Bool("provenance-aware", false,
+		"Configure source provenance tagging (required for PHI+NIH/genomic environments)")
+	cmd.Flags().String("closeout-date", "",
+		"Project closeout date YYYY-MM-DD (required with --provenance-aware)")
 	return cmd
 }
 

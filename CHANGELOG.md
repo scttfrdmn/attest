@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-04-30
+
+### Added
+
+- **`ProvenanceConfig` schema** (`pkg/schema/types.go`): `ProvenanceLifecycleRule` and
+  `ProvenanceConfig` types. `Environment.ProvenanceConfig *ProvenanceConfig`. Static
+  `DefaultProvenanceConfig()` returns standard 6-rule config for PHI+NIH GDS environments:
+  dbgap/combined/derived → delete_at_closeout; ehr/derived-ehr → retain 6 years
+- **`attest provision --provenance-aware --closeout-date YYYY-MM-DD`**: configures source
+  provenance tagging on an environment. Guards: PHI+NIH/genomic environments without this
+  flag return an actionable error. Writes `ProvenanceConfig` to `sre.yaml`. Prints
+  retroactive-impossibility warning. Lists next steps for provenance-aware operation
+- **`attest generate closeout --environment <id>`**: generates a project closeout checklist
+  covering NIH DUA deletion obligations (within 30 days), HIPAA retention obligations
+  (6 years, only when PHI present), IRB requirements (only when IRB protocol found),
+  and environment decommission steps. Written to `.attest/documents/<envid>-closeout-checklist.md`
+- **`attest scan` provenance gap detection**: when `hipaa` + `nih-gds` are both active,
+  scans environments for unresolved structural conflict (PHI data class without
+  `ProvenanceConfig.Enabled`). Surfaces: control nih-gds-2.4[b] gap, risk description,
+  exact `attest provision --provenance-aware` remediation command, and cannot-retrofit warning
+
 ## [0.23.0] - 2026-04-30
 
 ### Added

@@ -30,6 +30,77 @@ type SRE struct {
 
 // Environment is an AWS account within the SRE. Researchers get environments;
 // they never configure compliance directly.
+// ProvenanceLifecycleRule maps a data-source tag value to its retention/deletion policy.
+// Used to resolve the HIPAA 6-year retention vs NIH DUA closeout deletion conflict.
+type ProvenanceLifecycleRule struct {
+	// TagValue is the value of the data-source S3 object tag.
+	// Standard values: dbgap, ehr, combined, derived-dbgap, derived-ehr, derived-combined
+	TagValue string `yaml:"tag_value" json:"tag_value"`
+	// Action is one of: delete_at_closeout, retain_years, glacier_after_days
+	Action string `yaml:"action" json:"action"`
+	// Years is used with retain_years (e.g. 6 for HIPAA 6-year retention).
+	Years int `yaml:"years,omitempty" json:"years,omitempty"`
+	// Days is used with glacier_after_days (transition to Glacier before expiry).
+	Days int `yaml:"days,omitempty" json:"days,omitempty"`
+	// Framework is the compliance framework that mandates this lifecycle rule.
+	Framework string `yaml:"framework" json:"framework"`
+	// Notes is a human-readable explanation.
+	Notes string `yaml:"notes,omitempty" json:"notes,omitempty"`
+}
+
+// ProvenanceConfig enables source provenance tagging to resolve the structural
+// conflict between HIPAA 6-year retention and NIH DUA closeout deletion.
+//
+// CRITICAL: Must be configured BEFORE the first byte of combined PHI+genomic
+// data is written. Cannot be retrofitted to existing datasets.
+//
+// Enabled by: attest provision --provenance-aware --closeout-date YYYY-MM-DD
+type ProvenanceConfig struct {
+	// Enabled must be true before combined PHI+NIH GDS data is written.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// ProvenanceTagKey is the S3 object tag key. Default: "data-source"
+	ProvenanceTagKey string `yaml:"provenance_tag_key" json:"provenance_tag_key"`
+	// LifecycleRules maps each tag value to its lifecycle obligation.
+	LifecycleRules []ProvenanceLifecycleRule `yaml:"lifecycle_rules" json:"lifecycle_rules"`
+	// TagEnforcementSCPEnabled controls whether an SCP denies s3:PutObject
+	// on objects missing a valid data-source tag.
+	TagEnforcementSCPEnabled bool `yaml:"tag_enforcement_scp_enabled" json:"tag_enforcement_scp_enabled"`
+	// DatabaseProvenanceModel describes how databases track column-level provenance.
+	// Values: separate_tables | source_column | row_tagging | not_applicable
+	DatabaseProvenanceModel string `yaml:"database_provenance_model,omitempty" json:"database_provenance_model,omitempty"`
+	// CloseoutDate is the project end date after which NIH-tagged data is deleted.
+	CloseoutDate *time.Time `yaml:"closeout_date,omitempty" json:"closeout_date,omitempty"`
+	// DeletionCertificationRequired indicates a deletion cert must be submitted to NIH.
+	DeletionCertificationRequired bool `yaml:"deletion_certification_required" json:"deletion_certification_required"`
+}
+
+// DefaultProvenanceConfig returns a ProvenanceConfig with standard lifecycle rules
+// for a combined PHI (HIPAA) + NIH controlled-access genomic (NIH GDS) environment.
+func DefaultProvenanceConfig(closeoutDate *time.Time) *ProvenanceConfig {
+	return &ProvenanceConfig{
+		Enabled:                  true,
+		ProvenanceTagKey:         "data-source",
+		TagEnforcementSCPEnabled: true,
+		DatabaseProvenanceModel:  "separate_tables",
+		CloseoutDate:             closeoutDate,
+		DeletionCertificationRequired: true,
+		LifecycleRules: []ProvenanceLifecycleRule{
+			{TagValue: "dbgap", Action: "delete_at_closeout", Framework: "nih-gds",
+				Notes: "Raw NIH controlled-access genomic data — delete within 30 days of closeout"},
+			{TagValue: "derived-dbgap", Action: "delete_at_closeout", Framework: "nih-gds",
+				Notes: "Derived from dbGaP only (including model weights) — delete at closeout"},
+			{TagValue: "combined", Action: "delete_at_closeout", Framework: "nih-gds",
+				Notes: "Computed from both dbGaP + EHR — more restrictive NIH obligation applies"},
+			{TagValue: "derived-combined", Action: "delete_at_closeout", Framework: "nih-gds",
+				Notes: "Derived from combined data — delete at closeout"},
+			{TagValue: "ehr", Action: "glacier_after_days", Days: 365, Framework: "hipaa",
+				Notes: "Institutional EHR/clinical data — Glacier after 1 year, retain 6 years total"},
+			{TagValue: "derived-ehr", Action: "retain_years", Years: 6, Framework: "hipaa",
+				Notes: "Derived from EHR only — retain 6 years per HIPAA §164.316(b)(1)"},
+		},
+	}
+}
+
 type Environment struct {
 	AccountID   string            `yaml:"account_id" json:"account_id"`
 	Name        string            `yaml:"name" json:"name"`
@@ -38,6 +109,9 @@ type Environment struct {
 	Purpose     string            `yaml:"purpose" json:"purpose"`   // e.g., "HIPAA genomics"
 	DataClasses []string          `yaml:"data_classes" json:"data_classes"` // CUI, PHI, FERPA, etc.
 	Tags        map[string]string `yaml:"tags,omitempty" json:"tags,omitempty"`
+	// ProvenanceConfig is non-nil when provenance tagging is configured.
+	// Required for environments with both PHI and NIH GDS data classes.
+	ProvenanceConfig *ProvenanceConfig `yaml:"provenance_config,omitempty" json:"provenance_config,omitempty"`
 }
 
 // FrameworkRef identifies an active framework and its source.
