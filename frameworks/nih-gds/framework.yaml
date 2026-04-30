@@ -1,0 +1,440 @@
+# SPDX-FileCopyrightText: 2026 Scott Friedman
+# SPDX-License-Identifier: Apache-2.0
+
+# NIH Genomic Data Sharing Policy — Researcher Tier
+#
+# Governs access to NIH controlled-access genomic data by approved users at
+# research institutions. Researcher-tier requirements (this framework) are
+# distinct from the repository-tier requirements (satisfied by FedRAMP Moderate).
+#
+# Regulatory basis:
+#   - NIH GDS Policy (2014, updated 2023): primary policy
+#   - NOT-OD-24-157 (effective January 25, 2025): mandates 800-171 for approved users
+#   - NOT-OD-25-081 (2025): AI/ML model parameters are data derivatives
+#   - NOT-OD-25-083 (April 2025): countries-of-concern access restriction
+#   - NOT-OD-26-023 (proposed, not final): ≥100 individuals triggers controlled access
+#
+# Assessment: DUA attestation only (PI + IT contact attesting 800-171 + institutional
+# signing official). No active audit program; POA&M accepted for gaps at renewal.
+#
+# Dependencies:
+#   nist-800-171-r2 is REQUIRED — NOT-OD-24-157 mandates 800-171 compliance for all
+#   approved users. Activate nist-800-171-r2 before activating nih-gds.
+#
+# Framework activation:
+#   attest frameworks add nist-800-171-r2 nih-gds
+#   attest compile --scp-strategy merged
+#   attest generate assess --framework nih-gds
+
+id: nih-gds
+name: "NIH Genomic Data Sharing Policy (Researcher Tier)"
+version: "2025-01 (NOT-OD-24-157, effective January 25, 2025)"
+source: "https://sharing.nih.gov/genomic-data-sharing-policy"
+assessment_type: self
+assessment_cycle: event
+
+dependencies:
+  - id: nist-800-171-r2
+    required: true
+    reason: >
+      NIH NOT-OD-24-157 mandates NIST SP 800-171 compliance for all approved users
+      of NIH controlled-access genomic data. The IT contact signing the DUA must
+      attest to 800-171 compliance. NIH GDS cannot be satisfied without 800-171.
+
+artifact_reports:
+  - series: "AWS HIPAA Compliance"
+    category: "HIPAA"
+    note: "Referenced when nih-gds and hipaa are co-active (combined PHI + genomic data)"
+
+controls:
+
+  # ── Approved User Management ──────────────────────────────────────────────────
+
+  - id: nih-gds-1.1
+    family: "Approved User Management"
+    title: "Only NIH-approved users may access NIH controlled-access genomic data"
+    description: >
+      Access to controlled-access genomic data via NIH repositories (dbGaP and equivalents)
+      is restricted to individuals who have received NIH Approved User status under an
+      active Data Use Agreement. Approval must be current; lapsed approvals immediately
+      revoke access.
+    responsibility:
+      aws: >
+        AWS IAM and Cedar PDP enforce attribute-based access control. AWS does not
+        maintain NIH Approved User registries — this is an operational control.
+      customer: >
+        Institution must maintain current Approved User list in the principal resolver
+        (attest:nih-approval IAM tags, written by NIH DUA management workflow).
+        Revoke access promptly when approval lapses. Track via attest calendar.
+    operational:
+      - id: cedar-nih-approved-user
+        description: >
+          Principal must have active NIH Approved User status (attest:nih-approval=true
+          with non-expired attest:nih-approval-expiry) to access NIH controlled-access
+          resources. Covers all actions on resources tagged nih_controlled_access=true.
+        entities:
+          - principal
+          - nih_resource
+        attributes:
+          principal:
+            - nih_approval_current
+            - nih_approval_expiry
+            - nih_approval_dua_id
+          nih_resource:
+            - nih_controlled_access
+            - repository_id
+            - dua_id
+            - data_class
+        admin_dependencies:
+          - control_id: nih-gds-3.1
+            attribute: principal.nih_approval_current
+            consequence: >
+              Without current NIH approval records in the principal resolver,
+              Cedar evaluates nih_approval_current=false and denies all access
+              to NIH controlled-access resources.
+        cedar_policy: "// NIH GDS 1.1 — Approved User gate\nforbid (\n  principal,\n  action,\n  resource\n)\nwhen {\n  resource has nih_controlled_access &&\n  resource.nih_controlled_access == true &&\n  !(principal has nih_approval_current &&\n    principal.nih_approval_current == true)\n};\n"
+        temporal:
+          condition_type: expiry
+          description: >
+            NIH Approved User status expires with the DUA term. Access is denied
+            when principal.nih_approval_expiry has passed. Annual DUC renewal
+            required — track via attest calendar.
+    assessment:
+      objectives:
+        - id: nih-gds-1.1[a]
+          description: >
+            Approved User list is current and matches active DUA signatories.
+            Lapsed approvals are removed from the principal resolver.
+          auto_assessable: false
+          evidence_source: manual
+        - id: nih-gds-1.1[b]
+          description: >
+            Access to controlled-access resources is denied when nih_approval_current=false.
+            Cedar PDP enforcement is active.
+          auto_assessable: true
+          evidence_source: cedar
+
+  - id: nih-gds-1.2
+    family: "Approved User Management"
+    title: "Principals from NIH-designated countries of concern are barred from controlled-access data"
+    description: >
+      Per NIH NOT-OD-25-083 (effective April 2025): principals whose institutional
+      affiliation is in a country designated by NIH as a country of concern are barred
+      from accessing controlled-access genomic data. Policy applies based on institutional
+      affiliation, not citizenship or nationality.
+      Countries of concern: CN, RU, IR, KP, CU, VE.
+    responsibility:
+      aws: >
+        SCP restricts controlled-access workloads to US commercial regions.
+        Cedar PDP evaluates institutional affiliation country at runtime.
+      customer: >
+        Institution must maintain institutional_affiliation_country in the principal
+        resolver (attest:country IAM tag) and ensure countries-of-concern checks
+        are current (attest:coc-check-current). Consult Export Control for guidance
+        on existing collaborations with affected institutions.
+    structural:
+      - id: scp-nih-region-restrict
+        description: >
+          Restrict NIH controlled-access workloads to US commercial regions.
+          Prevents routing of controlled-access data through non-US infrastructure.
+          Note: NIH GDS requires commercial AWS, not GovCloud. Activating nih-gds
+          and itar in the same SRE is a blocking conflict — see conflicts.go.
+        actions:
+          - "s3:GetObject"
+          - "s3:PutObject"
+          - "s3:DeleteObject"
+          - "ec2:RunInstances"
+          - "sagemaker:CreateTrainingJob"
+          - "sagemaker:CreateProcessingJob"
+          - "sagemaker:CreateTransformJob"
+        conditions:
+          - "aws:RequestedRegion not in [us-east-1, us-east-2, us-west-1, us-west-2]"
+        effect: "Deny"
+    operational:
+      - id: cedar-nih-country-restriction
+        description: >
+          Deny access to NIH controlled-access resources when the principal's
+          institutional affiliation country is an NIH-designated country of concern.
+          Applies regardless of citizenship. If countries_of_concern_check_current=false,
+          deny access (fail closed — check must be current to proceed).
+        entities:
+          - principal
+          - nih_resource
+        attributes:
+          principal:
+            - institutional_affiliation_country
+            - countries_of_concern_check_current
+          nih_resource:
+            - nih_controlled_access
+        admin_dependencies:
+          - control_id: nih-gds-3.2
+            attribute: principal.institutional_affiliation_country
+            consequence: >
+              If country attribute is not maintained in the principal resolver,
+              Cedar evaluates as unknown and denies access (fail-closed).
+        cedar_policy: "// NIH GDS 1.2 — Countries of concern restriction (NOT-OD-25-083)\nforbid (\n  principal,\n  action,\n  resource\n)\nwhen {\n  resource has nih_controlled_access &&\n  resource.nih_controlled_access == true &&\n  (\n    (principal has institutional_affiliation_country &&\n     principal.institutional_affiliation_country in [\"CN\", \"RU\", \"IR\", \"KP\", \"CU\", \"VE\"]) ||\n    !(principal has countries_of_concern_check_current &&\n      principal.countries_of_concern_check_current == true)\n  )\n};\n"
+    assessment:
+      objectives:
+        - id: nih-gds-1.2[a]
+          description: >
+            Cedar PDP denies access from principals with institutional_affiliation_country
+            in countries-of-concern list. Enforcement is active.
+          auto_assessable: true
+          evidence_source: cedar
+        - id: nih-gds-1.2[b]
+          description: >
+            Institution has a documented procedure for evaluating institutional affiliation
+            of collaborators and maintaining the attest:country principal attribute.
+          auto_assessable: false
+          evidence_source: manual
+        - id: nih-gds-1.2[c]
+          description: >
+            SCP restricts controlled-access workloads to US commercial regions.
+          auto_assessable: true
+          evidence_source: scp
+
+  # ── Data Use Restrictions ─────────────────────────────────────────────────────
+
+  - id: nih-gds-2.1
+    family: "Data Use Restrictions"
+    title: "Data use is limited to the research purpose approved in the Data Use Agreement"
+    description: >
+      All use of controlled-access genomic data must be limited to the specific research
+      purpose described in the approved DUA. Secondary analyses not covered by the DUA
+      require a separate DUA amendment or new application.
+    responsibility:
+      aws: "No AWS-enforceable mechanism — researcher conduct obligation."
+      customer: >
+        Maintain documented procedures for ensuring research activities remain within
+        DUA scope. Notify NIH of any change in research scope or personnel.
+    assessment:
+      objectives:
+        - id: nih-gds-2.1[a]
+          description: >
+            Documented procedure ensures all analyses are within DUA-approved scope.
+            New or expanded analyses require DUA amendment review.
+          auto_assessable: false
+          evidence_source: manual
+
+  - id: nih-gds-2.2
+    family: "Data Use Restrictions"
+    title: "Re-identification of research participants is prohibited"
+    description: >
+      Researchers may not attempt to identify individual research participants from
+      controlled-access genomic data. HIPAA Safe Harbor (18-identifier removal) does
+      NOT satisfy this requirement for genomic sequence data — re-identification from
+      genomic sequence is a technically solved problem (Gymrek et al. 2013).
+      Researchers must complete data classification training covering this restriction.
+    responsibility:
+      aws: "No AWS-enforceable mechanism — researcher conduct obligation."
+      customer: >
+        Policy documentation and training. Researchers must complete qualify's
+        nih-research-security training module, which covers re-identification risk
+        and the limits of Safe Harbor for genomic data.
+    assessment:
+      objectives:
+        - id: nih-gds-2.2[a]
+          description: >
+            Documented policy prohibiting re-identification exists and is communicated
+            to all personnel with controlled-access data access.
+          auto_assessable: false
+          evidence_source: manual
+        - id: nih-gds-2.2[b]
+          description: >
+            All Approved Users have completed nih-research-security training covering
+            re-identification prohibition and genomic data sensitivity.
+          auto_assessable: false
+          evidence_source: manual
+
+  - id: nih-gds-2.3
+    family: "Data Use Restrictions"
+    title: "AI/ML model parameters trained on controlled-access data are data derivatives subject to DUA"
+    description: >
+      Per NIH NOT-OD-25-081 (effective 2025): AI/ML model parameters and weights trained
+      on NIH controlled-access genomic data are considered data derivatives. They:
+      (1) cannot be shared with non-Approved Users,
+      (2) cannot be retained post-project-closeout without explicit DAC approval,
+      (3) cannot be published without DAC approval.
+      Models must be tagged at training time: nih:derivative=true, nih:dua-id=<DUA-ID>.
+      Use 'attest model-training-wrapper' to automate tagging.
+    responsibility:
+      aws: >
+        SageMaker model tagging enforced via Config rule. S3 model artifact tagging
+        enforced via Cedar derivative resource policy.
+      customer: >
+        Tag all models and model artifacts at training time. Obtain DAC approval
+        before retaining past closeout or publishing. Document membership inference
+        testing before publication.
+    operational:
+      - id: cedar-nih-model-derivative
+        description: >
+          Resources tagged as NIH derivative (nih:derivative=true) require both
+          active NIH Approved User status AND DAC approval to retain (if past closeout).
+          Enforces NOT-OD-25-081 at resource access time.
+        entities:
+          - principal
+          - model_resource
+        attributes:
+          principal:
+            - nih_approval_current
+            - nih_approval_dua_id
+          model_resource:
+            - nih_derivative
+            - source_dua_id
+            - dac_approval_to_retain
+            - project_closeout_date
+        cedar_policy: "// NIH GDS 2.3 — AI/ML derivative data (NOT-OD-25-081)\nforbid (\n  principal,\n  action,\n  resource\n)\nwhen {\n  resource has nih_derivative &&\n  resource.nih_derivative == true &&\n  !(\n    principal has nih_approval_current &&\n    principal.nih_approval_current == true\n  )\n};\n"
+        temporal:
+          condition_type: expiry
+          description: >
+            Model derivative retention is time-bounded to the DUA project period.
+            Post-closeout access denied unless dac_approval_to_retain=true.
+    monitoring:
+      - id: config-nih-model-tag
+        resource_type: "AWS::SageMaker::Model"
+        check: >
+          SageMaker models in NIH GDS environments are tagged with
+          nih:derivative=true and nih:dua-id=<DUA-ID> when trained on
+          controlled-access data.
+        remediation: >
+          Use 'attest model-training-wrapper --dua-id <DUA-ID>' to generate
+          a SageMaker training job config with automatic output tagging.
+          Retroactive tagging: manually tag existing models and add to closeout checklist.
+    assessment:
+      objectives:
+        - id: nih-gds-2.3[a]
+          description: >
+            Institution has a documented policy for AI/ML model derivative treatment
+            per NOT-OD-25-081. Policy covers tagging, retention, sharing, and publication.
+          auto_assessable: false
+          evidence_source: manual
+        - id: nih-gds-2.3[b]
+          description: >
+            SageMaker models in NIH GDS environments are tagged nih:derivative=true.
+            Config rule config-nih-model-tag shows compliant.
+          auto_assessable: true
+          evidence_source: config
+        - id: nih-gds-2.3[c]
+          description: >
+            Cedar PDP blocks non-Approved Users from accessing model derivative resources.
+          auto_assessable: true
+          evidence_source: cedar
+
+  - id: nih-gds-2.4
+    family: "Data Use Restrictions"
+    title: "All controlled-access data and AI/ML derivatives are deleted at project closeout"
+    description: >
+      At project closeout (DUA expiration or PI decision), all NIH controlled-access
+      data and derivatives (including model weights) must be deleted within 30 days.
+      Deletion certification must be submitted to NIH.
+      CONFLICT: HIPAA §164.316(b)(1) requires 6-year retention of PHI documentation.
+      When both HIPAA and NIH GDS are active, source provenance tagging is required
+      to segregate data by lifecycle obligation. See: attest provision --provenance-aware.
+    responsibility:
+      aws: >
+        S3 lifecycle rules configured via attest provision --provenance-aware enforce
+        expiration. Config rule verifies lifecycle is in place.
+      customer: >
+        Configure provenance tagging BEFORE writing first combined data.
+        Cannot be retrofitted to existing datasets. Generate closeout checklist
+        with 'attest generate closeout'. Submit deletion certification to NIH.
+    monitoring:
+      - id: config-nih-closeout-lifecycle
+        resource_type: "AWS::S3::Bucket"
+        check: >
+          S3 buckets in NIH GDS environments have lifecycle rules configured
+          that expire objects tagged data-source=dbgap at the project closeout date.
+          When hipaa is also active, provenance tagging must be enabled (ProvenanceConfig.Enabled=true).
+        remediation: >
+          Run 'attest provision --provenance-aware --closeout-date YYYY-MM-DD' to
+          configure provenance-aware lifecycle rules. Must be done before first write.
+    assessment:
+      objectives:
+        - id: nih-gds-2.4[a]
+          description: >
+            Institution has a documented closeout procedure. Procedure covers
+            data deletion, model deletion, deletion certification, and NIH notification.
+          auto_assessable: false
+          evidence_source: manual
+        - id: nih-gds-2.4[b]
+          description: >
+            S3 lifecycle rules are configured to expire controlled-access data
+            at project closeout. Config rule config-nih-closeout-lifecycle shows compliant.
+          auto_assessable: true
+          evidence_source: config
+        - id: nih-gds-2.4[c]
+          description: >
+            Deletion certification has been completed and submitted to NIH.
+            (Assessed at closeout time, not during active project.)
+          auto_assessable: false
+          evidence_source: manual
+
+  # ── DUA Administration ────────────────────────────────────────────────────────
+
+  - id: nih-gds-3.1
+    family: "DUA Administration"
+    title: "Data Use Agreement is current and signed by all required parties"
+    description: >
+      The DUA must be signed by: (1) Principal Investigator, (2) IT contact attesting
+      NIST SP 800-171 compliance of the research computing environment, and (3) institutional
+      signing official. Grandfathered DUAs must update at next renewal.
+      DUA renewal is required annually or upon significant change to the research project,
+      personnel, or computing environment.
+      Use 'attest attest pi-sign' to record PI institutional attestation.
+    responsibility:
+      aws: "No AWS responsibility."
+      customer: >
+        Maintain current DUA with all required signatures. Track renewal via attest calendar.
+        IT contact must be able to attest nist-800-171-r2 compliance (hence the dependency).
+        Record DUA IDs in .attest/projects.yaml for dashboard tracking.
+    assessment:
+      objectives:
+        - id: nih-gds-3.1[a]
+          description: "Active DUA exists and is within the renewal period."
+          auto_assessable: false
+          evidence_source: manual
+        - id: nih-gds-3.1[b]
+          description: >
+            DUA is signed by the Principal Investigator. PI signature recorded
+            via 'attest attest pi-sign'.
+          auto_assessable: false
+          evidence_source: manual
+        - id: nih-gds-3.1[c]
+          description: >
+            DUA is signed by the IT contact who has attested NIST SP 800-171
+            compliance of the research computing environment.
+          auto_assessable: false
+          evidence_source: manual
+        - id: nih-gds-3.1[d]
+          description: "DUA is signed by the institutional signing official."
+          auto_assessable: false
+          evidence_source: manual
+
+  - id: nih-gds-3.2
+    family: "DUA Administration"
+    title: "Institutional certification and IRB coverage are maintained"
+    description: >
+      The institution must maintain an active Institutional Certification confirming
+      that genomic data sharing is consistent with applicable laws, regulations, and
+      institutional policies. For secondary analyses combining dbGaP data with electronic
+      health records (EHR), IRB protocol coverage and HIPAA waiver are required.
+    responsibility:
+      aws: "No AWS responsibility."
+      customer: >
+        Maintain active Institutional Certification. Ensure IRB protocol covers any
+        secondary analyses. Record IRB protocol ID in .attest/projects.yaml.
+        When combining dbGaP + EHR, confirm IRB amendment and HIPAA waiver are current.
+    assessment:
+      objectives:
+        - id: nih-gds-3.2[a]
+          description: >
+            Active Institutional Certification is on file with NIH. Certification
+            is current (within renewal period).
+          auto_assessable: false
+          evidence_source: manual
+        - id: nih-gds-3.2[b]
+          description: >
+            If secondary analyses combine controlled-access genomic data with EHR data:
+            IRB protocol amendment and HIPAA authorization/waiver are on file.
+          auto_assessable: false
+          evidence_source: manual

@@ -349,4 +349,117 @@ func TestSAMLSourceTagMapping(t *testing.T) {
 }
 
 type testErr struct{ msg string }
+
 func (e *testErr) Error() string { return e.msg }
+
+// TestNIHPrincipalAttributes verifies NIH dbGaP Approved User and
+// countries-of-concern attributes are read from IAM tags correctly.
+func TestNIHPrincipalAttributes(t *testing.T) {
+	expiry := time.Date(2027, 4, 29, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name   string
+		tags   map[string]string
+		verify func(*testing.T, *schema.PrincipalAttributes)
+	}{
+		{
+			name: "nih-approval active with DUA ID",
+			tags: map[string]string{
+				"attest:nih-approval":        "true",
+				"attest:nih-approval-expiry": expiry.Format(time.RFC3339),
+				"attest:nih-dua-id":          "DUA-2025-001234",
+			},
+			verify: func(t *testing.T, a *schema.PrincipalAttributes) {
+				if !a.NIHApprovalCurrent {
+					t.Error("NIHApprovalCurrent should be true")
+				}
+				if !a.NIHApprovalExpiry.Equal(expiry) {
+					t.Errorf("NIHApprovalExpiry = %v, want %v", a.NIHApprovalExpiry, expiry)
+				}
+				if a.NIHApprovalDUAID != "DUA-2025-001234" {
+					t.Errorf("NIHApprovalDUAID = %q, want DUA-2025-001234", a.NIHApprovalDUAID)
+				}
+			},
+		},
+		{
+			name: "nih-approval false",
+			tags: map[string]string{"attest:nih-approval": "false"},
+			verify: func(t *testing.T, a *schema.PrincipalAttributes) {
+				if a.NIHApprovalCurrent {
+					t.Error("NIHApprovalCurrent should be false")
+				}
+			},
+		},
+		{
+			name: "country US + coc-check current",
+			tags: map[string]string{
+				"attest:country":           "US",
+				"attest:coc-check-current": "true",
+			},
+			verify: func(t *testing.T, a *schema.PrincipalAttributes) {
+				if a.InstitutionalAffiliationCountry != "US" {
+					t.Errorf("InstitutionalAffiliationCountry = %q, want US", a.InstitutionalAffiliationCountry)
+				}
+				if !a.CountriesOfConcernCheckCurrent {
+					t.Error("CountriesOfConcernCheckCurrent should be true")
+				}
+			},
+		},
+		{
+			name: "country CN — country of concern (Cedar denies access)",
+			tags: map[string]string{"attest:country": "CN", "attest:coc-check-current": "true"},
+			verify: func(t *testing.T, a *schema.PrincipalAttributes) {
+				if a.InstitutionalAffiliationCountry != "CN" {
+					t.Errorf("InstitutionalAffiliationCountry = %q, want CN", a.InstitutionalAffiliationCountry)
+				}
+			},
+		},
+		{
+			name: "coc-check false — fails-closed",
+			tags: map[string]string{"attest:coc-check-current": "false"},
+			verify: func(t *testing.T, a *schema.PrincipalAttributes) {
+				if a.CountriesOfConcernCheckCurrent {
+					t.Error("CountriesOfConcernCheckCurrent should be false")
+				}
+			},
+		},
+		{
+			name: "no NIH tags — all zero values",
+			tags: map[string]string{},
+			verify: func(t *testing.T, a *schema.PrincipalAttributes) {
+				if a.NIHApprovalCurrent {
+					t.Error("NIHApprovalCurrent should default to false (fail-closed)")
+				}
+				if a.CountriesOfConcernCheckCurrent {
+					t.Error("CountriesOfConcernCheckCurrent should default to false (fail-closed)")
+				}
+				if a.InstitutionalAffiliationCountry != "" {
+					t.Errorf("InstitutionalAffiliationCountry should be empty, got %q", a.InstitutionalAffiliationCountry)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var attrs schema.PrincipalAttributes
+			for k, v := range tc.tags {
+				switch k {
+				case "attest:nih-approval":
+					attrs.NIHApprovalCurrent = strings.ToLower(v) == "true"
+				case "attest:nih-approval-expiry":
+					if t2, err := time.Parse(time.RFC3339, v); err == nil {
+						attrs.NIHApprovalExpiry = t2
+					}
+				case "attest:nih-dua-id":
+					attrs.NIHApprovalDUAID = v
+				case "attest:country":
+					attrs.InstitutionalAffiliationCountry = v
+				case "attest:coc-check-current":
+					attrs.CountriesOfConcernCheckCurrent = strings.ToLower(v) == "true"
+				}
+			}
+			tc.verify(t, &attrs)
+		})
+	}
+}

@@ -205,6 +205,26 @@ func (s *SAMLSource) Resolve(ctx context.Context, principalARN string, attrs *sc
 		attrs.ResearchSecurityTrainingExpiry = parseExpiry(v)
 	}
 
+	// NIH dbGaP Approved User status (nih-gds framework, NOT-OD-24-157)
+	// Written by the NIH DUA management workflow, not by qualify training completion.
+	if v, ok := tags["attest:nih-approval"]; ok {
+		attrs.NIHApprovalCurrent = parseBool(v)
+	}
+	if v, ok := tags["attest:nih-approval-expiry"]; ok {
+		attrs.NIHApprovalExpiry = parseExpiry(v)
+	}
+	if v, ok := tags["attest:nih-dua-id"]; ok && v != "" {
+		attrs.NIHApprovalDUAID = v
+	}
+
+	// Institutional affiliation country (countries-of-concern, NOT-OD-25-083)
+	if v, ok := tags["attest:country"]; ok && v != "" {
+		attrs.InstitutionalAffiliationCountry = v
+	}
+	if v, ok := tags["attest:coc-check-current"]; ok {
+		attrs.CountriesOfConcernCheckCurrent = parseBool(v)
+	}
+
 	// Identity and access attributes
 	if v, ok := tags["attest:lab-id"]; ok && v != "" {
 		attrs.LabMembership = append(attrs.LabMembership, v)

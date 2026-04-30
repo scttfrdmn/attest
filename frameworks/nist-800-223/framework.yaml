@@ -1,0 +1,302 @@
+# SPDX-FileCopyrightText: 2026 Scott Friedman
+# SPDX-License-Identifier: Apache-2.0
+
+# NIST SP 800-223 — High-Performance Computing (HPC) Security
+#
+# Non-mandatory guidance for securing HPC environments. Provides a five-zone
+# security model applicable to research HPC clusters (ParallelCluster, Slurm,
+# Open OnDemand) deployed in AWS Secure Research Environments.
+#
+# This framework is commonly co-activated with nist-800-171-r2 for DoD-funded
+# HPC environments, or with nih-gds for genomic research clusters.
+#
+# Critical: The ParallelCluster head node / Slurm controller resides in the
+# Management Zone and has privileged execution authority over all compute nodes.
+# Privileged access to the head node = CUI access by definition. The head node
+# MUST be in the CUI account, not a shared infrastructure account.
+#
+# HPC provisioning:
+#   attest provision --hpc --name <env> generates an environment aligned with
+#   the 800-223 zone model: 5 VPC subnets, security groups per zone,
+#   head node in Management Zone subnet.
+#
+# Assessment: self-assessment, annual. Non-mandatory: no external audit program.
+
+id: nist-800-223
+name: "NIST SP 800-223 — High-Performance Computing Security"
+version: "1.0 (2023)"
+source: "https://csrc.nist.gov/publications/detail/sp/800-223/final"
+assessment_type: self
+assessment_cycle: annual
+
+controls:
+
+  # ── Login Zone ────────────────────────────────────────────────────────────────
+
+  - id: nist-800-223-login
+    family: "Login Zone"
+    title: "Login zone provides the authenticated entry point for all HPC access"
+    description: >
+      The login zone (bastion hosts, login nodes) is where researchers authenticate
+      before submitting jobs or accessing data. All access to the HPC environment
+      must route through the login zone — direct access to compute or storage from
+      outside is prohibited.
+      AWS equivalent: bastion EC2 instances behind IAM Identity Center session broker
+      or Session Manager. All login-zone sessions must be logged to CloudTrail.
+    responsibility:
+      aws: >
+        IAM Identity Center provides phishing-resistant MFA. Systems Manager Session
+        Manager provides audited, keyless SSH. VPC security groups isolate login zone.
+      customer: >
+        Deploy bastion EC2 in login-zone subnet. Require IAM Identity Center
+        with phishing-resistant MFA (FIDO2/WebAuthn) for all login access.
+        Route all user sessions through Session Manager for audit logging.
+        No direct SSH from internet (no public IP on login node).
+    structural:
+      - id: scp-hpc-require-ssm-login
+        description: >
+          Deny direct EC2 instance connect (ec2-instance-connect:SendSSHPublicKey)
+          outside of Session Manager. Enforces audited-only access to HPC login zone.
+        actions:
+          - "ec2-instance-connect:SendSSHPublicKey"
+        conditions:
+          - "aws:CalledVia not contains ssm"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: nist-800-223-login[a]
+          description: >
+            All user access to HPC environment routes through login zone.
+            No direct access paths to compute or storage from external networks.
+          auto_assessable: true
+          evidence_source: scp
+        - id: nist-800-223-login[b]
+          description: >
+            Login zone enforces phishing-resistant MFA (FIDO2/WebAuthn) via
+            IAM Identity Center GroundSensitiveResearcher permission set.
+          auto_assessable: false
+          evidence_source: manual
+        - id: nist-800-223-login[c]
+          description: >
+            All login-zone sessions are logged to CloudTrail and OS audit log.
+          auto_assessable: true
+          evidence_source: config
+
+  # ── Compute Zone ──────────────────────────────────────────────────────────────
+
+  - id: nist-800-223-compute
+    family: "Compute Zone"
+    title: "Compute zone runs jobs ephemerally with no persistent CUI on compute nodes"
+    description: >
+      Compute nodes execute jobs submitted via the scheduler (Slurm). Nodes must be
+      ephemeral — provisioned on demand, terminated when idle. No researcher-accessible
+      persistent storage on compute nodes. CUI data accessed from storage zone for
+      the duration of the job; results written back to storage zone before node termination.
+      AWS equivalent: EC2 Spot/On-Demand instances in compute-zone subnet, provisioned
+      by ParallelCluster autoscaling.
+    responsibility:
+      aws: >
+        EC2 autoscaling provides ephemeral compute. VPC security groups isolate
+        compute zone from external networks. IAM instance profiles restrict
+        compute-node API access to storage-zone resources only.
+      customer: >
+        Configure ParallelCluster with termination on job completion. Ensure compute
+        nodes cannot directly access internet (private subnet only). Aggregate job
+        logs to CloudTrail via CloudWatch Logs agent.
+    monitoring:
+      - id: config-hpc-compute-no-public-ip
+        resource_type: "AWS::EC2::Instance"
+        check: >
+          EC2 instances in compute-zone subnet have no public IP address.
+          Compute nodes access storage only via private VPC routing.
+        remediation: >
+          Configure ParallelCluster subnet as private. Remove any Elastic IP
+          associations from compute instances.
+    assessment:
+      objectives:
+        - id: nist-800-223-compute[a]
+          description: >
+            Compute nodes have no public IP and no direct internet access.
+            All compute traffic routes through VPC private subnets.
+          auto_assessable: true
+          evidence_source: config
+        - id: nist-800-223-compute[b]
+          description: >
+            No persistent CUI data resides on compute nodes between jobs.
+            Nodes are terminated when idle.
+          auto_assessable: false
+          evidence_source: manual
+        - id: nist-800-223-compute[c]
+          description: "Job execution logs are collected and delivered to CloudWatch/CloudTrail."
+          auto_assessable: true
+          evidence_source: config
+
+  # ── Storage Zone ──────────────────────────────────────────────────────────────
+
+  - id: nist-800-223-storage
+    family: "Storage Zone"
+    title: "Storage zone protects research data with encryption, access logging, and lifecycle controls"
+    description: >
+      The storage zone holds all research data, inputs, outputs, and intermediate results.
+      For CUI or controlled-access genomic data, all storage must be encrypted with
+      KMS keys scoped to the SRE. Access must be logged. When NIH GDS or HIPAA frameworks
+      are co-active, lifecycle rules must enforce data retention/deletion obligations.
+      AWS equivalents: S3 (object storage), EFS (shared filesystem), FSx for Lustre
+      (HPC scratch), all in storage-zone subnet.
+    responsibility:
+      aws: >
+        S3 server-side encryption with KMS. EFS encryption at rest. VPC endpoint
+        for S3 (no internet path). S3 access logging to audit bucket.
+      customer: >
+        Enable KMS encryption on all storage resources. Configure S3 access logging.
+        When nih-gds active: configure provenance tagging and lifecycle rules via
+        attest provision --provenance-aware. Restrict storage-zone security group
+        to compute-zone and login-zone source IPs only.
+    structural:
+      - id: scp-hpc-storage-require-kms
+        description: >
+          Require KMS encryption for all S3 PutObject operations in HPC storage zone.
+          Unencrypted data cannot be written to storage zone buckets.
+        actions:
+          - "s3:PutObject"
+        conditions:
+          - "s3:x-amz-server-side-encryption != aws:kms"
+        effect: "Deny"
+    monitoring:
+      - id: config-hpc-s3-encrypted
+        resource_type: "AWS::S3::Bucket"
+        check: >
+          S3 buckets in HPC storage zone have default KMS encryption enabled
+          and S3 access logging configured.
+        remediation: >
+          Enable default encryption (aws:kms) on bucket. Enable S3 server access
+          logging to the centralized audit bucket (configured by ground logging stack).
+    assessment:
+      objectives:
+        - id: nist-800-223-storage[a]
+          description: >
+            All storage resources are encrypted with KMS. SCP prevents unencrypted writes.
+          auto_assessable: true
+          evidence_source: scp
+        - id: nist-800-223-storage[b]
+          description: >
+            S3 access logging is enabled and delivering to audit bucket.
+          auto_assessable: true
+          evidence_source: config
+        - id: nist-800-223-storage[c]
+          description: >
+            When nih-gds or hipaa is active: provenance tagging configured and
+            lifecycle rules enforce data retention/deletion obligations.
+          auto_assessable: true
+          evidence_source: config
+
+  # ── Management Zone ───────────────────────────────────────────────────────────
+
+  - id: nist-800-223-management
+    family: "Management Zone"
+    title: "Management zone — head node and scheduler ARE the CUI boundary; protect accordingly"
+    description: >
+      The management zone hosts the HPC management infrastructure: ParallelCluster head
+      node, Slurm controller, cluster management APIs. This zone has privileged execution
+      authority over ALL compute nodes and the job scheduler.
+      CRITICAL: Privileged access to the head node = CUI access by definition.
+      The head node MUST:
+        (1) reside in the CUI account, not a shared infrastructure account;
+        (2) be explicitly listed in the SSP system boundary;
+        (3) require phishing-resistant MFA for all administrative access;
+        (4) log all admin sessions to both CloudTrail and OS-level audit.
+      This is the most commonly misconfigured element in research HPC deployments.
+    responsibility:
+      aws: >
+        IAM instance profile restricts head-node API actions. Systems Manager
+        provides audited admin access. CloudTrail records all API calls.
+      customer: >
+        Place head node in CUI account (never shared). Require phishing-resistant
+        MFA via IAM Identity Center GroundSREAdmin permission set for head-node admin.
+        Enable OS-level audit logging (auditd). List head node EC2 instance explicitly
+        in SSP system boundary.
+    structural:
+      - id: scp-hpc-management-restrict-admin
+        description: >
+          Restrict head-node administrative actions (ParallelCluster API, Slurm config)
+          to admin roles only. Prevents privilege escalation via scheduler manipulation.
+        actions:
+          - "parallelcluster:*"
+        conditions:
+          - "aws:PrincipalARN != arn:aws:iam::*:role/GroundSREAdmin"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: nist-800-223-management[a]
+          description: >
+            Head node / Slurm controller resides in the CUI account and is
+            listed in the SSP system boundary.
+          auto_assessable: false
+          evidence_source: manual
+        - id: nist-800-223-management[b]
+          description: >
+            Administrative access to head node requires phishing-resistant MFA
+            (FIDO2/WebAuthn) via GroundSREAdmin permission set.
+          auto_assessable: false
+          evidence_source: manual
+        - id: nist-800-223-management[c]
+          description: >
+            All administrative sessions on the head node are logged to CloudTrail
+            (API level) and OS audit log (command level).
+          auto_assessable: true
+          evidence_source: config
+
+  # ── External Zone ─────────────────────────────────────────────────────────────
+
+  - id: nist-800-223-external
+    family: "External Zone"
+    title: "External zone enforces boundaries between HPC environment and untrusted networks"
+    description: >
+      The external zone encompasses all connections between the HPC environment and
+      external networks: internet, campus network, VPN, Direct Connect.
+      All external access must use TLS. For CUI or genomic data, connections must be
+      restricted to US commercial regions. No HPC zone may have direct internet routing
+      (all outbound must route through managed NAT or PrivateLink).
+    responsibility:
+      aws: >
+        SCP restricts to US commercial regions. VPC routing and security groups
+        control external connectivity. VPC endpoints eliminate public internet paths
+        for AWS service APIs.
+      customer: >
+        Configure NAT Gateway for outbound internet. Deploy VPC endpoints for all
+        AWS services used (S3, EC2, SSM, Secrets Manager, KMS). Route external
+        user access through VPN or Direct Connect, not public internet. Require TLS
+        for all external connections.
+    structural:
+      - id: scp-hpc-us-regions-only
+        description: >
+          Restrict HPC workloads to US commercial regions. Prevents data residency
+          outside approved geography. Note: when nih-gds is active, this SCP is
+          superseded by scp-nih-region-restrict (same effect, different control ID).
+        actions:
+          - "ec2:*"
+          - "s3:*"
+          - "sagemaker:*"
+          - "parallelcluster:*"
+        conditions:
+          - "aws:RequestedRegion not in [us-east-1, us-east-2, us-west-1, us-west-2]"
+        effect: "Deny"
+    assessment:
+      objectives:
+        - id: nist-800-223-external[a]
+          description: >
+            HPC workloads restricted to US commercial regions via SCP.
+          auto_assessable: true
+          evidence_source: scp
+        - id: nist-800-223-external[b]
+          description: >
+            VPC endpoints deployed for all AWS services used by HPC cluster.
+            No HPC traffic routes over public internet for AWS API calls.
+          auto_assessable: true
+          evidence_source: config
+        - id: nist-800-223-external[c]
+          description: >
+            External user access routes through VPN or Direct Connect.
+            Login zone has no public IP.
+          auto_assessable: false
+          evidence_source: manual

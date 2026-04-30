@@ -396,3 +396,34 @@ func TestLoadRealNIST800171(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadNIHGDS(t *testing.T) {
+	loader := NewLoader("../../frameworks")
+	fw, err := loader.Load("nih-gds")
+	if err != nil {
+		t.Fatalf("Load(nih-gds) error: %v", err)
+	}
+	if len(fw.Controls) != 8 {
+		t.Errorf("nih-gds: want 8 controls, got %d", len(fw.Controls))
+	}
+	if len(fw.Dependencies) != 1 || fw.Dependencies[0].ID != "nist-800-171-r2" {
+		t.Errorf("nih-gds: want dep nist-800-171-r2, got %+v", fw.Dependencies)
+	}
+	if !fw.Dependencies[0].Required {
+		t.Error("nih-gds nist-800-171-r2 dependency must be Required=true")
+	}
+}
+
+func TestLoadNIST800223(t *testing.T) {
+	loader := NewLoader("../../frameworks")
+	fw, err := loader.Load("nist-800-223")
+	if err != nil {
+		t.Fatalf("Load(nist-800-223) error: %v", err)
+	}
+	if len(fw.Controls) != 5 {
+		t.Errorf("nist-800-223: want 5 zone controls, got %d", len(fw.Controls))
+	}
+	if len(fw.Dependencies) != 0 {
+		t.Errorf("nist-800-223: want no dependencies, got %+v", fw.Dependencies)
+	}
+}

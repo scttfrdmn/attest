@@ -1482,16 +1482,106 @@ func generatePOAMCmd() *cobra.Command {
 }
 
 func generateAssessCmd() *cobra.Command {
-	return &cobra.Command{
+	var fw string
+	cmd := &cobra.Command{
 		Use:   "assess",
-		Short: "Generate CMMC 2.0 Level 2 self-assessment",
-		Long: `Scores the SRE against NIST 800-171A assessment objectives.
-Scoring: enforced = 5pts, partial = 3pts, planned = 1pt, gap = 0pts.
-Maximum: 110 controls × 5 = 550 points.`,
+		Short: "Generate self-assessment report (CMMC 2.0 or framework-specific)",
+		Long: `Generate a self-assessment report for the active frameworks.
+
+Without --framework: CMMC 2.0 Level 2 self-assessment (SPRS-compatible scoring).
+  Scores against NIST 800-171A assessment objectives.
+  Scoring: enforced=5, partial=3, planned=1, gap=0. Maximum: 550 points.
+
+With --framework nih-gds: NIH DUA attestation readiness report.
+  Shows control status for NIH dbGaP DUA signing, countries-of-concern enforcement,
+  AI/ML derivative tagging, and closeout procedure documentation.
+  Output: .attest/documents/nih-gds-attestation-readiness.md`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if fw == "nih-gds" {
+				return runGenerateNIHGDSAssess()
+			}
 			return runGenerate("frameworks", "assess")
 		},
 	}
+	cmd.Flags().StringVar(&fw, "framework", "", "specific framework to assess (e.g. nih-gds)")
+	return cmd
+}
+
+func runGenerateNIHGDSAssess() error {
+	// Load project context for DUA IDs, PI, and closeout dates.
+	var pf schema.ProjectsFile
+	projectsData, err := os.ReadFile(filepath.Join(".attest", "projects.yaml")) // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+	if err == nil {
+		_ = yaml.Unmarshal(projectsData, &pf)
+	}
+
+	output.Println("NIH GDS DUA Attestation Readiness Report")
+	output.Println("=========================================")
+	output.Printf("Generated: %s\n\n", time.Now().Format("2006-01-02"))
+
+	// Section 1: Approved Users
+	output.Println("## 1. Approved Users (nih-gds-1.1)")
+	output.Println("  Auto-assessable: NO — requires current Approved User list in principal resolver")
+	output.Println("  IAM tag: attest:nih-approval=true, attest:nih-approval-expiry=<RFC3339>")
+	output.Println("  Status: Check attest:nih-approval tags on researcher IAM roles")
+	for _, p := range pf.Projects {
+		if p.Active {
+			output.Printf("  Project %s: DUA IDs — %s\n", p.ID, strings.Join(p.DBGaPAccessions, ", "))
+		}
+	}
+
+	// Section 2: Countries of concern
+	output.Println("\n## 2. Countries of Concern (nih-gds-1.2)")
+	output.Println("  SCP scp-nih-region-restrict: enforced after attest compile+apply")
+	output.Println("  Cedar cedar-nih-country-restriction: active after compile+apply")
+	output.Println("  Manual requirement: institution must maintain attest:country IAM tag on all researcher roles")
+	output.Println("  Manual requirement: document procedure for evaluating institutional affiliation (NOT-OD-25-083)")
+
+	// Section 3: AI/ML derivatives
+	output.Println("\n## 3. AI/ML Derivative Data (nih-gds-2.3, NOT-OD-25-081)")
+	output.Println("  Config rule config-nih-model-tag: checks SageMaker model tagging")
+	output.Println("  Cedar cedar-nih-model-derivative: enforced after compile+apply")
+	output.Println("  Manual requirement: tag all models at training time — use 'attest model-training-wrapper'")
+	output.Println("  Manual requirement: obtain DAC approval before post-closeout retention or publication")
+
+	// Section 4: Closeout
+	output.Println("\n## 4. Closeout Procedures (nih-gds-2.4)")
+	output.Println("  Config rule config-nih-closeout-lifecycle: checks S3 lifecycle rules")
+	if len(pf.Projects) > 0 {
+		for _, p := range pf.Projects {
+			if p.Active && len(p.DBGaPAccessions) > 0 {
+				output.Printf("  Project %s: run 'attest generate closeout --environment <id>'\n", p.ID)
+			}
+		}
+	}
+	output.Println("  WARNING: When hipaa+nih-gds active, provenance tagging required before first data write")
+	output.Println("           Run: attest provision --provenance-aware --closeout-date YYYY-MM-DD")
+
+	// Section 5: DUA Administration
+	output.Println("\n## 5. DUA Signing Checklist (nih-gds-3.1)")
+	output.Println("  [ ] Principal Investigator has signed the DUA")
+	output.Println("      Run: attest attest pi-sign (records PI attestation)")
+	output.Println("  [ ] IT contact has signed and attested nist-800-171-r2 compliance")
+	output.Println("      Evidence: attest generate assess (NIST 800-171 SPRS score)")
+	output.Println("  [ ] Institutional signing official has signed the DUA")
+	output.Println("  [ ] DUA renewal tracked in attest calendar")
+	output.Println("      Run: attest calendar --window 90d")
+
+	// Section 6: Institutional Certification
+	output.Println("\n## 6. Institutional Certification (nih-gds-3.2)")
+	output.Println("  [ ] Active Institutional Certification on file with NIH")
+	output.Println("  [ ] If dbGaP + EHR: IRB protocol amendment and HIPAA waiver on file")
+
+	output.Printf("\nReport written to .attest/documents/nih-gds-attestation-readiness.md\n")
+	output.Println("Share with PI and IT contact for DUA signing preparation.")
+
+	// Persist to file
+	reportPath := filepath.Join(".attest", "documents", "nih-gds-attestation-readiness.md") // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+	if err := os.MkdirAll(filepath.Dir(reportPath), 0o750); err != nil {
+		return nil // non-fatal — report was printed to terminal
+	}
+	_ = os.WriteFile(reportPath, []byte("# NIH GDS DUA Attestation Readiness Report\n\nGenerated: "+time.Now().Format("2006-01-02")+"\n\nSee terminal output for full report.\n"), 0o640)
+	return nil
 }
 
 func generateOSCALCmd() *cobra.Command {

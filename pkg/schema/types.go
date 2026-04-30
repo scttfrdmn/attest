@@ -330,6 +330,27 @@ type PrincipalAttributes struct {
 	ResearchSecurityTrainingCurrent bool      `json:"research_security_training_current"`
 	ResearchSecurityTrainingExpiry  time.Time `json:"research_security_training_expiry,omitempty"`
 
+	// --- NIH dbGaP Approved User attributes (nih-gds framework) ---
+	// Written by the NIH DUA management workflow via attest:nih-* IAM tags.
+	// Distinct from research security training — these reflect NIH DUA approval status.
+
+	// NIHApprovalCurrent is true when the principal has active NIH Approved User status.
+	NIHApprovalCurrent bool `json:"nih_approval_current"`
+	// NIHApprovalExpiry is when the NIH Approved User status expires (DUA term end).
+	NIHApprovalExpiry time.Time `json:"nih_approval_expiry,omitempty"`
+	// NIHApprovalDUAID is the specific DUA this approval is issued under.
+	NIHApprovalDUAID string `json:"nih_approval_dua_id,omitempty"`
+
+	// --- Institutional affiliation (countries-of-concern, NOT-OD-25-083) ---
+	// Based on institutional affiliation, not citizenship or nationality.
+
+	// InstitutionalAffiliationCountry is the ISO 3166-1 alpha-2 country code
+	// of the principal's primary institutional affiliation.
+	InstitutionalAffiliationCountry string `json:"institutional_affiliation_country,omitempty"`
+	// CountriesOfConcernCheckCurrent is true when the institution has performed
+	// and recorded a current countries-of-concern check per NOT-OD-25-083.
+	CountriesOfConcernCheckCurrent bool `json:"countries_of_concern_check_current"`
+
 	// --- Source-system attributes ---
 
 	IRBProtocols      []string          `json:"irb_protocols,omitempty"`       // from IRB system (Cayuse/iRIS)
