@@ -32,6 +32,7 @@ import (
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	"github.com/provabl/attest/internal/ai"
+	"github.com/provabl/attest/internal/obligations"
 	"github.com/provabl/attest/internal/auth"
 	"github.com/provabl/attest/internal/output"
 	"github.com/provabl/attest/internal/dashboard"
@@ -106,6 +107,7 @@ within it are research environments that inherit the org-level posture.`,
 		ingestCmd(),
 		c3paoCmd(),
 		projectCmd(),
+		navigateCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -4541,73 +4543,173 @@ func runProjectList() error {
 	return nil
 }
 
-// deriveObligationHints returns a quick summary of compliance obligations
-// implied by a research project's funding, data types, and collaborators.
-// This is a fast heuristic — the full obligation engine is in internal/obligations/.
+// deriveObligationHints returns obligation titles for a project using the
+// deterministic obligations engine.
 func deriveObligationHints(p schema.ResearchProject) []string {
-	var hints []string
-	seen := make(map[string]bool)
-	add := func(h string) {
-		if !seen[h] {
-			seen[h] = true
-			hints = append(hints, h)
-		}
+	return obligations.New().Titles(p)
+}
+
+func navigateCmd() *cobra.Command {
+	var projectID string
+	var timeline string
+	var aiExplain bool
+
+	cmd := &cobra.Command{
+		Use:   "navigate",
+		Short: "Show compliance obligations across active research projects",
+		Long: `Map research project context to compliance obligations.
+
+Runs the deterministic obligation engine across all active projects and
+surfaces what must be done, what is already met, and what is due soon.
+
+Examples:
+  attest navigate
+  attest navigate --project chen-quantum-lab
+  attest navigate --timeline 90d
+  attest navigate --ai       # AI-assisted explanation and prioritisation`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runNavigate(projectID, timeline, aiExplain)
+		},
+	}
+	cmd.Flags().StringVar(&projectID, "project", "", "show obligations for a single project ID")
+	cmd.Flags().StringVar(&timeline, "timeline", "", "filter to obligations due within a window (e.g. 30d, 90d)")
+	cmd.Flags().BoolVar(&aiExplain, "ai", false, "add AI-assisted explanation and prioritisation (requires Bedrock)")
+	return cmd
+}
+
+func runNavigate(projectID, timeline string, aiExplain bool) error {
+	projectsPath := filepath.Join(".attest", "projects.yaml") // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+	data, err := os.ReadFile(projectsPath)
+	if os.IsNotExist(err) {
+		output.Println("No projects defined. Run 'attest project add' to add research project context.")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading projects.yaml: %w", err)
+	}
+	var pf schema.ProjectsFile
+	if err := yaml.Unmarshal(data, &pf); err != nil {
+		return fmt.Errorf("parsing projects.yaml: %w", err)
 	}
 
-	for _, f := range p.Funding {
-		switch strings.ToUpper(f.Source) {
-		case "DOD", "DARPA", "NAVY", "ARMY", "AIRFORCE", "USAF", "ONR", "AFOSR", "ARO":
-			if f.Type == "contract" {
-				add("CMMC Level 2 (C3PAO assessment required)")
-			} else {
-				add("CMMC Level 1 (annual self-assessment + SPRS)")
+	eng := obligations.New()
+	var allAlerts []schema.NavigationAlert
+	now := time.Now()
+
+	for _, p := range pf.Projects {
+		if !p.Active {
+			continue
+		}
+		if projectID != "" && p.ID != projectID {
+			continue
+		}
+
+		obs := eng.Map(p, nil)
+		for _, o := range obs {
+			alert := schema.NavigationAlert{
+				ID:          fmt.Sprintf("%s-%s", p.ID, o.ID),
+				ProjectID:   p.ID,
+				Severity:    o.Severity,
+				Title:       o.Title,
+				Detail:      o.Detail,
+				Trigger:     o.Trigger,
+				Framework:   o.Framework,
+				DueDate:     o.DueDate,
+				Status:      o.Status,
+				GeneratedAt: now,
 			}
-		case "NIH":
-			add("NIH DMS Policy (DMSP required)")
-			add("NIH Research Security (NOT-OD-26-017 training)")
-		case "NSF":
-			add("NSF Research Security (training + disclosure)")
+			allAlerts = append(allAlerts, alert)
 		}
 	}
 
-	for _, dt := range p.DataTypes {
-		switch strings.ToUpper(dt) {
-		case "CUI":
-			add("NIST 800-171 / CMMC Level 2")
-		case "PHI":
-			add("HIPAA Security Rule")
-			add("Certificate of Confidentiality (auto)")
-		case "GENOMIC", "GENOME":
-			add("NIH Genomic Data Sharing Policy")
-			add("dbGaP DUC required before access")
-		case "FERPA":
-			add("FERPA (student records)")
+	// Filter by timeline if requested.
+	if timeline != "" {
+		window := parseDuration(timeline)
+		cutoff := now.Add(window)
+		var filtered []schema.NavigationAlert
+		for _, a := range allAlerts {
+			if a.DueDate != nil && a.DueDate.Before(cutoff) {
+				filtered = append(filtered, a)
+			}
 		}
+		allAlerts = filtered
 	}
 
-	for _, c := range p.Collaborators {
-		switch strings.ToUpper(c.Country) {
-		case "CN", "RU", "IR", "KP", "CU":
-			add("ITAR/EAR deemed export review required")
+	if len(allAlerts) == 0 {
+		output.Println("No compliance obligations found for active projects.")
+		if projectID != "" {
+			output.Printf("Check that project %q exists and is active in .attest/projects.yaml\n", projectID)
 		}
-		if strings.HasSuffix(strings.ToLower(c.Country), "eu") ||
-			c.Country == "DE" || c.Country == "FR" || c.Country == "GB" ||
-			c.Country == "NL" || c.Country == "SE" || c.Country == "IT" {
-			add("GDPR Standard Contractual Clauses (SCCs)")
-		}
+		return nil
 	}
 
-	if p.IRBProtocol != "" {
-		add("IRB annual renewal (45 CFR Part 46)")
-	}
-	if len(p.DBGaPAccessions) > 0 {
-		add("dbGaP DUC annual renewal")
-	}
-	if p.ClinicalTrialsNCT != "" {
-		add("ClinicalTrials.gov results submission (12-month)")
+	// Persist to history.
+	if err := saveNavigationAlerts(allAlerts, now); err != nil {
+		output.Warnf("could not persist navigation history: %v", err)
 	}
 
-	return hints
+	// Display — critical first, then required, then recommended.
+	printNavigationAlerts(allAlerts)
+
+	if aiExplain {
+		output.Println("\nAI analysis requires 'attest ai ask' — full CapabilityNavigator coming in next release.")
+	}
+
+	return nil
+}
+
+func printNavigationAlerts(alerts []schema.NavigationAlert) {
+	bySeverity := map[string][]schema.NavigationAlert{
+		"critical":    {},
+		"required":    {},
+		"recommended": {},
+	}
+	for _, a := range alerts {
+		bySeverity[a.Severity] = append(bySeverity[a.Severity], a)
+	}
+
+	for _, sev := range []string{"critical", "required", "recommended"} {
+		group := bySeverity[sev]
+		if len(group) == 0 {
+			continue
+		}
+		label := strings.ToUpper(sev)
+		output.Printf("\n%s (%d)\n", label, len(group))
+		output.Println(strings.Repeat("─", 60))
+		for _, a := range group {
+			output.Printf("  [%s] %s\n", a.ProjectID, a.Title)
+			output.Printf("      %s\n", a.Detail)
+			if a.DueDate != nil {
+				output.Printf("      Due: %s\n", a.DueDate.Format("2006-01-02"))
+			}
+		}
+	}
+	output.Printf("\n%d total obligations across %d severity levels.\n",
+		len(alerts), countNonEmpty(bySeverity))
+	output.Println("Run 'attest navigate --project <id>' for a single project, or 'attest calendar' for timeline view.")
+}
+
+func saveNavigationAlerts(alerts []schema.NavigationAlert, t time.Time) error {
+	dir := filepath.Join(".attest", "history", "navigation")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, t.Format("2006-01-02")+".json")
+	data, err := json.MarshalIndent(alerts, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o640)
+}
+
+func countNonEmpty(m map[string][]schema.NavigationAlert) int {
+	n := 0
+	for _, v := range m {
+		if len(v) > 0 {
+			n++
+		}
+	}
+	return n
 }
 
 func ingestCmd() *cobra.Command {

@@ -35,6 +35,7 @@ import (
 	cedar "github.com/cedar-policy/cedar-go"
 	"github.com/provabl/attest/internal/auth"
 	"github.com/provabl/attest/internal/evaluator"
+	"github.com/provabl/attest/internal/obligations"
 	"github.com/provabl/attest/internal/reporting"
 	"github.com/provabl/attest/internal/waiver"
 	"github.com/provabl/attest/pkg/schema"
@@ -141,6 +142,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("/api/waivers", readOnlyGuard(http.HandlerFunc(s.handleWaivers)))
 	s.mux.Handle("/api/incidents", readOnlyGuard(http.HandlerFunc(s.handleIncidents)))
 	s.mux.HandleFunc("/api/generate", s.handleGenerate)
+	s.mux.Handle("/api/navigate", readOnlyGuard(http.HandlerFunc(s.handleNavigate)))
 }
 
 // securityHeaders adds standard HTTP security headers to every response.
@@ -480,4 +482,54 @@ func readYAML(path string) ([]byte, error) {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
 	return data, nil
+}
+
+// handleNavigate serves GET /api/navigate — returns compliance obligations for all
+// active projects as a JSON array of NavigationAlert. Used by the dashboard
+// Obligations tab. Returns an empty array if .attest/projects.yaml does not exist.
+func (s *Server) handleNavigate(w http.ResponseWriter, r *http.Request) {
+	projectsPath := filepath.Join(".attest", "projects.yaml") // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+	data, err := os.ReadFile(projectsPath)
+	if os.IsNotExist(err) {
+		jsonResponse(w, []schema.NavigationAlert{})
+		return
+	}
+	if err != nil {
+		http.Error(w, "could not read projects.yaml", http.StatusInternalServerError)
+		return
+	}
+	var pf schema.ProjectsFile
+	if err := yaml.Unmarshal(data, &pf); err != nil {
+		http.Error(w, "could not parse projects.yaml", http.StatusInternalServerError)
+		return
+	}
+
+	eng := obligations.New()
+	var alerts []schema.NavigationAlert
+	now := time.Now()
+
+	for _, p := range pf.Projects {
+		if !p.Active {
+			continue
+		}
+		for _, o := range eng.Map(p, nil) {
+			alerts = append(alerts, schema.NavigationAlert{
+				ID:          p.ID + "-" + o.ID,
+				ProjectID:   p.ID,
+				Severity:    o.Severity,
+				Title:       o.Title,
+				Detail:      o.Detail,
+				Trigger:     o.Trigger,
+				Framework:   o.Framework,
+				DueDate:     o.DueDate,
+				Status:      o.Status,
+				GeneratedAt: now,
+			})
+		}
+	}
+
+	if alerts == nil {
+		alerts = []schema.NavigationAlert{} // never return null
+	}
+	jsonResponse(w, alerts)
 }
