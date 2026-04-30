@@ -155,81 +155,81 @@ func (s *SAMLSource) Resolve(ctx context.Context, principalARN string, attrs *sc
 	}
 
 	// CUI handling training
-	if v, ok := tags["attest:cui-training"]; ok {
+	if v, ok := tags[schema.TagCUITraining]; ok {
 		attrs.CUITrainingCurrent = parseBool(v)
 	}
-	if v, ok := tags["attest:cui-training-expiry"]; ok {
+	if v, ok := tags[schema.TagCUITrainingExpiry]; ok {
 		attrs.CUITrainingExpiry = parseExpiry(v)
 	}
 	// Legacy tag key written by older qualify versions — kept for backward compat.
-	if v, ok := tags["attest:cui-expiry"]; ok && attrs.CUITrainingExpiry.IsZero() {
+	if v, ok := tags[schema.TagCUIExpiryLegacy]; ok && attrs.CUITrainingExpiry.IsZero() {
 		attrs.CUITrainingExpiry = parseExpiry(v)
 	}
 
 	// HIPAA training
-	if v, ok := tags["attest:hipaa-training"]; ok {
+	if v, ok := tags[schema.TagHIPAATraining]; ok {
 		attrs.HIPAATrainingCurrent = parseBool(v)
 	}
-	if v, ok := tags["attest:hipaa-training-expiry"]; ok {
+	if v, ok := tags[schema.TagHIPAATrainingExpiry]; ok {
 		attrs.HIPAATrainingExpiry = parseExpiry(v)
 	}
 
 	// Security awareness training
-	if v, ok := tags["attest:awareness-training"]; ok {
+	if v, ok := tags[schema.TagAwarenessTraining]; ok {
 		attrs.AwarenessTrainingCurrent = parseBool(v)
 	}
-	if v, ok := tags["attest:awareness-training-expiry"]; ok {
+	if v, ok := tags[schema.TagAwarenessTrainingExpiry]; ok {
 		attrs.AwarenessTrainingExpiry = parseExpiry(v)
 	}
 
 	// FERPA training
-	if v, ok := tags["attest:ferpa-training"]; ok {
+	if v, ok := tags[schema.TagFERPATraining]; ok {
 		attrs.FERPATrainingCurrent = parseBool(v)
 	}
 
 	// ITAR/EAR export control training
-	if v, ok := tags["attest:itar-training"]; ok {
+	if v, ok := tags[schema.TagITARTraining]; ok {
 		attrs.ITARTrainingCurrent = parseBool(v)
 	}
 
 	// Data classification training
-	if v, ok := tags["attest:data-class-training"]; ok {
+	if v, ok := tags[schema.TagDataClassTraining]; ok {
 		attrs.DataClassTrainingCurrent = parseBool(v)
 	}
 
 	// NIH Research Security Program training (NOT-OD-26-017)
-	if v, ok := tags["attest:research-security-training"]; ok {
+	if v, ok := tags[schema.TagResearchSecurityTraining]; ok {
 		attrs.ResearchSecurityTrainingCurrent = parseBool(v)
 	}
-	if v, ok := tags["attest:research-security-training-expiry"]; ok {
+	if v, ok := tags[schema.TagResearchSecurityExpiry]; ok {
 		attrs.ResearchSecurityTrainingExpiry = parseExpiry(v)
 	}
 
 	// NIH dbGaP Approved User status (nih-gds framework, NOT-OD-24-157)
 	// Written by the NIH DUA management workflow, not by qualify training completion.
-	if v, ok := tags["attest:nih-approval"]; ok {
+	if v, ok := tags[schema.TagNIHApproval]; ok {
 		attrs.NIHApprovalCurrent = parseBool(v)
 	}
-	if v, ok := tags["attest:nih-approval-expiry"]; ok {
+	if v, ok := tags[schema.TagNIHApprovalExpiry]; ok {
 		attrs.NIHApprovalExpiry = parseExpiry(v)
 	}
-	if v, ok := tags["attest:nih-dua-id"]; ok && v != "" {
+	if v, ok := tags[schema.TagNIHDUAID]; ok && v != "" {
 		attrs.NIHApprovalDUAID = v
 	}
 
 	// Institutional affiliation country (countries-of-concern, NOT-OD-25-083)
-	if v, ok := tags["attest:country"]; ok && v != "" {
+	if v, ok := tags[schema.TagCountry]; ok && v != "" {
 		attrs.InstitutionalAffiliationCountry = v
 	}
-	if v, ok := tags["attest:coc-check-current"]; ok {
+	if v, ok := tags[schema.TagCOCCheckCurrent]; ok {
 		attrs.CountriesOfConcernCheckCurrent = parseBool(v)
 	}
 
 	// Identity and access attributes
-	if v, ok := tags["attest:lab-id"]; ok && v != "" {
+	if v, ok := tags[schema.TagLabID]; ok && v != "" {
 		attrs.LabMembership = append(attrs.LabMembership, v)
 	}
-	if v, ok := tags["attest:admin-level"]; ok {
+	if v, ok := tags[schema.TagAdminLevel]; ok {
 		attrs.AdminLevel = v
 	}
 	return nil
