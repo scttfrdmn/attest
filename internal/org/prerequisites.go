@@ -32,21 +32,38 @@ type PrereqResult struct {
 
 // GroundMeta is the JSON structure produced by `ground export-metadata`.
 // When provided to attest init via --ground-meta, live AWS checks are skipped.
+//
+// Note: GuardDutyEnabled and SecurityHubEnabled are NOT included here because
+// ground does not deploy detection services. attest manages GuardDuty, Security Hub,
+// and Macie based on active compliance frameworks via 'attest compile' + 'attest apply'.
 type GroundMeta struct {
-	GroundVersion              string   `json:"ground_version"`
-	Region                     string   `json:"region"`
-	CloudTrailEnabled          bool     `json:"cloudtrail_enabled"`
-	ConfigEnabled              bool     `json:"config_enabled"`
-	GuardDutyEnabled           bool     `json:"guardduty_enabled"`
-	SecurityHubEnabled         bool     `json:"security_hub_enabled"`
-	LogArchiveAccountID        string   `json:"log_archive_account_id,omitempty"`
-	IdentityCenterInstanceARN  string   `json:"identity_center_instance_arn,omitempty"`
+	GroundVersion             string            `json:"ground_version"`
+	Region                    string            `json:"region"`
+	CloudTrailEnabled         bool              `json:"cloudtrail_enabled"`
+	ConfigEnabled             bool              `json:"config_enabled"`
+	LogArchiveAccountID       string            `json:"log_archive_account_id,omitempty"`
+	IdentityCenterInstanceARN string            `json:"identity_center_instance_arn,omitempty"`
+	// ExternalServices lists non-AWS services declared in ground.yaml.
+	// attest uses these to assess controls satisfied by those services.
+	ExternalServices          []ExternalService `json:"external_services,omitempty"`
+}
+
+// ExternalService is a non-AWS service deployed in the SRE (from ground.yaml).
+// Category: edr, siem, cspm, cwpp, data-transfer, vuln-scanning, identity, research-platform
+// Features: fedramp-high, fedramp-moderate, baa, hipaa-compliant, high-assurance, soc2-type2
+type ExternalService struct {
+	Name     string   `json:"name"`
+	Vendor   string   `json:"vendor"`
+	Category string   `json:"category"`
+	Features []string `json:"features,omitempty"`
+	Scope    []string `json:"scope,omitempty"` // OU names; empty = org-wide
+	Notes    string   `json:"notes,omitempty"`
 }
 
 // CheckPrerequisites validates that the AWS Organization meets attest's minimum
 // requirements. Call after NewAnalyzer; returns one PrereqResult per check.
 // Hard errors: CloudTrail org-wide trail, AWS Config enabled.
-// Warnings: GuardDuty, Security Hub, IAM Identity Center, management workloads.
+// Warnings: GuardDuty, Security Hub (not deployed by ground — managed by attest apply).
 func (a *Analyzer) CheckPrerequisites(ctx context.Context) []PrereqResult {
 	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion(func() string {
@@ -87,6 +104,10 @@ func (a *Analyzer) CheckPrerequisites(ctx context.Context) []PrereqResult {
 
 // CheckPrerequisitesFromMeta runs prerequisite checks using ground metadata
 // instead of live AWS calls. Used when --ground-meta is provided to attest init.
+//
+// Note: GuardDuty and Security Hub are NOT checked here — ground does not deploy
+// detection services. After attest init, run 'attest compile' + 'attest apply' to
+// enable the correct detection services for your active compliance frameworks.
 func CheckPrerequisitesFromMeta(meta *GroundMeta) []PrereqResult {
 	var results []PrereqResult
 	results = append(results, metaCheck("CloudTrail org-wide trail", meta.CloudTrailEnabled,
@@ -95,12 +116,7 @@ func CheckPrerequisitesFromMeta(meta *GroundMeta) []PrereqResult {
 	results = append(results, metaCheck("AWS Config recorder", meta.ConfigEnabled,
 		"config: ground-config-recorder (from ground metadata)",
 		"Deploy ground to enable Config: ground deploy"))
-	results = append(results, metaCheckWarn("GuardDuty", meta.GuardDutyEnabled,
-		"guardduty: enabled (from ground metadata)",
-		"Deploy ground to enable GuardDuty: ground deploy"))
-	results = append(results, metaCheckWarn("Security Hub", meta.SecurityHubEnabled,
-		"security hub: enabled (from ground metadata)",
-		"Deploy ground to enable Security Hub: ground deploy"))
+
 	if meta.IdentityCenterInstanceARN != "" {
 		results = append(results, PrereqResult{
 			Name:     "IAM Identity Center",
@@ -110,13 +126,37 @@ func CheckPrerequisitesFromMeta(meta *GroundMeta) []PrereqResult {
 		})
 	} else {
 		results = append(results, PrereqResult{
-			Name:     "IAM Identity Center",
-			Severity: "warning",
-			Status:   false,
-			Detail:   "not found in ground metadata",
+			Name:        "IAM Identity Center",
+			Severity:    "warning",
+			Status:      false,
+			Detail:      "not found in ground metadata",
 			Remediation: "Deploy ground identity stack to configure IAM Identity Center",
 		})
 	}
+
+	// Report external services declared in ground.yaml (informational).
+	if len(meta.ExternalServices) > 0 {
+		names := make([]string, len(meta.ExternalServices))
+		for i, svc := range meta.ExternalServices {
+			names[i] = svc.Name
+		}
+		results = append(results, PrereqResult{
+			Name:     "External services",
+			Severity: "ok",
+			Status:   true,
+			Detail:   fmt.Sprintf("%d declared: %s", len(names), strings.Join(names, ", ")),
+		})
+	}
+
+	// Remind operator that detection services are attest's responsibility.
+	results = append(results, PrereqResult{
+		Name:        "Detection services (GuardDuty, Security Hub)",
+		Severity:    "warning",
+		Status:      false,
+		Detail:      "not deployed by ground — attest manages detection services",
+		Remediation: "Run 'attest compile' then 'attest apply' to enable the correct services for your frameworks",
+	})
+
 	return results
 }
 
@@ -181,7 +221,7 @@ func checkGuardDuty(ctx context.Context, gd *guardduty.Client) PrereqResult {
 			Severity:    "warning",
 			Status:      false,
 			Detail:      detail,
-			Remediation: "Deploy ground security stack: ground deploy (enables GuardDuty)",
+			Remediation: "Run 'attest compile' then 'attest apply' to enable GuardDuty for your active frameworks",
 		}
 	}
 	return PrereqResult{
@@ -201,7 +241,7 @@ func checkSecurityHub(ctx context.Context, sh *securityhub.Client) PrereqResult 
 			Severity:    "warning",
 			Status:      false,
 			Detail:      "not enabled in this account/region",
-			Remediation: "Deploy ground security stack: ground deploy (enables Security Hub with NIST 800-53 standard)",
+			Remediation: "Run 'attest compile' then 'attest apply' to enable Security Hub with the correct standard for your frameworks",
 		}
 	}
 	return PrereqResult{
