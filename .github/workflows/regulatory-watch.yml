@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: 2026 Scott Friedman
+# SPDX-License-Identifier: Apache-2.0
+
+name: Regulatory Watch
+
+on:
+  schedule:
+    # Monday 9am UTC — start of work week, before standup
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'How far back to check (e.g. 7d, 30d)'
+        required: false
+        default: '7d'
+      dry_run:
+        description: 'Analyze but do not create issues'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write       # create issues for relevant notices
+  id-token: write     # OIDC for Bedrock role assumption
+
+jobs:
+  watch:
+    name: Fetch and analyze regulatory sources
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build attest
+        run: go build -o ./attest-bin ./cmd/attest
+
+      - name: Configure AWS credentials (Bedrock OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.BEDROCK_ROLE_ARN }}
+          aws-region: us-east-1
+        continue-on-error: true  # graceful degrade if Bedrock not configured
+
+      - name: Fetch and analyze regulatory sources
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_REGION: us-east-1
+        run: |
+          SINCE="${{ github.event.inputs.since || '7d' }}"
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+
+          FLAGS="--since $SINCE --repo provabl/attest"
+          if [ "$DRY_RUN" = "true" ]; then
+            FLAGS="$FLAGS --dry-run"
+          else
+            FLAGS="$FLAGS --create-issues"
+          fi
+
+          ./attest-bin regulatory fetch $FLAGS || true
+          # '|| true' — don't fail the workflow if no Bedrock creds (dry run still useful)
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Regulatory Watch Summary" >> $GITHUB_STEP_SUMMARY
+          echo "Checked: NIH Guide, NIST CSRC, Federal Register (HHS + DoD)" >> $GITHUB_STEP_SUMMARY
+          echo "Window: ${{ github.event.inputs.since || '7d' }}" >> $GITHUB_STEP_SUMMARY
+          echo "Mode: ${{ github.event.inputs.dry_run == 'true' && 'Dry run' || 'Live' }}" >> $GITHUB_STEP_SUMMARY

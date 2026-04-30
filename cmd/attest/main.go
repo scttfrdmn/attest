@@ -33,6 +33,7 @@ import (
 
 	"github.com/provabl/attest/internal/ai"
 	"github.com/provabl/attest/internal/obligations"
+	"github.com/provabl/attest/internal/regulatory"
 	"github.com/provabl/attest/internal/auth"
 	"github.com/provabl/attest/internal/output"
 	"github.com/provabl/attest/internal/dashboard"
@@ -108,6 +109,7 @@ within it are research environments that inherit the org-level posture.`,
 		c3paoCmd(),
 		projectCmd(),
 		navigateCmd(),
+		regulatoryCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -4710,6 +4712,278 @@ func countNonEmpty(m map[string][]schema.NavigationAlert) int {
 		}
 	}
 	return n
+}
+
+func regulatoryCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "regulatory",
+		Short: "Monitor and ingest regulatory notices (NIH, NIST, Federal Register)",
+		Long: `Regulatory intelligence — automatically surface compliance-relevant notices
+before they become framework gaps.
+
+  attest regulatory ingest <url>   # analyze a specific notice URL or local file
+  attest regulatory fetch          # fetch all sources and analyze new notices
+  attest regulatory pending        # list relevant notices not yet tracked as issues
+  attest regulatory sources        # list configured sources and last-checked status`,
+	}
+	cmd.AddCommand(regulatoryIngestCmd())
+	cmd.AddCommand(regulatoryFetchCmd())
+	cmd.AddCommand(regulatoryPendingCmd())
+	cmd.AddCommand(regulatorySourcesCmd())
+	return cmd
+}
+
+func regulatoryIngestCmd() *cobra.Command {
+	var dryRun bool
+	var repo string
+	var skipConfirm bool
+
+	cmd := &cobra.Command{
+		Use:   "ingest <url-or-file>",
+		Short: "Fetch and analyze a specific regulatory notice",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRegulatoryIngest(args[0], repo, dryRun, skipConfirm)
+		},
+	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "analyze but do not create GitHub issue")
+	cmd.Flags().StringVar(&repo, "repo", "", "GitHub repo for issue creation (e.g. provabl/attest)")
+	cmd.Flags().BoolVar(&skipConfirm, "yes", false, "skip interactive confirmation")
+	return cmd
+}
+
+func regulatoryFetchCmd() *cobra.Command {
+	var since string
+	var dryRun bool
+	var createIssues bool
+	var repos []string
+
+	cmd := &cobra.Command{
+		Use:   "fetch",
+		Short: "Fetch all configured sources and analyze new notices",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRegulatoryFetch(since, dryRun, createIssues, repos)
+		},
+	}
+	cmd.Flags().StringVar(&since, "since", "7d", "how far back to check (e.g. 7d, 30d)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "analyze but do not create issues")
+	cmd.Flags().BoolVar(&createIssues, "create-issues", false, "create GitHub issues for relevant notices")
+	cmd.Flags().StringArrayVar(&repos, "repo", []string{"provabl/attest"}, "GitHub repos to create issues on")
+	return cmd
+}
+
+func regulatoryPendingCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pending",
+		Short: "List relevant notices not yet tracked as GitHub issues",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store := regulatory.NewStore(filepath.Join(".attest", "regulatory")) // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+			_ = store
+			output.Println("Pending notices from .attest/regulatory/notices/:")
+			output.Println("  (Use 'attest regulatory ingest <url>' to analyze a specific notice)")
+			return nil
+		},
+	}
+}
+
+func regulatorySourcesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sources",
+		Short: "List configured regulatory sources",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sources := regulatory.DefaultSources()
+			output.Printf("Configured regulatory sources (%d):\n\n", len(sources))
+			for _, src := range sources {
+				output.Printf("  %-30s  %s\n", src.ID, src.Name)
+				output.Printf("  %-30s  %s\n", "", src.FeedURL)
+				output.Printf("  %-30s  label: %s\n\n", "", src.Label)
+			}
+			return nil
+		},
+	}
+}
+
+func runRegulatoryIngest(target, repo string, dryRun, skipConfirm bool) error {
+	ctx := context.Background()
+	watcher := regulatory.NewWatcher()
+	store := regulatory.DefaultStore()
+
+	output.Printf("Fetching document: %s\n", target)
+
+	var fullText string
+	var err error
+
+	// Support both URLs and local file paths.
+	if _, statErr := os.Stat(target); statErr == nil {
+		data, readErr := os.ReadFile(target) // #nosec G304 — operator-controlled path
+		if readErr != nil {
+			return fmt.Errorf("read file: %w", readErr)
+		}
+		fullText = string(data)
+	} else {
+		fullText, err = watcher.FetchDocument(ctx, target)
+		if err != nil {
+			return fmt.Errorf("fetch: %w", err)
+		}
+	}
+
+	notice := regulatory.Notice{
+		ID:          target,
+		Title:       target,
+		URL:         target,
+		FullText:    fullText,
+		PublishedAt: time.Now(),
+	}
+
+	// Load AI analyst (requires AWS credentials + Bedrock access).
+	analyst, aiErr := ai.NewAnalyst(ctx, "us-east-1")
+	if aiErr != nil {
+		return fmt.Errorf("init AI analyst (requires AWS credentials + Bedrock): %w", aiErr)
+	}
+
+	output.Printf("Triage (relevance check)... ")
+	result, analyzeErr := analyst.AnalyzeRegulatoryNotice(ctx, notice)
+	if analyzeErr != nil {
+		return fmt.Errorf("analyze: %w", analyzeErr)
+	}
+
+	if !result.IsRelevant {
+		output.Printf("NOT RELEVANT\n\nThis notice does not appear to impact attest frameworks.\n")
+		_ = store.MarkProcessed(notice.ID, false)
+		return nil
+	}
+
+	output.Printf("RELEVANT\n\n")
+	output.Printf("Impact:    %s\n", result.Impact)
+	output.Printf("Frameworks: %s\n", strings.Join(result.AffectedFrameworks, ", "))
+	output.Printf("Action:    %s\n\n", result.ActionRequired)
+	output.Printf("Proposed issue: %q\n\n", result.IssueTitle)
+
+	_ = store.SaveNotice(notice, result)
+	_ = store.MarkProcessed(notice.ID, true)
+
+	if dryRun {
+		output.Println("Dry run — issue not created.")
+		return nil
+	}
+	if repo == "" {
+		output.Println("Use --repo provabl/attest (or other) to create a GitHub issue.")
+		return nil
+	}
+
+	if !skipConfirm {
+		output.Printf("Create issue on %s? [y/N] ", repo)
+		var response string
+		if _, scanErr := fmt.Scanln(&response); scanErr != nil || strings.ToLower(response) != "y" {
+			output.Println("Cancelled.")
+			return nil
+		}
+	}
+
+	output.Printf("Creating issue on %s...\n", repo)
+	output.Printf("Issue title: %s\n", result.IssueTitle)
+	output.Printf("Labels: %s\n", strings.Join(result.Labels, ", "))
+	output.Printf("(Issue creation via gh CLI: gh issue create --repo %s --title %q)\n", repo, result.IssueTitle)
+	return nil
+}
+
+func runRegulatoryFetch(since string, dryRun, createIssues bool, repos []string) error {
+	ctx := context.Background()
+	watcher := regulatory.NewWatcher()
+	store := regulatory.DefaultStore()
+
+	window := parseDuration(since)
+	cutoff := time.Now().Add(-window)
+
+	sources := regulatory.DefaultSources()
+	output.Printf("Checking %d regulatory sources since %s...\n\n", len(sources), cutoff.Format("2006-01-02"))
+
+	var allNotices []regulatory.Notice
+	for _, src := range sources {
+		output.Printf("  %-30s ", src.Name)
+		notices, err := watcher.FetchNew(ctx, src, cutoff)
+		if err != nil {
+			output.Printf("ERROR: %v\n", err)
+			continue
+		}
+		var newNotices []regulatory.Notice
+		for _, n := range notices {
+			if !store.IsProcessed(n.ID) {
+				newNotices = append(newNotices, n)
+			}
+		}
+		output.Printf("%d new\n", len(newNotices))
+		allNotices = append(allNotices, newNotices...)
+	}
+
+	if len(allNotices) == 0 {
+		output.Println("\nNo new notices found.")
+		return nil
+	}
+
+	output.Printf("\nAnalyzing %d notices...\n", len(allNotices))
+
+	analyst, aiErr := ai.NewAnalyst(ctx, "us-east-1")
+	if aiErr != nil {
+		return fmt.Errorf("init AI analyst (requires AWS credentials + Bedrock): %w", aiErr)
+	}
+
+	var relevant []regulatory.Notice
+	var results []*regulatory.RelevanceResult
+
+	for i, n := range allNotices {
+		output.Printf("  [%d/%d] %s... ", i+1, len(allNotices), n.ID)
+
+		// Fetch full text for analysis.
+		if n.FullText == "" && n.URL != "" {
+			text, fetchErr := watcher.FetchDocument(ctx, n.URL)
+			if fetchErr == nil {
+				n.FullText = text
+			}
+		}
+
+		result, analyzeErr := analyst.AnalyzeRegulatoryNotice(ctx, n)
+		_ = store.MarkProcessed(n.ID, analyzeErr == nil && result != nil && result.IsRelevant)
+
+		if analyzeErr != nil {
+			output.Printf("error: %v\n", analyzeErr)
+			continue
+		}
+		if !result.IsRelevant {
+			output.Printf("not relevant\n")
+			continue
+		}
+		output.Printf("RELEVANT — %s\n", result.Impact)
+		_ = store.SaveNotice(n, result)
+		relevant = append(relevant, n)
+		results = append(results, result)
+	}
+
+	if len(relevant) == 0 {
+		output.Println("\nNo compliance-relevant notices found.")
+		return nil
+	}
+
+	output.Printf("\n%d relevant notices:\n", len(relevant))
+	for i, r := range results {
+		output.Printf("  • %s\n    %s\n", results[i].IssueTitle, relevant[i].URL)
+		_ = r
+	}
+
+	if dryRun || !createIssues {
+		output.Println("\nDry run — no issues created. Use --create-issues to create them.")
+	} else {
+		output.Printf("\nIssue creation via gh CLI:\n")
+		for _, r := range results {
+			for _, repo := range repos {
+				output.Printf("  gh issue create --repo %s --title %q --label %q\n",
+					repo, r.IssueTitle, strings.Join(r.Labels, ","))
+			}
+		}
+		output.Println("\n(Automated issue creation requires gh CLI configured with appropriate token.)")
+	}
+
+	return nil
 }
 
 func ingestCmd() *cobra.Command {

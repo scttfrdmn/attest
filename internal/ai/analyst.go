@@ -31,6 +31,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"gopkg.in/yaml.v3"
 
+	"github.com/provabl/attest/internal/regulatory"
 	"github.com/provabl/attest/pkg/schema"
 )
 
@@ -45,8 +46,10 @@ const (
 	CapabilityRemediation     Capability = "remediation"
 	CapabilityArtifact        Capability = "artifact_extraction"
 	CapabilityAnomaly         Capability = "anomaly_detection"
-	CapabilitySimpleQuery     Capability = "simple_query"
-	CapabilityNavigator       Capability = "navigator"
+	CapabilitySimpleQuery         Capability = "simple_query"
+	CapabilityNavigator           Capability = "navigator"
+	CapabilityRegulatoryTriage    Capability = "regulatory_triage"    // Haiku — cheap first-pass
+	CapabilityRegulatoryAnalysis  Capability = "regulatory_analysis"  // Sonnet — deep analysis
 )
 
 // selectModel maps capabilities to the appropriate Claude model via Bedrock.
@@ -54,6 +57,10 @@ func selectModel(cap Capability) string {
 	switch cap {
 	case CapabilityAnalystAgent, CapabilityAuditSim, CapabilityNLToCedar, CapabilityFrameworkImpact, CapabilityNavigator:
 		return "us.anthropic.claude-opus-4-6-v1"
+	case CapabilityRegulatoryAnalysis:
+		return "us.anthropic.claude-sonnet-4-6"
+	case CapabilityRegulatoryTriage:
+		return "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 	case CapabilityRemediation, CapabilityArtifact, CapabilityAnomaly:
 		return "us.anthropic.claude-sonnet-4-6"
 	default: // simple_query, status, dashboard
@@ -1098,4 +1105,100 @@ Be concise (under 400 words). Speak directly to the PI, not to a compliance offi
 			}},
 		},
 	})
+}
+
+// AnalyzeRegulatoryNotice performs two-stage AI analysis of a regulatory notice.
+//
+// Stage 1 (Haiku, cheap): triage — is this notice relevant to research computing compliance?
+// Stage 2 (Sonnet, only if relevant): deep analysis — which frameworks, what action, draft issue.
+//
+// This two-stage design ensures Federal Register noise (the majority of items) is filtered
+// at ~$0.001/notice rather than running expensive Sonnet analysis on irrelevant items.
+func (a *Analyst) AnalyzeRegulatoryNotice(ctx context.Context, n regulatory.Notice) (*regulatory.RelevanceResult, error) {
+	// Stage 1: triage with Haiku (title + abstract only, no full text).
+	triagePrompt := fmt.Sprintf(`You are a compliance expert for US research institutions using AWS.
+
+Does this regulatory notice potentially affect AWS Secure Research Environments (SREs) used for
+research computing? Consider: HIPAA, NIST 800-171, CMMC, NIH data sharing, FERPA, FedRAMP,
+ITAR, or any other framework relevant to US academic research computing on AWS.
+
+Notice title: %s
+Abstract: %s
+
+Respond with exactly one word: RELEVANT or NOT_RELEVANT`,
+		sanitizePromptField(n.Title),
+		sanitizePromptField(n.Abstract))
+
+	triageResp, err := a.streamConverse(ctx, &bedrockruntime.ConverseStreamInput{
+		ModelId: aws.String(selectModel(CapabilityRegulatoryTriage)),
+		Messages: []types.Message{
+			{Role: types.ConversationRoleUser, Content: []types.ContentBlock{
+				&types.ContentBlockMemberText{Value: triagePrompt},
+			}},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("regulatory triage: %w", err)
+	}
+
+	if !strings.Contains(strings.ToUpper(triageResp), "RELEVANT") ||
+		strings.Contains(strings.ToUpper(triageResp), "NOT_RELEVANT") {
+		return &regulatory.RelevanceResult{IsRelevant: false}, nil
+	}
+
+	// Stage 2: deep analysis with Sonnet.
+	safeText := strings.ReplaceAll(sanitizePromptField(n.FullText), "</notice_text>", "<\\/notice_text>")
+
+	analysisPrompt := fmt.Sprintf(`You are a compliance architect for US research institutions.
+
+Analyze this regulatory notice and determine its impact on attest — a compliance compiler for
+AWS Secure Research Environments. attest manages frameworks including: nist-800-171-r2, hipaa,
+nih-gds, fedramp-moderate, fedramp-high, cmmc-level-1/2/3, itar, gdpr, ferpa, fisma-moderate.
+
+<notice_id>%s</notice_id>
+<notice_title>%s</notice_title>
+<notice_text>
+%s
+</notice_text>
+
+Respond with a JSON object (no markdown, no explanation outside the JSON):
+{
+  "is_relevant": true,
+  "affected_frameworks": ["list of framework IDs from the list above"],
+  "impact": "new-control|control-update|new-framework|conflict-update|info-only",
+  "action_required": "precise description of what must change in attest (framework YAML, Cedar policies, conflicts.go, schema, etc.)",
+  "issue_title": "concise GitHub issue title under 72 characters",
+  "issue_body": "complete GitHub issue body in markdown with: ## Summary, ## Regulatory Requirement, ## What attest must do, ## Acceptance Criteria, ## Links",
+  "labels": ["regulatory:nih or regulatory:nist etc", "priority:high or priority:critical", "type:framework or type:feature"]
+}`,
+		sanitizePromptField(n.ID),
+		sanitizePromptField(n.Title),
+		safeText)
+
+	resp, err := a.streamConverse(ctx, &bedrockruntime.ConverseStreamInput{
+		ModelId: aws.String(selectModel(CapabilityRegulatoryAnalysis)),
+		System: []types.SystemContentBlock{
+			&types.SystemContentBlockMemberText{Value: a.buildSystemPrompt()},
+		},
+		Messages: []types.Message{
+			{Role: types.ConversationRoleUser, Content: []types.ContentBlock{
+				&types.ContentBlockMemberText{Value: analysisPrompt},
+			}},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("regulatory analysis: %w", err)
+	}
+
+	jsonStr := extractJSON(resp)
+	if jsonStr == "" {
+		return nil, fmt.Errorf("regulatory analysis returned no JSON")
+	}
+
+	var result regulatory.RelevanceResult
+	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		return nil, fmt.Errorf("parse regulatory analysis: %w", err)
+	}
+	result.IsRelevant = true
+	return &result, nil
 }
