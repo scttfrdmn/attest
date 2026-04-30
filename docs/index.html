@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>attest — Compliance compiler for AWS Secure Research Environments</title>
+    <meta name="description" content="attest compiles compliance frameworks into deployed AWS policy artifacts and generates audit evidence from live state. CMMC, HIPAA, FedRAMP, NIH, ITAR, GDPR.">
+    <meta name="theme-color" content="#f8fafc">
+    <script>(function(){var t=localStorage.getItem('theme')||'light';document.documentElement.setAttribute('data-theme',t);}());</script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+</head>
+<body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+    <nav class="nav" role="navigation" aria-label="Main navigation">
+        <div class="nav-container">
+            <div class="nav-brand-group">
+                <a href="https://provabl.dev" class="nav-suite">provabl</a>
+                <span class="nav-sep" aria-hidden="true">/</span>
+                <span class="nav-product">attest</span>
+            </div>
+            <button class="hamburger" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false" aria-controls="nav-links">
+                <span></span><span></span><span></span>
+            </button>
+            <div class="nav-links" id="nav-links">
+                <a href="#quickstart">Quick start</a>
+                <a href="#frameworks">Frameworks</a>
+                <a href="#commands">Commands</a>
+                <a href="https://github.com/provabl/attest" target="_blank" rel="noopener noreferrer" aria-label="GitHub (opens in new tab)">GitHub</a>
+                <button class="btn-theme" id="theme-toggle" aria-label="Toggle color theme">
+                    <span id="theme-icon" aria-hidden="true">🌙</span>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+
+            <header class="hero">
+                <div class="hero-eyebrow">Compliance Layer</div>
+                <h1 class="product-accent">attest</h1>
+                <p class="hero-sub">
+                    Compile compliance frameworks into deployed AWS policy artifacts.
+                    Enforce controls continuously. Generate audit evidence from live state —
+                    not manually assembled documents.
+                </p>
+                <div class="hero-buttons">
+                    <a href="#quickstart" class="btn btn-accent">Quick start</a>
+                    <a href="https://github.com/provabl/attest/releases" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">Releases</a>
+                    <a href="https://github.com/provabl/attest" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">GitHub</a>
+                </div>
+            </header>
+
+            <!-- What attest does -->
+            <section class="what-section" aria-labelledby="what-heading">
+                <div class="three-col">
+                    <div class="what-card">
+                        <h3>Compile</h3>
+                        <p>Reads framework YAML definitions. Deduplicates controls across frameworks. Generates SCPs, Cedar policies, and AWS Config rules that fit within AWS's 5-SCP-per-target limit.</p>
+                    </div>
+                    <div class="what-card">
+                        <h3>Enforce</h3>
+                        <p>Deploys SCPs to your AWS Organization. Runs a continuous Cedar PDP via EventBridge — every API call evaluated against compiled policies in real time.</p>
+                    </div>
+                    <div class="what-card">
+                        <h3>Prove</h3>
+                        <p>Generates SSP, OSCAL, CMMC assessment packages, SPRS scores, and NIH DMSPs from live AWS state. Evidence is what's deployed, not what someone documented.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Quick start -->
+            <section id="quickstart" class="section" aria-labelledby="qs-heading">
+                <h2 id="qs-heading">Quick start</h2>
+                <p class="section-intro">From a blank AWS Organization to a CMMC 2.0 Level 2 self-assessment in one session.</p>
+
+                <div class="steps">
+                    <div class="step">
+                        <div class="step-num">1</div>
+                        <div class="step-body">
+                            <h3>Install</h3>
+                            <div class="code-block">
+                                <pre><code><span class="cm"># Build from source (Go 1.25+)</span>
+git clone https://github.com/provabl/attest
+cd attest && go build -o /usr/local/bin/attest ./cmd/attest
+attest version</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="step">
+                        <div class="step-num">2</div>
+                        <div class="step-body">
+                            <h3>Initialize</h3>
+                            <div class="code-block">
+                                <pre><code><span class="cm"># Point attest at your AWS Organization</span>
+<span class="accent-cmd">attest</span> init --region us-east-1
+<span class="out"># SRE initialized — org topology written to .attest/sre.yaml</span>
+
+<span class="cm"># Tag accounts with data classification</span>
+aws organizations tag-resource --resource-id 123456789012 \
+  --tags Key=attest:data-class,Value=CUI \
+         Key=attest:owner,Value="Dr. Smith"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="step">
+                        <div class="step-num">3</div>
+                        <div class="step-body">
+                            <h3>Activate frameworks</h3>
+                            <div class="code-block">
+                                <pre><code><span class="accent-cmd">attest</span> frameworks add nist-800-171-r2
+<span class="accent-cmd">attest</span> frameworks add hipaa
+<span class="accent-cmd">attest</span> frameworks list</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="step">
+                        <div class="step-num">4</div>
+                        <div class="step-body">
+                            <h3>Compile &amp; deploy</h3>
+                            <div class="code-block">
+                                <pre><code><span class="cm"># Merged strategy: deduplicates across frameworks, fits 5-SCP limit</span>
+<span class="accent-cmd">attest</span> compile --scp-strategy merged
+<span class="accent-cmd">attest</span> preflight --region us-east-1
+<span class="accent-cmd">attest</span> apply --approve --region us-east-1
+<span class="out"># SCPs deployed — every account in the org inherits them immediately</span></code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="step">
+                        <div class="step-num">5</div>
+                        <div class="step-body">
+                            <h3>Scan &amp; generate evidence</h3>
+                            <div class="code-block">
+                                <pre><code><span class="accent-cmd">attest</span> scan
+<span class="out"># Enforced: 9  Partial: 21  Gaps: 0</span>
+
+<span class="accent-cmd">attest</span> generate ssp --framework nist-800-171-r2
+<span class="accent-cmd">attest</span> generate assess    <span class="cm"># CMMC 2.0 self-assessment score</span>
+<span class="accent-cmd">attest</span> generate sprs     <span class="cm"># DoD SPRS submission report</span></code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <p class="doc-link">Full walkthrough: <a href="quickstart.md">quickstart.md</a> · Demo scenarios: <a href="https://github.com/provabl/attest/tree/main/demo">demo/</a></p>
+            </section>
+
+            <!-- Frameworks -->
+            <section id="frameworks" class="section" aria-labelledby="fw-heading">
+                <h2 id="fw-heading">Supported frameworks</h2>
+                <p class="section-intro">Each framework compiles to SCPs, Cedar policies, and AWS Config rules. Delta frameworks extend a base.</p>
+                <div class="fw-grid">
+                    <div class="fw-group">
+                        <h3>DoD / Federal</h3>
+                        <ul>
+                            <li><span class="fw-id">cmmc-level-1</span> CMMC 2.0 Level 1 — 17 practices</li>
+                            <li><span class="fw-id">cmmc-level-2</span> CMMC 2.0 Level 2 — 110 practices</li>
+                            <li><span class="fw-id">cmmc-level-3</span> CMMC 2.0 Level 3 — delta on L2</li>
+                            <li><span class="fw-id">nist-800-171-r2</span> NIST SP 800-171 Rev 2</li>
+                            <li><span class="fw-id">nist-800-171-r3</span> NIST SP 800-171 Rev 3</li>
+                            <li><span class="fw-id">itar</span> ITAR Technology Control Plan</li>
+                            <li><span class="fw-id">fisma-moderate</span> FISMA Moderate</li>
+                        </ul>
+                    </div>
+                    <div class="fw-group">
+                        <h3>Health &amp; Research</h3>
+                        <ul>
+                            <li><span class="fw-id">hipaa</span> HIPAA Security Rule</li>
+                            <li><span class="fw-id">nih-research-security</span> NIH NOT-OD-26-017</li>
+                            <li><span class="fw-id">42-cfr-part-2</span> 42 CFR Part 2 (substance use)</li>
+                            <li><span class="fw-id">translational-medicine</span> Translational research</li>
+                            <li><span class="fw-id">ferpa</span> FERPA</li>
+                            <li><span class="fw-id">va-handbook-6500</span> VA Handbook 6500</li>
+                        </ul>
+                    </div>
+                    <div class="fw-group">
+                        <h3>FedRAMP / Cloud</h3>
+                        <ul>
+                            <li><span class="fw-id">fedramp-moderate</span> FedRAMP Moderate</li>
+                            <li><span class="fw-id">fedramp-high</span> FedRAMP High — delta on Moderate</li>
+                            <li><span class="fw-id">nist-800-53-r5</span> NIST SP 800-53 Rev 5</li>
+                            <li><span class="fw-id">cjis</span> CJIS Security Policy</li>
+                        </ul>
+                    </div>
+                    <div class="fw-group">
+                        <h3>International</h3>
+                        <ul>
+                            <li><span class="fw-id">gdpr</span> GDPR (EU research data)</li>
+                            <li><span class="fw-id">iso27001-2022</span> ISO 27001:2022</li>
+                            <li><span class="fw-id">uk-cyber-essentials</span> UK Cyber Essentials</li>
+                            <li><span class="fw-id">asd-essential-eight</span> ASD Essential Eight</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Commands -->
+            <section id="commands" class="section" aria-labelledby="cmd-heading">
+                <h2 id="cmd-heading">Command reference</h2>
+
+                <div class="cmd-groups">
+                    <div class="cmd-group">
+                        <h3>Setup</h3>
+                        <dl>
+                            <dt><code>attest init</code></dt><dd>Initialize an SRE from an existing AWS Organization</dd>
+                            <dt><code>attest preflight</code></dt><dd>Check AWS prerequisites before applying</dd>
+                            <dt><code>attest sre</code></dt><dd>Manage multiple AWS Organizations</dd>
+                        </dl>
+                    </div>
+                    <div class="cmd-group">
+                        <h3>Frameworks</h3>
+                        <dl>
+                            <dt><code>attest frameworks list</code></dt><dd>List available and active frameworks</dd>
+                            <dt><code>attest frameworks add &lt;id&gt;</code></dt><dd>Activate a framework for this SRE</dd>
+                            <dt><code>attest project add|list</code></dt><dd>Manage research project context</dd>
+                        </dl>
+                    </div>
+                    <div class="cmd-group">
+                        <h3>Compile &amp; Deploy</h3>
+                        <dl>
+                            <dt><code>attest compile</code></dt><dd>Generate SCPs, Cedar policies, Config rules</dd>
+                            <dt><code>attest apply</code></dt><dd>Deploy compiled SCPs to the organization</dd>
+                            <dt><code>attest rollback</code></dt><dd>Restore to a prior deployment snapshot</dd>
+                            <dt><code>attest test</code></dt><dd>Run Cedar policy unit tests</dd>
+                            <dt><code>attest simulate</code></dt><dd>Diff Cedar decisions: current vs proposed</dd>
+                        </dl>
+                    </div>
+                    <div class="cmd-group">
+                        <h3>Assess</h3>
+                        <dl>
+                            <dt><code>attest scan</code></dt><dd>Analyze posture against active frameworks</dd>
+                            <dt><code>attest evaluate</code></dt><dd>Run Cedar PDP evaluation against current state</dd>
+                            <dt><code>attest watch</code></dt><dd>Continuous Cedar PDP evaluation (CloudTrail)</dd>
+                            <dt><code>attest diff</code></dt><dd>Compare posture between history snapshots</dd>
+                            <dt><code>attest audit-sim</code></dt><dd>Simulate a CMMC Level 2 assessor evaluation</dd>
+                        </dl>
+                    </div>
+                    <div class="cmd-group">
+                        <h3>Generate documents</h3>
+                        <dl>
+                            <dt><code>attest generate ssp</code></dt><dd>System Security Plan</dd>
+                            <dt><code>attest generate poam</code></dt><dd>Plan of Action &amp; Milestones</dd>
+                            <dt><code>attest generate assess</code></dt><dd>CMMC 2.0 self-assessment score</dd>
+                            <dt><code>attest generate cmmc-bundle</code></dt><dd>Complete CMMC Level 2 assessment package</dd>
+                            <dt><code>attest generate sprs</code></dt><dd>SPRS score report for DoD submission</dd>
+                            <dt><code>attest generate dmsp</code></dt><dd>NIH Data Management and Security Plan</dd>
+                            <dt><code>attest generate oscal</code></dt><dd>Full OSCAL export (SSP, AR, POA&amp;M)</dd>
+                        </dl>
+                    </div>
+                    <div class="cmd-group">
+                        <h3>Manage</h3>
+                        <dl>
+                            <dt><code>attest waiver</code></dt><dd>Time-bounded compliance exceptions</dd>
+                            <dt><code>attest attest</code></dt><dd>Administrative control attestations</dd>
+                            <dt><code>attest attest pi-sign</code></dt><dd>PI institutional attestation (NIH dbGaP)</dd>
+                            <dt><code>attest incident</code></dt><dd>Security and compliance incident tracking</dd>
+                            <dt><code>attest calendar</code></dt><dd>Upcoming review and renewal obligations</dd>
+                            <dt><code>attest report</code></dt><dd>Posture trend report from history</dd>
+                            <dt><code>attest serve</code></dt><dd>Launch the compliance dashboard</dd>
+                        </dl>
+                    </div>
+                    <div class="cmd-group">
+                        <h3>AI capabilities</h3>
+                        <dl>
+                            <dt><code>attest ai ask</code></dt><dd>Ask the compliance analyst a question</dd>
+                            <dt><code>attest ai onboard</code></dt><dd>Guided compliance onboarding</dd>
+                            <dt><code>attest ai ingest &lt;file&gt;</code></dt><dd>Map an existing document to framework controls</dd>
+                            <dt><code>attest ai translate</code></dt><dd>Natural language → Cedar policy</dd>
+                            <dt><code>attest ai analyze</code></dt><dd>Detect anomalies in Cedar decision log</dd>
+                            <dt><code>attest ai remediate &lt;id&gt;</code></dt><dd>Generate remediation artifact for a gap</dd>
+                            <dt><code>attest ai impact &lt;file&gt;</code></dt><dd>Analyze compliance impact of a new framework</dd>
+                        </dl>
+                    </div>
+                    <div class="cmd-group">
+                        <h3>CI/CD &amp; tooling</h3>
+                        <dl>
+                            <dt><code>attest check</code></dt><dd>CI/CD compliance gate for Terraform plans</dd>
+                            <dt><code>attest provision</code></dt><dd>Create a new compliant research environment</dd>
+                            <dt><code>attest verify &lt;binary&gt;</code></dt><dd>Verify attest binary via cosign/Sigstore</dd>
+                        </dl>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+    </main>
+
+    <div class="container">
+        <footer role="contentinfo">
+            <div class="footer-inner">
+                <div>
+                    <div class="footer-suite">
+                        <a href="https://provabl.dev">provabl</a> /
+                        <span class="product-accent">attest</span>
+                    </div>
+                    <p class="footer-sub">Apache 2.0 · v0.19.9</p>
+                </div>
+                <nav class="footer-links" aria-label="Suite navigation">
+                    <a href="https://ground.provabl.dev">ground</a>
+                    <a href="https://qualify.provabl.dev">qualify</a>
+                    <a href="https://github.com/provabl/attest">GitHub</a>
+                    <a href="https://github.com/provabl/attest/releases">Releases</a>
+                    <a href="https://github.com/provabl/attest/issues">Issues</a>
+                </nav>
+            </div>
+            <div class="footer-bottom">
+                <span>Made by <a href="https://github.com/scttfrdmn">@scttfrdmn</a></span>
+                <span>Apache 2.0</span>
+            </div>
+        </footer>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>
