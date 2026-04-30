@@ -126,11 +126,23 @@ func initCmd() *cobra.Command {
 rules, detects active Artifact agreements, and creates the SRE definition file.
 
 This is the starting point. Run this once, then use 'attest frameworks add'
-to activate compliance frameworks and 'attest compile' to generate policies.`,
+to activate compliance frameworks and 'attest compile' to generate policies.
+
+Prerequisite checks validate that ground-deployed infrastructure is in place:
+  - CloudTrail org-wide trail (required)
+  - AWS Config recorder (required)
+  - GuardDuty (recommended)
+  - Security Hub (recommended)
+  - IAM Identity Center (auto-adds to SSP system boundary)
+
+Use --ground-meta to trust ground export-metadata output and skip live checks.
+Use --skip-prereq-check to skip all prerequisite validation.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			region, _ := cmd.Flags().GetString("region")
 			classScheme, _ := cmd.Flags().GetString("classification-scheme")
+			skipPrereq, _ := cmd.Flags().GetBool("skip-prereq-check")
+			groundMeta, _ := cmd.Flags().GetString("ground-meta")
 
 			output.Println("Initializing SRE...")
 
@@ -145,6 +157,58 @@ to activate compliance frameworks and 'attest compile' to generate policies.`,
 				return fmt.Errorf("building SRE: %w", err)
 			}
 			output.Printf("  Organization: %s (%d environments)\n", sre.OrgID, len(sre.Environments))
+
+			// Prerequisite validation.
+			if !skipPrereq {
+				output.Println("  Checking prerequisites...")
+				var prereqResults []org.PrereqResult
+				if groundMeta != "" {
+					// Trust ground export-metadata JSON.
+					metaData, readErr := os.ReadFile(groundMeta) // #nosec G304 — operator-controlled path
+					if readErr != nil {
+						return fmt.Errorf("reading ground-meta %s: %w", groundMeta, readErr)
+					}
+					var meta org.GroundMeta
+					if jsonErr := json.Unmarshal(metaData, &meta); jsonErr != nil {
+						return fmt.Errorf("parsing ground-meta: %w", jsonErr)
+					}
+					prereqResults = org.CheckPrerequisitesFromMeta(&meta)
+				} else {
+					prereqResults = analyzer.CheckPrerequisites(ctx)
+				}
+
+				errors, warnings, iicARN := 0, 0, ""
+				for _, r := range prereqResults {
+					icon := "  ✓"
+					if !r.Status {
+						switch r.Severity {
+						case "error":
+							icon = "  ✗"
+							errors++
+						case "warning":
+							icon = "  ⚠"
+							warnings++
+						}
+					}
+					output.Printf("%s %-30s %s\n", icon, r.Name+":", r.Detail)
+					if !r.Status && r.Severity == "error" {
+						output.Printf("    Remediation: %s\n", r.Remediation)
+					}
+					if r.Name == "IAM Identity Center" && r.Status {
+						iicARN = r.Detail
+					}
+				}
+
+				if errors > 0 {
+					return fmt.Errorf("%d prerequisite error(s) — deploy ground or resolve manually", errors)
+				}
+				if warnings > 0 {
+					output.Printf("  %d warning(s) — %d/5 prerequisites fully met\n", warnings, 5-warnings)
+				}
+				if iicARN != "" {
+					output.Println("  IAM Identity Center added to SSP system boundary.")
+				}
+			}
 
 			// Inventory existing SCPs.
 			output.Println("  Inventorying existing SCPs...")
@@ -217,6 +281,8 @@ to activate compliance frameworks and 'attest compile' to generate policies.`,
 	}
 	cmd.Flags().String("region", "us-west-2", "AWS region")
 	cmd.Flags().String("classification-scheme", "", "Institutional classification scheme (e.g., uc-protection-levels)")
+	cmd.Flags().Bool("skip-prereq-check", false, "Skip prerequisite validation (useful for CI)")
+	cmd.Flags().String("ground-meta", "", "Path to ground export-metadata JSON; trusts ground output instead of live checks")
 	return cmd
 }
 
@@ -365,6 +431,36 @@ posture is derived from the compiled crosswalk (run 'attest compile' first).`,
 				posture.Frameworks[fw.ID] = fp
 			}
 
+			// Apply cross-framework supersession: controls satisfied by a stricter
+			// co-active framework requirement don't need separate evidence.
+			if len(frameworks) > 1 {
+				supersessionMap := ssp.SupersessionMap()
+				for _, fw := range frameworks {
+					fp := posture.Frameworks[fw.ID]
+					if fp.CrossSatisfiedFrom == nil {
+						fp.CrossSatisfiedFrom = make(map[string]schema.CrossSatisfactionRef)
+					}
+					for _, ctrl := range fw.Controls {
+						if fwMap, ok := supersessionMap[fw.ID]; ok {
+							if entry, ok := fwMap[ctrl.ID]; ok {
+								// Check if superseding control is enforced.
+								supFP := posture.Frameworks[entry.SupersedingFramework]
+								if supStatus, ok := supFP.Controls[entry.SupersedingControl]; ok &&
+									(supStatus == "enforced" || supStatus == "aws_covered") {
+									fp.CrossSatisfiedFrom[ctrl.ID] = schema.CrossSatisfactionRef{
+										SupersedingFramework: entry.SupersedingFramework,
+										SupersedingControl:   entry.SupersedingControl,
+										Mechanism:            entry.Mechanism,
+									}
+									posture.CrossSatisfied++
+								}
+							}
+						}
+					}
+					posture.Frameworks[fw.ID] = fp
+				}
+			}
+
 			// Print summary.
 			output.Println()
 			output.Println("Posture summary:")
@@ -372,10 +468,13 @@ posture is derived from the compiled crosswalk (run 'attest compile' first).`,
 			output.Printf("  Enforced:        %d\n", posture.Enforced)
 			output.Printf("  Partial:         %d\n", posture.Partial)
 			output.Printf("  Gaps:            %d\n", posture.Gaps)
+			if posture.CrossSatisfied > 0 {
+				output.Printf("  Cross-satisfied: %d  (via supersession)\n", posture.CrossSatisfied)
+			}
 
 			for _, fw := range frameworks {
 				fp := posture.Frameworks[fw.ID]
-				enforced, partial, gaps := 0, 0, 0
+				enforced, partial, gaps, xSat := 0, 0, 0, len(fp.CrossSatisfiedFrom)
 				for _, status := range fp.Controls {
 					switch status {
 					case "enforced":
@@ -387,7 +486,12 @@ posture is derived from the compiled crosswalk (run 'attest compile' first).`,
 					}
 				}
 				output.Printf("\n  %s:\n", fw.Name)
-				output.Printf("    Enforced: %d  Partial: %d  Gaps: %d\n", enforced, partial, gaps)
+				if xSat > 0 {
+					output.Printf("    Enforced: %d  Partial: %d  Gaps: %d  Cross-satisfied: %d\n",
+						enforced, partial, gaps, xSat)
+				} else {
+					output.Printf("    Enforced: %d  Partial: %d  Gaps: %d\n", enforced, partial, gaps)
+				}
 			}
 
 			// Save posture snapshot.
@@ -1450,6 +1554,7 @@ func generateCmd() *cobra.Command {
 }
 
 func generateSSPCmd() *cobra.Command {
+	var multiFramework bool
 	cmd := &cobra.Command{
 		Use:   "ssp",
 		Short: "Generate System Security Plan",
@@ -1458,15 +1563,21 @@ derived from the crosswalk manifest — no hand-written content.
 Run 'attest compile' first.
 
 Use --framework to generate an SSP for a specific active framework.
-Without --framework, generates one SSP for each active framework.`,
+Without --framework, generates one SSP for each active framework.
+Use --multi-framework to generate one combined SSP across all active frameworks,
+including the supersession registry and conflict resolution record.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fwDir, _ := cmd.Flags().GetString("frameworks")
 			fwFilter, _ := cmd.Flags().GetString("framework")
+			if multiFramework {
+				return runGenerateMultiFrameworkSSP(fwDir)
+			}
 			return runGenerateSSP(fwDir, fwFilter)
 		},
 	}
 	cmd.Flags().String("frameworks", "frameworks", "Path to frameworks directory")
 	cmd.Flags().String("framework", "", "Generate SSP for a specific framework ID only")
+	cmd.Flags().BoolVar(&multiFramework, "multi-framework", false, "Generate one combined SSP across all active frameworks")
 	return cmd
 }
 
@@ -1653,6 +1764,85 @@ func runGenerateSSP(fwDir, fwFilter string) error {
 			return err
 		}
 	}
+	return nil
+}
+
+func runGenerateMultiFrameworkSSP(fwDir string) error {
+	sre, crosswalk, err := loadGenerateContext()
+	if err != nil {
+		return err
+	}
+
+	fwIDs := crosswalk.Frameworks
+	if len(fwIDs) == 0 && crosswalk.Framework != "" {
+		fwIDs = []string{crosswalk.Framework}
+	}
+	if len(fwIDs) < 2 {
+		output.Println("Note: only one framework active. Multi-framework SSP is most useful with 2+ frameworks.")
+		output.Println("Proceeding with single-framework combined format.")
+	}
+
+	loader := framework.NewLoader(fwDir)
+	var frameworks []*schema.Framework
+	for _, id := range fwIDs {
+		fw, loadErr := loader.Load(id)
+		if loadErr != nil {
+			output.Warnf("skipping framework %s: %v", id, loadErr)
+			continue
+		}
+		frameworks = append(frameworks, fw)
+	}
+	if len(frameworks) == 0 {
+		return fmt.Errorf("no frameworks could be loaded from crosswalk")
+	}
+
+	// Load latest posture for cross-satisfaction display.
+	var posture *schema.Posture
+	if postureData, readErr := os.ReadFile(filepath.Join(".attest", "history", "posture-latest.yaml")); readErr == nil { // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+		var p schema.Posture
+		if yamlErr := yaml.Unmarshal(postureData, &p); yamlErr == nil {
+			posture = &p
+		}
+	}
+
+	conflicts := framework.DetectConflicts(frameworks)
+
+	g := ssp.NewGenerator()
+	multiSSP, genErr := g.GenerateMultiFramework(sre, frameworks, crosswalk, posture, conflicts)
+	if genErr != nil {
+		return fmt.Errorf("generate multi-framework SSP: %w", genErr)
+	}
+
+	docsDir := filepath.Join(".attest", "documents") // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+	if mkErr := os.MkdirAll(docsDir, 0o750); mkErr != nil {
+		return fmt.Errorf("create documents dir: %w", mkErr)
+	}
+
+	outPath := filepath.Join(docsDir, "ssp-multi-framework.md") // nosemgrep: semgrep.attest-filepath-join-no-confinement — hardcoded path
+	if writeErr := os.WriteFile(outPath, []byte(multiSSP.Render()), 0o640); writeErr != nil {
+		return fmt.Errorf("write SSP: %w", writeErr)
+	}
+
+	output.Printf("Multi-framework SSP generated: %s\n", outPath)
+	output.Printf("  Frameworks:    %d (%s)\n", len(frameworks),
+		strings.Join(func() []string {
+			var ids []string
+			for _, f := range frameworks {
+				ids = append(ids, f.ID)
+			}
+			return ids
+		}(), ", "))
+	output.Printf("  Supersessions: %d applicable\n", len(multiSSP.Supersessions))
+	output.Printf("  Conflicts:     %d (%d blocking)\n",
+		len(conflicts), func() int {
+			n := 0
+			for _, c := range conflicts {
+				if c.Severity == "blocking" {
+					n++
+				}
+			}
+			return n
+		}())
 	return nil
 }
 

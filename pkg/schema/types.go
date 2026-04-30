@@ -243,7 +243,17 @@ type Posture struct {
 	Enforced      int                        `yaml:"enforced" json:"enforced"`
 	Partial       int                        `yaml:"partial" json:"partial"`
 	Gaps          int                        `yaml:"gaps" json:"gaps"`
-	AWSCovered    int                        `yaml:"aws_covered" json:"aws_covered"`
+	AWSCovered     int                        `yaml:"aws_covered" json:"aws_covered"`
+	CrossSatisfied int                        `yaml:"cross_satisfied" json:"cross_satisfied"` // via supersession
+}
+
+// CrossSatisfactionRef records how a control in one framework is satisfied by the
+// more-restrictive enforcement of a control in another co-active framework.
+// Example: NIST 800-171 §3.13.11 (FIPS KMS) satisfies HIPAA §164.312(a)(2)(iv).
+type CrossSatisfactionRef struct {
+	SupersedingFramework string `yaml:"superseding_framework" json:"superseding_framework"`
+	SupersedingControl   string `yaml:"superseding_control"   json:"superseding_control"`
+	Mechanism            string `yaml:"mechanism"             json:"mechanism"` // SCP/Cedar artifact
 }
 
 // FrameworkPosture is the compliance state for a single framework.
@@ -251,6 +261,9 @@ type FrameworkPosture struct {
 	FrameworkID string            `yaml:"framework_id" json:"framework_id"`
 	Controls    map[string]string `yaml:"controls" json:"controls"` // control_id → status
 	Score       float64           `yaml:"score" json:"score"`       // 0.0 - 1.0 (for CMMC scoring)
+	// CrossSatisfiedFrom maps control_id → the superseding control that satisfies it.
+	// A control here does not need separate enforcement — it's covered by a stricter one.
+	CrossSatisfiedFrom map[string]CrossSatisfactionRef `yaml:"cross_satisfied_from,omitempty" json:"cross_satisfied_from,omitempty"`
 }
 
 // --- Waivers ---

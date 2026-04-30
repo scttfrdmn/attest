@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-04-30
+
+### Added
+
+- **Multi-framework SSP** (`attest generate ssp --multi-framework`): combined SSP across
+  all active frameworks with merged control families, supersession registry section,
+  and conflict resolution record. `internal/document/ssp/multi_ssp.go`
+- **Supersession registry** (`internal/document/ssp/supersessions.go`): 14 static entries
+  covering NIST 800-171 → HIPAA (9 entries), NIST 800-171 → FERPA (2), FedRAMP → 800-53,
+  CMMC → FedRAMP, and NIST 800-171 → NIH GDS
+- **Cross-satisfaction tracking**: `FrameworkPosture.CrossSatisfiedFrom` and
+  `Posture.CrossSatisfied` fields. `attest scan` shows per-framework cross-satisfied
+  counts when superseding controls are enforced
+- **`CrossSatisfactionRef`** schema type (superseding_framework, superseding_control, mechanism)
+- **`attest init` prerequisite validation**: checks CloudTrail org-wide trail (error if
+  missing), Config recorder (error), GuardDuty (warning), Security Hub (warning), IAM
+  Identity Center (warning + auto-adds to SSP boundary). `--skip-prereq-check` flag for CI.
+  `--ground-meta <path>` flag reads ground export-metadata JSON and skips live AWS checks
+- **`org.CheckPrerequisites()`** and **`org.CheckPrerequisitesFromMeta()`** methods;
+  `org.GroundMeta` type for ground metadata JSON
+- AWS SDK dependencies: `securityhub v1.69`, `ssoadmin v1.37`
+
+## [0.22.0] - 2026-04-30
+
+### Added
+
+- **`frameworks/nih-gds/framework.yaml`** — NIH Genomic Data Sharing Policy (Researcher Tier).
+  8 controls across 3 families. Regulatory basis: NOT-OD-24-157 (effective Jan 25 2025),
+  NOT-OD-25-081 (AI/ML derivatives), NOT-OD-25-083 (countries of concern).
+  Enforcement: `cedar-nih-approved-user` (temporal expiry gate), `scp-nih-region-restrict`
+  (US commercial regions only), `cedar-nih-country-restriction` (CN/RU/IR/KP/CU/VE blocked,
+  fails-closed), `cedar-nih-model-derivative` (NOT-OD-25-081), `config-nih-model-tag`,
+  `config-nih-closeout-lifecycle`. Dependency: `nist-800-171-r2` required=true
+- **`frameworks/nist-800-223/framework.yaml`** — NIST SP 800-223 HPC Security zone model.
+  5 controls (login/compute/storage/management/external zones). Non-mandatory guidance.
+  Critical note: head node IS the CUI boundary. `attest provision --hpc` planned
+- **NIH principal attributes** on `PrincipalAttributes`: `NIHApprovalCurrent`,
+  `NIHApprovalExpiry`, `NIHApprovalDUAID`, `InstitutionalAffiliationCountry`,
+  `CountriesOfConcernCheckCurrent`. Resolver reads `attest:nih-approval`,
+  `attest:nih-approval-expiry`, `attest:nih-dua-id`, `attest:country`,
+  `attest:coc-check-current` tags. 6 unit tests
+- **`attest generate assess --framework nih-gds`**: NIH DUA attestation readiness report
+  covering approved users, countries of concern, AI/ML derivatives, closeout procedures,
+  and DUA signing checklist
+
+## [0.21.0] - 2026-04-30
+
+### Added
+
+- **`ResolvedControlSet` three-way split**: `Structural` (SCP dedup by condition fingerprint),
+  `Operational` (Cedar, per frameworkID+controlID, never deduplicates across frameworks),
+  `Monitoring` (Config, resource_type+ruleID dedup). Cedar policies from different frameworks
+  now evaluate independently via AND semantics. Test: `TestResolve_CedarNeverDeduplicates`
+- **`FrameworkDependency`** schema type + `Framework.Dependencies []FrameworkDependency` field.
+  YAML-compatible; all existing frameworks unaffected
+- **`attest frameworks add` multi-ID support**: accepts multiple framework IDs in one command,
+  activates in dependency order, errors with remediation when Required dependency missing.
+  `topoSort` ensures dependencies before dependents
+- **6 new conflict detection rules**: NIH GDS without nist-800-171-r2 (blocking),
+  NIH GDS + ITAR incompatible regions (blocking), HIPAA + NIH GDS retention conflict
+  (warning), HIPAA + NIH GDS AI/ML governance gap (warning), FedRAMP + NIH GDS researcher
+  tier gap (warning), HIPAA Safe Harbor ≠ NIH GDS genomic de-identification (info).
+  6 unit tests
+- **qualify binary rename**: `cmd/ark` → `cmd/qualify`, version set to 0.2.0
+
+### Fixed
+
+- Cedar compiler (`internal/compiler/cedar/compiler.go`): was iterating single
+  `Controls` map causing cross-framework Cedar policies to merge incorrectly.
+  Now correctly iterates `Operational` map
+- SCP compiler similar fix: now iterates `Structural` map exclusively
+
 ## [0.20.0] - 2026-04-30
 
 ### Added
