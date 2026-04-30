@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package poam generates Plan of Action & Milestones from the crosswalk.
 // Every gap or partial control produces a POA&M entry with a milestone ID,
 // finding description, scheduled completion, and remediation guidance.

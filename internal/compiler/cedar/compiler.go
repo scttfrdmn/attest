@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package cedar compiles framework controls into Cedar policies for
 // runtime operational enforcement. While SCPs provide structural boundaries,
 // Cedar policies evaluate context-dependent conditions at decision time:

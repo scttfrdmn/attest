@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package dashboard implements the web dashboard for attest.
 // Single binary: `attest serve` launches the dashboard.
 // Built with Go net/http + HTMX + SSE for live Cedar PDP feed.

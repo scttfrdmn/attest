@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package multisre manages compliance across multiple AWS Organizations (SREs).
 // An institution may operate several SREs: production, dev, partner networks.
 // Multi-SRE provides a single compliance registry and aggregate posture view.

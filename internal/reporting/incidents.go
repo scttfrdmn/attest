@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package reporting contains trend analysis and incident lifecycle management.
 // Incident records are stored in .attest/history/incidents.yaml and tracked
 // through detection → remediation → resolution.

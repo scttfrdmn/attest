@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package ai implements AI-powered compliance capabilities using
 // AWS Bedrock with Claude. The AI never generates compliance facts —
 // it reasons over facts the deterministic system has already validated.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package evaluator implements the Cedar PDP for runtime compliance evaluation.
 // One-shot evaluation is supported via EvaluateWithPolicies. Continuous evaluation
 // uses a CloudTrail polling loop (Start method). Full EventBridge integration is v1.0.0.

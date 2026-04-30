@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package dmsp generates NIH Data Management and Security Plans (DMSP).
 // Required for all NIH-funded research since January 25, 2023 (NIH DMS Policy).
 // Must be submitted with grant applications, updated annually, and included in

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package auth implements OIDC-based authentication and Cedar authorization
 // for the attest dashboard. Supports institutional SSO (Shibboleth, Okta,
 // Azure AD, any OIDC-compliant IdP) via OAuth2/OIDC code flow.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package output provides terminal-safe print functions.
 // All string arguments are sanitized to strip ANSI escape sequences and control
 // characters before being written to stdout/stderr. This prevents terminal injection

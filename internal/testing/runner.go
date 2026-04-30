@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package testing provides policy testing capabilities:
 //   - Unit tests: define scenarios in YAML, run locally against cedar-go
 //   - Terraform CI checks: evaluate Terraform plan JSON for compliance violations

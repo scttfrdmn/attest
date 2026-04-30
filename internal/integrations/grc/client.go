@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package grc provides a client for pushing OSCAL compliance documents to
 // enterprise GRC (Governance, Risk, and Compliance) platforms via HTTP.
 //

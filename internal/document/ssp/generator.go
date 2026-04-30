@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package ssp generates System Security Plans from the SRE state.
 // The SSP is not a document someone writes — it's a document the system emits
 // from the crosswalk, deployed policy state, and Cedar evaluation logs.

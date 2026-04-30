@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package integrations provides clients for AWS security services that
 // feed into the compliance posture. Each integration is both a producer
 // (attest pushes Cedar denials to Security Hub) and a consumer (attest

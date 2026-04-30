@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package schema defines the core data model for compliance frameworks,
 // controls, policy artifacts, and the crosswalk that connects them.
 package schema

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package waiver manages compliance exceptions. Real compliance has
 // exceptions — the waiver is a first-class object: time-bounded, scoped,
 // approved, auditable. It affects posture scoring, SSP narratives, and

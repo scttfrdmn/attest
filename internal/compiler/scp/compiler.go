@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package scp compiles framework control definitions into AWS Service Control Policies.
 // SCPs provide structural (preventive) enforcement at the org level. Every account
 // in the SRE inherits these policies — compliance by construction.

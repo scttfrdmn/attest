@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package attestation manages human-affirmed compliance attestation records.
 // This file adds cosign/SLSA supply chain attestation ingestion.
 package attestation

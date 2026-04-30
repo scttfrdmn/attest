@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package org reads an AWS Organization and maps it to the SRE model.
 // The Organization IS the Secure Research Environment. Accounts within it
 // are research environments that inherit org-level compliance posture.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package principal resolves entity attributes for Cedar policy evaluation.
 // Cedar policies evaluate principal.cui_training_current, principal.irb_protocol_active,
 // etc. — this package sources those attributes from external institutional systems.

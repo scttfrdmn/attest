@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package assessment generates CMMC 2.0 Level 2 self-assessment scores
 // from the crosswalk. For NIST 800-171, 110 controls × 5 points = 550 max.
 // Scoring follows NIST SP 800-171A assessment objectives.

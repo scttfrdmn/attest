@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package provision automates compliant environment creation.
 // "I need a HIPAA environment for clinical genomics" becomes
 // `attest provision` — computes target OU from data classes,

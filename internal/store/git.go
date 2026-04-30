@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package store manages the git-backed policy store in .attest/.
 // Every `attest compile` commits. Every `attest apply` can tag.
 // The git log is the change management record an auditor verifies.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package deploy handles deploying compiled policy artifacts to an AWS Organization.
 // It separates read (internal/org) from write concerns: creating, updating, and
 // attaching SCPs to the org root via the Organizations API.

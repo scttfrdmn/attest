@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package cmmc generates CMMC Level 2 assessment documentation bundles.
 // A bundle contains all artifacts required for a C3PAO (third-party assessor)
 // review: SSP, self-assessment score, POA&M, evidence appendix, and crosswalk.

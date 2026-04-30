@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package attestation manages human-affirmed compliance attestation records.
 // An attestation is a bounded statement that an administrative control is satisfied:
 // who affirmed it, when, what evidence, and when it expires.

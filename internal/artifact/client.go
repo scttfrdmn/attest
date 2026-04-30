@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Scott Friedman
+// SPDX-License-Identifier: Apache-2.0
+
 // Package artifact provides a client for the AWS Artifact API.
 // It discovers available compliance reports, retrieves shared responsibility
 // matrices, and detects agreement-gated framework activations (e.g., a signed
