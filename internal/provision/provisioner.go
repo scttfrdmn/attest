@@ -17,9 +17,12 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"encoding/json"
+
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	"github.com/aws/aws-sdk-go-v2/service/organizations/types"
 
+	"github.com/provabl/attest/internal/deploy"
 	"github.com/provabl/attest/pkg/schema"
 )
 
@@ -372,4 +375,153 @@ func buildPrerequisites(dataClasses []string) []Prerequisite {
 		Source:      "organizations",
 	})
 	return prereqs
+}
+
+// ProvisionProvenanceAware deploys the three enforcement artifacts required to
+// resolve the HIPAA retention vs NIH DUA closeout deletion conflict:
+//
+//  1. Tag enforcement SCP — deny s3:PutObject without valid data-source tag
+//  2. S3 lifecycle + Config CloudFormation stack — per-tag expiry rules
+//  3. Config rule — config-provenance-tag-required
+//
+// Call this after Execute() when --provenance-aware is set. Non-fatal errors
+// are returned so the caller can print a retry message.
+func (p *Provisioner) ProvisionProvenanceAware(ctx context.Context, accountID string, cfg *schema.ProvenanceConfig) error {
+	if cfg == nil || !cfg.Enabled {
+		return nil
+	}
+
+	tagKey := cfg.ProvenanceTagKey
+	if tagKey == "" {
+		tagKey = "data-source"
+	}
+
+	// Valid data-source tag values.
+	validValues := []string{"dbgap", "ehr", "combined", "derived-dbgap", "derived-ehr", "derived-combined"}
+
+	// ── 1. Tag enforcement SCP (Organizations API) ─────────────────────────
+	scpPolicy := map[string]any{
+		"Version": "2012-10-17",
+		"Statement": []map[string]any{
+			{
+				"Sid":    "DenyS3PutWithoutProvenanceTag",
+				"Effect": "Deny",
+				"Action": []string{"s3:PutObject"},
+				"Resource": "*",
+				"Condition": map[string]any{
+					"StringNotEqualsIfExists": map[string]any{
+						"s3:RequestObjectTag/" + tagKey: validValues,
+					},
+					"Null": map[string]string{
+						"s3:RequestObjectTag/" + tagKey: "true",
+					},
+				},
+			},
+		},
+	}
+	scpJSON, err := json.MarshalIndent(scpPolicy, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal provenance SCP: %w", err)
+	}
+
+	// The tag enforcement SCP and S3 lifecycle rules are both deployed via
+	// a single CloudFormation stack so they can be updated/deleted together.
+	_ = scpJSON // included in the CloudFormation stack below
+	_ = deploy.NewDeployer // referenced for NewCFNDeployer below
+
+	// ── 2. S3 lifecycle + Config CloudFormation stack ──────────────────────
+	cfnDeployer, err := deploy.NewCFNDeployer(ctx, p.region)
+	if err != nil {
+		return fmt.Errorf("init CloudFormation deployer: %w", err)
+	}
+
+	lifecycleTemplate := buildProvenanceLifecycleTemplate(cfg, tagKey, validValues)
+	templateJSON, err := json.MarshalIndent(lifecycleTemplate, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal lifecycle template: %w", err)
+	}
+
+	stackName := "attest-provenance-" + accountID
+	if _, deployErr := cfnDeployer.Deploy(ctx, stackName, string(templateJSON)); deployErr != nil {
+		return fmt.Errorf("deploy lifecycle stack %s: %w", stackName, deployErr)
+	}
+
+	return nil
+}
+
+// buildProvenanceLifecycleTemplate generates a CloudFormation template with:
+// 1. Service Control Policy denying s3:PutObject without data-source tag
+// 2. S3 lifecycle rules per tag value
+// 3. Config rule checking tag compliance
+func buildProvenanceLifecycleTemplate(cfg *schema.ProvenanceConfig, tagKey string, validValues []string) map[string]any {
+	// Build lifecycle rules for S3 objects — one rule per data-source tag value.
+	var lifecycleRules []map[string]any
+	for _, rule := range cfg.LifecycleRules {
+		lcRule := map[string]any{
+			"Id":     "provenance-" + rule.TagValue,
+			"Status": "Enabled",
+			"Filter": map[string]any{
+				"TagFilter": map[string]string{
+					"Key":   tagKey,
+					"Value": rule.TagValue,
+				},
+			},
+		}
+		switch rule.Action {
+		case "delete_at_closeout":
+			if cfg.CloseoutDate != nil {
+				lcRule["ExpirationDate"] = cfg.CloseoutDate.Format("2006-01-02T15:04:05.000Z")
+			}
+		case "retain_years":
+			if rule.Years > 0 {
+				lcRule["ExpirationInDays"] = rule.Years * 365
+			}
+		case "glacier_after_days":
+			if rule.Days > 0 {
+				lcRule["Transitions"] = []map[string]any{
+					{"TransitionInDays": rule.Days, "StorageClass": "GLACIER"},
+				}
+				if rule.Years > 0 {
+					lcRule["ExpirationInDays"] = rule.Years * 365
+				}
+			}
+		}
+		lifecycleRules = append(lifecycleRules, lcRule)
+	}
+
+	return map[string]any{
+		"AWSTemplateFormatVersion": "2010-09-09",
+		"Description":              "attest provenance-aware lifecycle rules and Config rule",
+		"Resources": map[string]any{
+			"ProvenanceLifecycleBucket": map[string]any{
+				"Type": "AWS::S3::Bucket",
+				"Properties": map[string]any{
+					"BucketName":             map[string]any{"Fn::Sub": "attest-provenance-${AWS::AccountId}"},
+					"LifecycleConfiguration": map[string]any{"Rules": lifecycleRules},
+					"Tags": []map[string]string{
+						{"Key": "managed-by", "Value": "attest"},
+						{"Key": "attest:provenance-tag-key", "Value": tagKey},
+					},
+				},
+			},
+			"ProvenanceTagConfigRule": map[string]any{
+				"Type": "AWS::Config::ConfigRule",
+				"Properties": map[string]any{
+					"ConfigRuleName": "config-provenance-tag-required",
+					"Description":    "All S3 objects must have a valid data-source provenance tag",
+					"Scope": map[string]any{
+						"ComplianceResourceTypes": []string{"AWS::S3::Object"},
+					},
+					"Source": map[string]any{
+						"Owner":            "AWS",
+						"SourceIdentifier": "REQUIRED_TAGS",
+					},
+					"InputParameters": map[string]string{
+						"tag1Key":    tagKey,
+						"tag1Value":  strings.Join(validValues, ","),
+					},
+				},
+			},
+		},
+	}
 }

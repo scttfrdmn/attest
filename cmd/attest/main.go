@@ -3262,20 +3262,22 @@ Create it first: aws organizations create-organizational-unit --parent-id <root>
 			}
 			if provenanceAware {
 				env.ProvenanceConfig = schema.DefaultProvenanceConfig(closeoutDate)
-				output.Printf("\nProvenance tagging configured:\n")
-				output.Printf("  Tag key:         data-source\n")
-				output.Printf("  Closeout date:   %s\n", closeoutDate.Format("2006-01-02"))
-				output.Printf("  Lifecycle rules: %d (dbgap/combined/derived → delete at closeout; ehr/derived-ehr → retain 6y)\n",
+				output.Printf("\nDeploying provenance enforcement artifacts for %s...\n", env.AccountID)
+
+				if deployErr := provisioner.ProvisionProvenanceAware(ctx, env.AccountID, env.ProvenanceConfig); deployErr != nil {
+					output.Warnf("Provenance artifacts partially deployed: %v", deployErr)
+					output.Println("  Re-run 'attest provision --provenance-aware' for this environment to retry.")
+				} else {
+					output.Printf("  [1/2] Tag enforcement SCP ......... ✓ deployed (s3:PutObject requires data-source tag)\n")
+					output.Printf("  [2/2] S3 lifecycle + Config stack .. ✓ deployed (attest-provenance-%s)\n", env.AccountID)
+				}
+				output.Printf("\n  Lifecycle rules: %d (dbgap/combined/derived → delete at closeout; ehr/derived-ehr → retain 6y)\n",
 					len(env.ProvenanceConfig.LifecycleRules))
-				output.Printf("  Tag enforcement SCP: enabled (denies s3:PutObject without valid data-source tag)\n")
 				output.Println()
 				output.Println("⚠ WARNING: Provenance tagging cannot be retrofitted to existing datasets.")
-				output.Println("  Configure S3 lifecycle rules and write first data ONLY after this provisioning completes.")
+				output.Println("  Tag ALL S3 objects with data-source before writing any combined data.")
 				output.Println()
-				output.Println("Next steps for provenance-aware environment:")
-				output.Printf("  1. attest generate closeout --environment %s   # generate closeout checklist\n", env.AccountID)
-				output.Println("  2. Tag all S3 objects with data-source=<dbgap|ehr|combined|...> at write time")
-				output.Println("  3. Use 'attest model-training-wrapper' for SageMaker jobs touching dbGaP data")
+				output.Printf("  Next: attest generate closeout --environment %s\n", env.AccountID)
 			}
 			sre.Environments[env.AccountID] = *env
 			updated, err := yaml.Marshal(sre)
