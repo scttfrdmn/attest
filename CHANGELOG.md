@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Bump Go 1.26.4 → 1.26.5** to clear **GO-2026-5856**, a `crypto/tls` standard-library
+  vulnerability fixed in go1.26.5. govulncheck flagged it as symbol-reachable via attest's TLS calls
+  (the AWS SDK, HTTPS). attest was the **last repo in the suite** still pinned to 1.26.4 — the other
+  nine were bumped when the same advisory landed there, so its weekly scan had been red since
+  2026-07-13. Toolchain bump only, no code changes; every workflow resolves the version via
+  `go-version-file: go.mod`, so the single pin covers CI, release, and the scans. govulncheck now
+  reports zero reachable vulnerabilities.
+
 ### Added
 
 - **`attest approval grant`/`revoke`** — the NIH DUA approval lifecycle (attest#99; provabl#11 Tier 2,
